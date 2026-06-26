@@ -20,8 +20,10 @@ just runtime
 
 The control plane listens on `http://127.0.0.1:8787` by default and stores state in
 `wasmplane.sqlite`. Set `WASMPLANE_DB`, `HOST`, or `PORT` to override this. Set
-`WASMPLANE_RUNTIME_NODES` to a comma-separated list of runtime node base URLs when using
-`POST /snapshots/routes/publish`.
+`WASMPLANE_RUNTIME_NODES` to a comma-separated list of static runtime node base URLs, or register
+runtime nodes through `POST /runtime-nodes`, when using `POST /snapshots/routes/publish`. Local
+artifact ingestion stores bytes in `.wasmplane/artifacts` by default; set `WASMPLANE_ARTIFACT_DIR`
+to override it.
 
 The runtime node listens on `http://127.0.0.1:8788` by default. Set `RUNTIME_HOST`,
 `RUNTIME_PORT`, or `WASMPLANE_CACHE_DIR` to override this.
@@ -68,12 +70,32 @@ Available endpoints:
 
 - `POST /projects`
 - `POST /artifacts`
+- `POST /artifacts/local`
 - `POST /deployments`
 - `PUT /routes`
+- `POST /runtime-nodes`
+- `POST /runtime-nodes/:id/heartbeat`
+- `GET /runtime-nodes`
 - `GET /snapshots/routes`
 - `POST /snapshots/routes/publish`
+- `GET /snapshots/routes/publishes`
 - `GET /healthz`
 
 `POST /snapshots/routes/publish` creates a fresh compact route snapshot and pushes it to each
-configured runtime node through `PUT /__runtime/snapshots/routes`. The response includes a
-per-node publish result, so partial failures are visible without hiding successful updates.
+active registered runtime node, plus statically configured runtime nodes, through
+`PUT /__runtime/snapshots/routes`. The response includes a per-node publish result and stores a
+publication history record.
+
+Routes can point at one immutable deployment or at weighted rollout targets:
+
+```json
+{
+  "projectId": "prj_hello",
+  "host": "hello.example.dev",
+  "pathPrefix": "/",
+  "targets": [
+    { "deploymentId": "dep_stable", "weight": 90 },
+    { "deploymentId": "dep_canary", "weight": 10 }
+  ]
+}
+```

@@ -1,5 +1,12 @@
 import { DatabaseSync } from "node:sqlite";
-import type { Artifact, Deployment, Project, RoutePointer } from "./contracts.ts";
+import type {
+  Artifact,
+  Deployment,
+  Project,
+  RoutePointer,
+  RouteSnapshotPublication,
+  RuntimeNode,
+} from "./contracts.ts";
 import { ControlPlaneError } from "./errors.ts";
 
 export interface ControlPlaneRepository {
@@ -11,6 +18,12 @@ export interface ControlPlaneRepository {
   getDeployment(id: string): Deployment | undefined;
   upsertRoute(route: RoutePointer): RoutePointer;
   listRoutes(): RoutePointer[];
+  createRuntimeNode(node: RuntimeNode): RuntimeNode;
+  getRuntimeNode(id: string): RuntimeNode | undefined;
+  updateRuntimeNodeHeartbeat(node: RuntimeNode): RuntimeNode;
+  listRuntimeNodes(): RuntimeNode[];
+  createRouteSnapshotPublication(publication: RouteSnapshotPublication): RouteSnapshotPublication;
+  listRouteSnapshotPublications(): RouteSnapshotPublication[];
 }
 
 export function createMemoryRepository(): ControlPlaneRepository {
@@ -27,6 +40,11 @@ class SqliteControlPlaneRepository implements ControlPlaneRepository {
   constructor(db: DatabaseSync) {
     this.db = db;
     this.db.exec(schema);
+    this.ensureColumn("routes", "targets_json", "text");
+    this.ensureColumn("runtime_nodes", "status", "text not null default 'active'");
+    this.ensureColumn("runtime_nodes", "last_seen_at", "text");
+    this.ensureColumn("runtime_nodes", "version", "text");
+    this.ensureColumn("runtime_nodes", "capacity_json", "text");
     this.db.exec(migrations);
   }
 
@@ -121,13 +139,23 @@ class SqliteControlPlaneRepository implements ControlPlaneRepository {
             host,
             path_prefix,
             deployment_id,
+            targets_json,
             updated_at
-          ) values (?, ?, ?, ?, ?, ?)
+          ) values (?, ?, ?, ?, ?, ?, ?)
           on conflict(project_id, host, path_prefix) do update set
             deployment_id = excluded.deployment_id,
+            targets_json = excluded.targets_json,
             updated_at = excluded.updated_at`,
         )
-        .run(route.id, route.projectId, route.host, route.pathPrefix, route.deploymentId, route.updatedAt);
+        .run(
+          route.id,
+          route.projectId,
+          route.host,
+          route.pathPrefix,
+          route.deploymentId,
+          JSON.stringify(route.targets),
+          route.updatedAt,
+        );
       const row = this.db
         .prepare("select * from routes where project_id = ? and host = ? and path_prefix = ?")
         .get(route.projectId, route.host, route.pathPrefix);
@@ -142,6 +170,112 @@ class SqliteControlPlaneRepository implements ControlPlaneRepository {
       .prepare("select * from routes order by host asc, length(path_prefix) desc, path_prefix asc")
       .all();
     return rows.map(routeFromRow);
+  }
+
+  createRuntimeNode(node: RuntimeNode): RuntimeNode {
+    try {
+      this.db
+        .prepare(
+          `insert into runtime_nodes (
+            id,
+            url,
+            status,
+            registered_at,
+            last_seen_at,
+            version,
+            capacity_json
+          ) values (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          node.id,
+          node.url,
+          node.status,
+          node.registeredAt,
+          node.lastSeenAt ?? null,
+          node.version ?? null,
+          node.capacity ? JSON.stringify(node.capacity) : null,
+        );
+      return node;
+    } catch (error) {
+      throw writeError("runtime node", node.id, error);
+    }
+  }
+
+  getRuntimeNode(id: string): RuntimeNode | undefined {
+    const row = this.db.prepare("select * from runtime_nodes where id = ?").get(id);
+    return row ? runtimeNodeFromRow(row) : undefined;
+  }
+
+  updateRuntimeNodeHeartbeat(node: RuntimeNode): RuntimeNode {
+    const result = this.db
+      .prepare(
+        `update runtime_nodes set
+          status = ?,
+          last_seen_at = ?,
+          version = ?,
+          capacity_json = ?
+        where id = ?`,
+      )
+      .run(
+        node.status,
+        node.lastSeenAt ?? null,
+        node.version ?? null,
+        node.capacity ? JSON.stringify(node.capacity) : null,
+        node.id,
+      );
+    if (result.changes === 0) {
+      throw new ControlPlaneError("not_found", `runtime node ${node.id} was not found`);
+    }
+    return this.getRuntimeNode(node.id) as RuntimeNode;
+  }
+
+  listRuntimeNodes(): RuntimeNode[] {
+    const rows = this.db.prepare("select * from runtime_nodes order by id asc").all();
+    return rows.map(runtimeNodeFromRow);
+  }
+
+  createRouteSnapshotPublication(
+    publication: RouteSnapshotPublication,
+  ): RouteSnapshotPublication {
+    try {
+      this.db
+        .prepare(
+          `insert into route_snapshot_publications (
+            id,
+            snapshot_generated_at,
+            routes,
+            ok,
+            targets_json,
+            created_at
+          ) values (?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          publication.id,
+          publication.snapshotGeneratedAt,
+          publication.routes,
+          publication.ok ? 1 : 0,
+          JSON.stringify(publication.targets),
+          publication.createdAt,
+        );
+      return publication;
+    } catch (error) {
+      throw writeError("route snapshot publication", publication.id, error);
+    }
+  }
+
+  listRouteSnapshotPublications(): RouteSnapshotPublication[] {
+    const rows = this.db
+      .prepare("select * from route_snapshot_publications order by created_at desc, id desc")
+      .all();
+    return rows.map(routeSnapshotPublicationFromRow);
+  }
+
+  private ensureColumn(table: string, column: string, definition: string) {
+    const rows = this.db.prepare(`pragma table_info(${table})`).all();
+    if (rows.some((row: any) => row.name === column)) {
+      return;
+    }
+    this.db.exec(`alter table ${table} add column ${column} ${definition}`);
   }
 }
 
@@ -188,7 +322,40 @@ function routeFromRow(row: any): RoutePointer {
     host: row.host,
     pathPrefix: row.path_prefix,
     deploymentId: row.deployment_id,
+    targets: row.targets_json
+      ? JSON.parse(row.targets_json)
+      : [{ deploymentId: row.deployment_id, weight: 100 }],
     updatedAt: row.updated_at,
+  };
+}
+
+function runtimeNodeFromRow(row: any): RuntimeNode {
+  const node: RuntimeNode = {
+    id: row.id,
+    url: row.url,
+    status: row.status ?? "active",
+    registeredAt: row.registered_at,
+  };
+  if (row.last_seen_at) {
+    node.lastSeenAt = row.last_seen_at;
+  }
+  if (row.version) {
+    node.version = row.version;
+  }
+  if (row.capacity_json) {
+    node.capacity = JSON.parse(row.capacity_json);
+  }
+  return node;
+}
+
+function routeSnapshotPublicationFromRow(row: any): RouteSnapshotPublication {
+  return {
+    id: row.id,
+    snapshotGeneratedAt: row.snapshot_generated_at,
+    routes: row.routes,
+    ok: row.ok === 1,
+    targets: JSON.parse(row.targets_json),
+    createdAt: row.created_at,
   };
 }
 
@@ -243,10 +410,30 @@ create table if not exists routes (
   host text not null,
   path_prefix text not null,
   deployment_id text not null,
+  targets_json text,
   updated_at text not null,
   unique (project_id, host, path_prefix),
   foreign key (project_id) references projects(id),
   foreign key (deployment_id) references deployments(id)
+);
+
+create table if not exists runtime_nodes (
+  id text primary key,
+  url text not null unique,
+  status text not null default 'active',
+  last_seen_at text,
+  version text,
+  capacity_json text,
+  registered_at text not null
+);
+
+create table if not exists route_snapshot_publications (
+  id text primary key,
+  snapshot_generated_at text not null,
+  routes integer not null,
+  ok integer not null,
+  targets_json text not null,
+  created_at text not null
 );
 `;
 

@@ -105,6 +105,45 @@ test("runtime supervisor uses the latest loaded route snapshot", () => {
   assert.equal(supervisor.matchRoute({ host: "hello.example.dev", path: "/" })?.deploymentId, "dep_v2");
 });
 
+test("runtime supervisor selects weighted rollout targets deterministically", async () => {
+  const calls: string[] = [];
+  const baseRoute = route("dep_blue", "hello.example.dev", "/", digest("blue"), "file:///tmp/blue.wasm");
+  baseRoute.targets = [
+    snapshotTarget("dep_blue", 1, digest("blue"), "file:///tmp/blue.wasm"),
+    snapshotTarget("dep_green", 1, digest("green"), "file:///tmp/green.wasm"),
+  ];
+  const supervisor = createRuntimeSupervisor({
+    snapshot: snapshot([baseRoute]),
+    artifactStore: {
+      async materialize(artifact) {
+        return {
+          path: new URL(artifact.location).pathname,
+          digest: artifact.digest,
+          location: artifact.location,
+          verified: true,
+        };
+      },
+    },
+    backend: {
+      async compileComponent(request) {
+        calls.push(request.deploymentId);
+        return {
+          deploymentId: request.deploymentId,
+          backend: "wasmtime",
+          componentPath: request.artifact.path,
+          precompiledPath: `/cache/${request.deploymentId}.cwasm`,
+          cached: false,
+        };
+      },
+    },
+  });
+
+  await supervisor.prepareRoute({ host: "hello.example.dev", path: "/a" });
+  await supervisor.prepareRoute({ host: "hello.example.dev", path: "/b" });
+
+  assert.deepEqual(new Set(calls), new Set(["dep_blue", "dep_green"]));
+});
+
 test("file artifact store verifies sha256 digests", async () => {
   const dir = await mkdtemp(join(tmpdir(), "wasmplane-artifact-"));
   const artifactPath = join(dir, "component.wasm");
@@ -492,6 +531,40 @@ function route(
     pathPrefix,
     projectId: "prj_hello",
     deploymentId,
+    world: MVP_WORKER_WORLD,
+    runtime: { backend: "wasmtime", version: "wasmtime-42", wasi: MVP_WASI_PROFILE },
+    limits: {
+      cpuMs: 50,
+      memoryMb: 64,
+      wallMs: 1000,
+      subrequests: 20,
+      responseBytes: 1048576,
+    },
+    capabilities: {
+      outboundHttp: { enabled: false, allow: [] },
+      kv: [],
+      secrets: [],
+      arbitraryFilesystem: false,
+      arbitrarySockets: false,
+      processSpawn: false,
+    },
+    artifact: {
+      id: `art_${deploymentId}`,
+      digest: artifactDigest,
+      location,
+    },
+  };
+}
+
+function snapshotTarget(
+  deploymentId: string,
+  weight: number,
+  artifactDigest: string,
+  location: string,
+): RouteSnapshot["routes"][number]["targets"][number] {
+  return {
+    deploymentId,
+    weight,
     world: MVP_WORKER_WORLD,
     runtime: { backend: "wasmtime", version: "wasmtime-42", wasi: MVP_WASI_PROFILE },
     limits: {

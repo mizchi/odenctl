@@ -134,6 +134,113 @@ test("deployment contract rejects runtimes and worlds outside the MVP contract",
   );
 });
 
+test("registers runtime nodes for route snapshot publication", () => {
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+  });
+
+  const node = control.registerRuntimeNode({
+    id: "rt_local",
+    url: "http://127.0.0.1:8788/",
+  });
+
+  assert.equal(node.id, "rt_local");
+  assert.equal(node.url, "http://127.0.0.1:8788");
+  assert.equal(node.status, "active");
+  assert.equal(node.registeredAt, fixedNow());
+  assert.deepEqual(control.listRuntimeNodes(), [node]);
+
+  assert.throws(
+    () =>
+      control.registerRuntimeNode({
+        id: "rt_bad",
+        url: "file:///tmp/runtime.sock",
+      }),
+    /runtime node url/,
+  );
+});
+
+test("tracks runtime node heartbeat and excludes inactive nodes from publish targets", () => {
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+  });
+
+  control.registerRuntimeNode({ id: "rt_active", url: "http://127.0.0.1:8788" });
+  control.registerRuntimeNode({ id: "rt_offline", url: "http://127.0.0.1:8789" });
+
+  const heartbeat = control.recordRuntimeNodeHeartbeat({
+    id: "rt_active",
+    version: "wasmplane-runtime/0.1.0",
+    capacity: { concurrentRequests: 128, memoryMb: 4096 },
+  });
+  control.recordRuntimeNodeHeartbeat({ id: "rt_offline", status: "offline" });
+
+  assert.equal(heartbeat.status, "active");
+  assert.equal(heartbeat.lastSeenAt, fixedNow());
+  assert.equal(heartbeat.version, "wasmplane-runtime/0.1.0");
+  assert.deepEqual(heartbeat.capacity, { concurrentRequests: 128, memoryMb: 4096 });
+  assert.deepEqual(
+    control.listActiveRuntimeNodes().map((node) => node.id),
+    ["rt_active"],
+  );
+});
+
+test("records route snapshot publication history", () => {
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+  });
+
+  const publication = control.recordRouteSnapshotPublication({
+    snapshotGeneratedAt: "2026-06-26T09:59:00.000Z",
+    routes: 2,
+    ok: false,
+    targets: [
+      { id: "rt_active", url: "http://127.0.0.1:8788", ok: true, status: 200, routes: 2 },
+      { id: "rt_offline", url: "http://127.0.0.1:8789", ok: false, error: "offline" },
+    ],
+  });
+
+  assert.equal(publication.id, "pub_1");
+  assert.equal(publication.createdAt, fixedNow());
+  assert.deepEqual(control.listRouteSnapshotPublications(), [publication]);
+});
+
+test("route snapshots can carry weighted rollout targets", () => {
+  const control = createSeededControlPlane();
+  const v1 = control.createDeployment(seedDeployment("dep_v1", "art_v1"));
+  const v2 = control.createDeployment(seedDeployment("dep_v2", "art_v2"));
+
+  control.pointRoute({
+    projectId: v1.projectId,
+    host: "hello.example.dev",
+    pathPrefix: "/",
+    targets: [
+      { deploymentId: v1.id, weight: 90 },
+      { deploymentId: v2.id, weight: 10 },
+    ],
+  });
+
+  const route = control.createRouteSnapshot().routes[0];
+  assert.equal(route?.deploymentId, "dep_v1");
+  assert.deepEqual(
+    route?.targets.map((target) => ({
+      deploymentId: target.deploymentId,
+      weight: target.weight,
+      digest: target.artifact.digest,
+    })),
+    [
+      { deploymentId: "dep_v1", weight: 90, digest: digest("v1") },
+      { deploymentId: "dep_v2", weight: 10, digest: digest("v2") },
+    ],
+  );
+});
+
 function createSeededControlPlane() {
   const control = createControlPlane({
     repository: createMemoryRepository(),

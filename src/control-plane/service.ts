@@ -6,6 +6,12 @@ import type {
   Project,
   RoutePointer,
   RouteSnapshot,
+  RouteSnapshotPublication,
+  RouteSnapshotPublicationTarget,
+  RouteTarget,
+  RuntimeNode,
+  RuntimeNodeCapacity,
+  RuntimeNodeStatus,
   RuntimeLimits,
   RuntimeSpec,
 } from "./contracts.ts";
@@ -19,6 +25,10 @@ import {
   normalizePathPrefix,
   normalizeProjectName,
   normalizeRuntime,
+  normalizeRouteTargets,
+  normalizeRuntimeNodeCapacity,
+  normalizeRuntimeNodeStatus,
+  normalizeRuntimeNodeUrl,
   normalizeSizeBytes,
   normalizeWorld,
   optionalId,
@@ -60,7 +70,27 @@ export interface PointRouteInput {
   projectId: string;
   host: string;
   pathPrefix: string;
-  deploymentId: string;
+  deploymentId?: string;
+  targets?: RouteTarget[];
+}
+
+export interface RegisterRuntimeNodeInput {
+  id?: string;
+  url: string;
+}
+
+export interface RecordRuntimeNodeHeartbeatInput {
+  id: string;
+  status?: RuntimeNodeStatus;
+  version?: string;
+  capacity?: RuntimeNodeCapacity;
+}
+
+export interface RecordRouteSnapshotPublicationInput {
+  snapshotGeneratedAt: string;
+  routes: number;
+  ok: boolean;
+  targets: RouteSnapshotPublicationTarget[];
 }
 
 export function createControlPlane(options: ControlPlaneOptions) {
@@ -112,9 +142,12 @@ export function createControlPlane(options: ControlPlaneOptions) {
 
   function pointRoute(input: PointRouteInput): RoutePointer {
     requireProject(repository, input.projectId);
-    const deployment = requireDeployment(repository, input.deploymentId);
-    if (deployment.projectId !== input.projectId) {
-      throw new ControlPlaneError("validation", "route deployment must belong to the same project");
+    const targets = normalizeRouteTargets(input.targets, input.deploymentId);
+    for (const target of targets) {
+      const deployment = requireDeployment(repository, target.deploymentId);
+      if (deployment.projectId !== input.projectId) {
+        throw new ControlPlaneError("validation", "route deployment must belong to the same project");
+      }
     }
 
     const route: RoutePointer = {
@@ -122,7 +155,8 @@ export function createControlPlane(options: ControlPlaneOptions) {
       projectId: input.projectId,
       host: normalizeHost(input.host),
       pathPrefix: normalizePathPrefix(input.pathPrefix),
-      deploymentId: input.deploymentId,
+      deploymentId: targets[0].deploymentId,
+      targets,
       updatedAt: now(),
     };
     return repository.upsertRoute(route);
@@ -130,21 +164,22 @@ export function createControlPlane(options: ControlPlaneOptions) {
 
   function createRouteSnapshot(): RouteSnapshot {
     const routes = repository.listRoutes().map((route) => {
-      const deployment = requireDeployment(repository, route.deploymentId);
-      const artifact = requireArtifact(repository, deployment.artifactId);
+      const targets = route.targets.map((target) => routeSnapshotTarget(target));
+      const primary = targets[0];
       return {
         host: route.host,
         pathPrefix: route.pathPrefix,
         projectId: route.projectId,
-        deploymentId: deployment.id,
-        world: MVP_WORKER_WORLD,
-        runtime: deployment.runtime,
-        limits: deployment.limits,
-        capabilities: deployment.capabilities,
+        deploymentId: primary.deploymentId,
+        targets,
+        world: primary.world,
+        runtime: primary.runtime,
+        limits: primary.limits,
+        capabilities: primary.capabilities,
         artifact: {
-          id: artifact.id,
-          digest: artifact.digest,
-          location: artifact.location,
+          id: primary.artifact.id,
+          digest: primary.artifact.digest,
+          location: primary.artifact.location,
         },
       };
     });
@@ -156,13 +191,87 @@ export function createControlPlane(options: ControlPlaneOptions) {
     };
   }
 
+  function registerRuntimeNode(input: RegisterRuntimeNodeInput): RuntimeNode {
+    const node: RuntimeNode = {
+      id: optionalId(input.id, "runtime node id") ?? idGenerator("rt"),
+      url: normalizeRuntimeNodeUrl(input.url),
+      status: "active",
+      registeredAt: now(),
+    };
+    return repository.createRuntimeNode(node);
+  }
+
+  function recordRuntimeNodeHeartbeat(input: RecordRuntimeNodeHeartbeatInput): RuntimeNode {
+    const existing = repository.getRuntimeNode(input.id);
+    if (!existing) {
+      throw new ControlPlaneError("not_found", `runtime node ${input.id} was not found`);
+    }
+    const node: RuntimeNode = {
+      ...existing,
+      status: normalizeRuntimeNodeStatus(input.status),
+      lastSeenAt: now(),
+      version: input.version ?? existing.version,
+      capacity: normalizeRuntimeNodeCapacity(input.capacity) ?? existing.capacity,
+    };
+    return repository.updateRuntimeNodeHeartbeat(node);
+  }
+
+  function listRuntimeNodes(): RuntimeNode[] {
+    return repository.listRuntimeNodes();
+  }
+
+  function listActiveRuntimeNodes(): RuntimeNode[] {
+    return repository.listRuntimeNodes().filter((node) => node.status === "active");
+  }
+
+  function recordRouteSnapshotPublication(
+    input: RecordRouteSnapshotPublicationInput,
+  ): RouteSnapshotPublication {
+    return repository.createRouteSnapshotPublication({
+      id: idGenerator("pub"),
+      snapshotGeneratedAt: input.snapshotGeneratedAt,
+      routes: input.routes,
+      ok: input.ok,
+      targets: input.targets,
+      createdAt: now(),
+    });
+  }
+
+  function listRouteSnapshotPublications(): RouteSnapshotPublication[] {
+    return repository.listRouteSnapshotPublications();
+  }
+
   return {
     createProject,
     createArtifact,
     createDeployment,
     pointRoute,
     createRouteSnapshot,
+    registerRuntimeNode,
+    recordRuntimeNodeHeartbeat,
+    listRuntimeNodes,
+    listActiveRuntimeNodes,
+    recordRouteSnapshotPublication,
+    listRouteSnapshotPublications,
   };
+
+  function routeSnapshotTarget(target: RouteTarget) {
+    const deployment = requireDeployment(repository, target.deploymentId);
+    const artifact = requireArtifact(repository, deployment.artifactId);
+    return {
+      deploymentId: deployment.id,
+      weight: target.weight,
+      world: MVP_WORKER_WORLD,
+      runtime: deployment.runtime,
+      limits: deployment.limits,
+      capabilities: deployment.capabilities,
+      artifact: {
+        id: artifact.id,
+        digest: artifact.digest,
+        location: artifact.location,
+      },
+    };
+  }
 }
 
 function requireProject(repository: ControlPlaneRepository, id: string): Project {

@@ -1,6 +1,11 @@
 import { createServer } from "node:http";
-import type { RouteSnapshot } from "../control-plane/contracts.ts";
+import type {
+  RouteSnapshot,
+  RouteSnapshotPublication,
+  RuntimeNode,
+} from "../control-plane/contracts.ts";
 import { ControlPlaneError, isControlPlaneError } from "../control-plane/errors.ts";
+import { ingestLocalArtifact } from "../control-plane/local-artifacts.ts";
 import {
   type FetchLike,
   publishRouteSnapshot,
@@ -14,8 +19,15 @@ export interface HttpAppOptions {
     createDeployment(input: any): unknown;
     pointRoute(input: any): unknown;
     createRouteSnapshot(): RouteSnapshot;
+    registerRuntimeNode(input: any): RuntimeNode;
+    recordRuntimeNodeHeartbeat(input: any): RuntimeNode;
+    listRuntimeNodes(): RuntimeNode[];
+    listActiveRuntimeNodes(): RuntimeNode[];
+    recordRouteSnapshotPublication(input: any): RouteSnapshotPublication;
+    listRouteSnapshotPublications(): RouteSnapshotPublication[];
   };
   runtimeNodes?: RuntimeNodeTarget[];
+  artifactStoreDir?: string;
   fetch?: FetchLike;
 }
 
@@ -37,6 +49,28 @@ export function createHttpApp(options: HttpAppOptions) {
         writeJson(response, 201, options.controlPlane.createArtifact(await readJson(request)));
         return;
       }
+      if (method === "POST" && url.pathname === "/artifacts/local") {
+        if (!options.artifactStoreDir) {
+          throw new ControlPlaneError("validation", "local artifact store is not configured");
+        }
+        const input = objectRecord(await readJson(request));
+        const ingested = await ingestLocalArtifact({
+          storeDir: options.artifactStoreDir,
+          bytesBase64: input.bytesBase64,
+        });
+        writeJson(
+          response,
+          201,
+          options.controlPlane.createArtifact({
+            id: input.id,
+            projectId: input.projectId,
+            digest: ingested.digest,
+            location: ingested.location,
+            sizeBytes: ingested.sizeBytes,
+          }),
+        );
+        return;
+      }
       if (method === "POST" && url.pathname === "/deployments") {
         writeJson(response, 201, options.controlPlane.createDeployment(await readJson(request)));
         return;
@@ -45,12 +79,32 @@ export function createHttpApp(options: HttpAppOptions) {
         writeJson(response, 200, options.controlPlane.pointRoute(await readJson(request)));
         return;
       }
+      if (method === "POST" && url.pathname === "/runtime-nodes") {
+        writeJson(response, 201, options.controlPlane.registerRuntimeNode(await readJson(request)));
+        return;
+      }
+      const runtimeNodeHeartbeat = runtimeNodeHeartbeatMatch(method, url.pathname);
+      if (runtimeNodeHeartbeat) {
+        writeJson(
+          response,
+          200,
+          options.controlPlane.recordRuntimeNodeHeartbeat({
+            ...(await readJson(request)),
+            id: runtimeNodeHeartbeat.id,
+          }),
+        );
+        return;
+      }
+      if (method === "GET" && url.pathname === "/runtime-nodes") {
+        writeJson(response, 200, options.controlPlane.listRuntimeNodes());
+        return;
+      }
       if (method === "GET" && url.pathname === "/snapshots/routes") {
         writeJson(response, 200, options.controlPlane.createRouteSnapshot());
         return;
       }
       if (method === "POST" && url.pathname === "/snapshots/routes/publish") {
-        const runtimeNodes = options.runtimeNodes ?? [];
+        const runtimeNodes = publishTargets(options);
         if (runtimeNodes.length === 0) {
           throw new ControlPlaneError("validation", "no runtime nodes are configured");
         }
@@ -58,8 +112,12 @@ export function createHttpApp(options: HttpAppOptions) {
         writeJson(
           response,
           200,
-          await publishRouteSnapshot(snapshot, runtimeNodes, options.fetch ?? fetch),
+          await publishAndRecordRouteSnapshot(options, snapshot, runtimeNodes),
         );
+        return;
+      }
+      if (method === "GET" && url.pathname === "/snapshots/routes/publishes") {
+        writeJson(response, 200, options.controlPlane.listRouteSnapshotPublications());
         return;
       }
 
@@ -102,6 +160,50 @@ export function createHttpApp(options: HttpAppOptions) {
   };
 }
 
+function publishTargets(options: HttpAppOptions): RuntimeNodeTarget[] {
+  const targets = [
+    ...(options.runtimeNodes ?? []),
+    ...options.controlPlane.listActiveRuntimeNodes(),
+  ];
+  const seen = new Set<string>();
+  return targets.filter((target) => {
+    if (seen.has(target.url)) {
+      return false;
+    }
+    seen.add(target.url);
+    return true;
+  });
+}
+
+async function publishAndRecordRouteSnapshot(
+  options: HttpAppOptions,
+  snapshot: RouteSnapshot,
+  runtimeNodes: RuntimeNodeTarget[],
+) {
+  const report = await publishRouteSnapshot(snapshot, runtimeNodes, options.fetch ?? fetch);
+  const publication = options.controlPlane.recordRouteSnapshotPublication({
+    snapshotGeneratedAt: report.snapshot.generatedAt,
+    routes: report.snapshot.routes,
+    ok: report.ok,
+    targets: report.targets,
+  });
+  return {
+    ...report,
+    publicationId: publication.id,
+  };
+}
+
+function runtimeNodeHeartbeatMatch(method: string, pathname: string): { id: string } | undefined {
+  if (method !== "POST") {
+    return undefined;
+  }
+  const match = /^\/runtime-nodes\/([^/]+)\/heartbeat$/.exec(pathname);
+  if (!match) {
+    return undefined;
+  }
+  return { id: decodeURIComponent(match[1]) };
+}
+
 async function readJson(request: any): Promise<unknown> {
   const chunks = [];
   for await (const chunk of request) {
@@ -112,6 +214,13 @@ async function readJson(request: any): Promise<unknown> {
     return {};
   }
   return JSON.parse(body);
+}
+
+function objectRecord(value: unknown): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new ControlPlaneError("validation", "request body must be an object");
+  }
+  return value as Record<string, unknown>;
 }
 
 function writeJson(response: any, status: number, value: unknown) {

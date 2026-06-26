@@ -47,10 +47,7 @@ test(
       idGenerator: sequenceIds(),
       now: fixedNow,
     });
-    const controlApp = createHttpApp({
-      controlPlane: control,
-      runtimeNodes: [{ id: "local-runtime", url: runtimeBaseUrl }],
-    });
+    const controlApp = createHttpApp({ controlPlane: control });
     const controlServer = await controlApp.listen({ port: 0, host: "127.0.0.1" });
     const controlAddress = controlServer.address();
     assert.equal(typeof controlAddress, "object");
@@ -58,6 +55,10 @@ test(
     const controlBaseUrl = `http://127.0.0.1:${controlAddress.port}`;
 
     try {
+      await postJson(controlBaseUrl, "/runtime-nodes", {
+        id: "local-runtime",
+        url: runtimeBaseUrl,
+      });
       const project = await postJson(controlBaseUrl, "/projects", { name: "hello" });
       const artifact = await postJson(controlBaseUrl, "/artifacts", {
         projectId: project.id,

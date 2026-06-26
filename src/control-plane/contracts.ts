@@ -78,7 +78,49 @@ export interface RoutePointer {
   host: string;
   pathPrefix: string;
   deploymentId: string;
+  targets: RouteTarget[];
   updatedAt: string;
+}
+
+export interface RouteTarget {
+  deploymentId: string;
+  weight: number;
+}
+
+export type RuntimeNodeStatus = "active" | "draining" | "offline";
+
+export interface RuntimeNodeCapacity {
+  concurrentRequests: number;
+  memoryMb: number;
+}
+
+export interface RuntimeNode {
+  id: string;
+  url: string;
+  status: RuntimeNodeStatus;
+  registeredAt: string;
+  lastSeenAt?: string;
+  version?: string;
+  capacity?: RuntimeNodeCapacity;
+}
+
+export interface RouteSnapshotPublication {
+  id: string;
+  snapshotGeneratedAt: string;
+  routes: number;
+  ok: boolean;
+  targets: RouteSnapshotPublicationTarget[];
+  createdAt: string;
+}
+
+export interface RouteSnapshotPublicationTarget {
+  id?: string;
+  url: string;
+  ok: boolean;
+  status?: number;
+  routes?: number;
+  generatedAt?: string;
+  error?: string;
 }
 
 export interface RouteSnapshot {
@@ -92,6 +134,21 @@ export interface RouteSnapshotEntry {
   pathPrefix: string;
   projectId: string;
   deploymentId: string;
+  targets: RouteSnapshotTarget[];
+  world: typeof MVP_WORKER_WORLD;
+  runtime: RuntimeSpec;
+  limits: RuntimeLimits;
+  capabilities: CapabilityPolicy;
+  artifact: {
+    id: string;
+    digest: string;
+    location: string;
+  };
+}
+
+export interface RouteSnapshotTarget {
+  deploymentId: string;
+  weight: number;
   world: typeof MVP_WORKER_WORLD;
   runtime: RuntimeSpec;
   limits: RuntimeLimits;
@@ -203,6 +260,77 @@ export function normalizePathPrefix(value: unknown): string {
     throw new ControlPlaneError("validation", "route pathPrefix must start with /");
   }
   return pathPrefix;
+}
+
+export function normalizeRuntimeNodeUrl(value: unknown): string {
+  if (typeof value !== "string") {
+    throw new ControlPlaneError("validation", "runtime node url must be a string");
+  }
+  let url: URL;
+  try {
+    url = new URL(value.trim());
+  } catch {
+    throw new ControlPlaneError("validation", "runtime node url must be an http(s) URL");
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new ControlPlaneError("validation", "runtime node url must be an http(s) URL");
+  }
+  url.pathname = url.pathname.replace(/\/+$/, "");
+  if (url.pathname.length === 0) {
+    url.pathname = "/";
+  }
+  url.search = "";
+  url.hash = "";
+  return url.toString().replace(/\/+$/, "");
+}
+
+export function normalizeRuntimeNodeStatus(value: unknown): RuntimeNodeStatus {
+  if (value === undefined) {
+    return "active";
+  }
+  if (value === "active" || value === "draining" || value === "offline") {
+    return value;
+  }
+  throw new ControlPlaneError("validation", "runtime node status must be active, draining, or offline");
+}
+
+export function normalizeRuntimeNodeCapacity(value: unknown): RuntimeNodeCapacity | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const record = objectRecord(value, "runtime node capacity");
+  return {
+    concurrentRequests: positiveInteger(
+      record.concurrentRequests,
+      "runtime node capacity.concurrentRequests",
+    ),
+    memoryMb: positiveInteger(record.memoryMb, "runtime node capacity.memoryMb"),
+  };
+}
+
+export function normalizeRouteTargets(value: unknown, fallbackDeploymentId?: string): RouteTarget[] {
+  if (value === undefined) {
+    if (!fallbackDeploymentId) {
+      throw new ControlPlaneError("validation", "route deploymentId or targets are required");
+    }
+    return [{ deploymentId: nonEmptyString(fallbackDeploymentId, "route deploymentId"), weight: 100 }];
+  }
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new ControlPlaneError("validation", "route targets must be a non-empty array");
+  }
+  const seen = new Set<string>();
+  return value.map((item, index) => {
+    const record = objectRecord(item, `route targets[${index}]`);
+    const deploymentId = nonEmptyString(record.deploymentId, `route targets[${index}].deploymentId`);
+    if (seen.has(deploymentId)) {
+      throw new ControlPlaneError("validation", `route target ${deploymentId} is duplicated`);
+    }
+    seen.add(deploymentId);
+    return {
+      deploymentId,
+      weight: positiveInteger(record.weight, `route targets[${index}].weight`),
+    };
+  });
 }
 
 export function optionalId(value: unknown, field: string): string | undefined {

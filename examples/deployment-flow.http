@@ -17,6 +17,16 @@ content-type: application/json
 
 ###
 
+POST http://127.0.0.1:8787/artifacts/local
+content-type: application/json
+
+{
+  "projectId": "prj_replace_me",
+  "bytesBase64": "AGFzbQEAAAA="
+}
+
+###
+
 POST http://127.0.0.1:8787/deployments
 content-type: application/json
 
@@ -60,4 +70,54 @@ content-type: application/json
 
 ###
 
+PUT http://127.0.0.1:8787/routes
+content-type: application/json
+
+{
+  "projectId": "prj_replace_me",
+  "host": "hello.example.dev",
+  "pathPrefix": "/",
+  "targets": [
+    { "deploymentId": "dep_stable_replace_me", "weight": 90 },
+    { "deploymentId": "dep_canary_replace_me", "weight": 10 }
+  ]
+}
+
+###
+
 GET http://127.0.0.1:8787/snapshots/routes
+
+###
+
+POST http://127.0.0.1:8787/runtime-nodes
+content-type: application/json
+
+{
+  "id": "rt_local",
+  "url": "http://127.0.0.1:8788"
+}
+
+###
+
+POST http://127.0.0.1:8787/runtime-nodes/rt_local/heartbeat
+content-type: application/json
+
+{
+  "version": "wasmplane-runtime/0.1.0",
+  "capacity": {
+    "concurrentRequests": 128,
+    "memoryMb": 4096
+  }
+}
+
+###
+
+GET http://127.0.0.1:8787/runtime-nodes
+
+###
+
+POST http://127.0.0.1:8787/snapshots/routes/publish
+
+###
+
+GET http://127.0.0.1:8787/snapshots/routes/publishes

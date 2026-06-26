@@ -1,5 +1,6 @@
 export { createControlPlane } from "./control-plane/service.ts";
 export { createMemoryRepository, createSqliteRepository } from "./control-plane/repository.ts";
+export { ingestLocalArtifact } from "./control-plane/local-artifacts.ts";
 export { publishRouteSnapshot, runtimeNodeTargetsFromEnv } from "./control-plane/snapshot-publisher.ts";
 export { createHttpApp } from "./http/app.ts";
 export { createFileArtifactStore } from "./runtime/artifacts.ts";

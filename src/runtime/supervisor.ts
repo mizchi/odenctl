@@ -43,10 +43,10 @@ export function createRuntimeSupervisor(options: RuntimeSupervisorOptions) {
     if (!route) {
       throw new RuntimeError("not_found", `no route matched ${input.host}${input.path}`);
     }
-    return prepareDeployment(route);
+    return prepareDeployment(selectRouteTarget(route, input));
   }
 
-  async function prepareDeployment(route: RouteSnapshotEntry): Promise<CompiledComponent> {
+  async function prepareDeployment(route: CompilableRouteTarget): Promise<CompiledComponent> {
     const existing = prepared.get(route.deploymentId);
     if (existing) {
       return existing;
@@ -60,7 +60,7 @@ export function createRuntimeSupervisor(options: RuntimeSupervisorOptions) {
     return promise;
   }
 
-  async function materializeAndCompile(route: RouteSnapshotEntry): Promise<CompiledComponent> {
+  async function materializeAndCompile(route: CompilableRouteTarget): Promise<CompiledComponent> {
     const artifact = await options.artifactStore.materialize(route.artifact);
     return options.backend.compileComponent({
       deploymentId: route.deploymentId,
@@ -86,6 +86,11 @@ export function createRuntimeSupervisor(options: RuntimeSupervisorOptions) {
     loadSnapshot,
   };
 }
+
+type CompilableRouteTarget = Pick<
+  RouteSnapshotEntry,
+  "deploymentId" | "projectId" | "world" | "runtime" | "limits" | "capabilities" | "artifact"
+>;
 
 function routePrecedence(left: RouteSnapshotEntry, right: RouteSnapshotEntry): number {
   const host = left.host.localeCompare(right.host);
@@ -118,4 +123,39 @@ function pathPrefixMatches(path: string, prefix: string): boolean {
   }
   const normalizedPrefix = prefix.endsWith("/") ? prefix : `${prefix}/`;
   return path.startsWith(normalizedPrefix);
+}
+
+function selectRouteTarget(route: RouteSnapshotEntry, input: RouteMatchInput): CompilableRouteTarget {
+  if (!route.targets || route.targets.length === 0) {
+    return route;
+  }
+  const totalWeight = route.targets.reduce((sum, target) => sum + target.weight, 0);
+  if (totalWeight <= 0) {
+    return route;
+  }
+  const slot = stableHash(`${normalizeHost(input.host)}${normalizePath(input.path)}`) % totalWeight;
+  let cursor = 0;
+  for (const target of route.targets) {
+    cursor += target.weight;
+    if (slot < cursor) {
+      return {
+        projectId: route.projectId,
+        deploymentId: target.deploymentId,
+        world: target.world,
+        runtime: target.runtime,
+        limits: target.limits,
+        capabilities: target.capabilities,
+        artifact: target.artifact,
+      };
+    }
+  }
+  return route;
+}
+
+function stableHash(value: string): number {
+  let hash = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash + value.charCodeAt(index)) >>> 0;
+  }
+  return hash;
 }
