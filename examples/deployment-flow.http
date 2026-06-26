@@ -1,0 +1,63 @@
+POST http://127.0.0.1:8787/projects
+content-type: application/json
+
+{"name":"hello"}
+
+###
+
+POST http://127.0.0.1:8787/artifacts
+content-type: application/json
+
+{
+  "projectId": "prj_replace_me",
+  "digest": "sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+  "location": "oci://registry.example.com/mizchi/hello:v1",
+  "sizeBytes": 42
+}
+
+###
+
+POST http://127.0.0.1:8787/deployments
+content-type: application/json
+
+{
+  "projectId": "prj_replace_me",
+  "artifactId": "art_replace_me",
+  "world": "myedge:runtime/worker@0.1.0",
+  "runtime": {
+    "backend": "wasmtime",
+    "version": "wasmtime-43",
+    "wasi": "wasip3"
+  },
+  "limits": {
+    "cpuMs": 50,
+    "memoryMb": 64,
+    "wallMs": 1000,
+    "subrequests": 20,
+    "responseBytes": 1048576
+  },
+  "capabilities": {
+    "outboundHttp": {
+      "enabled": true,
+      "allow": ["https://api.example.com"]
+    },
+    "kv": [],
+    "secrets": []
+  }
+}
+
+###
+
+PUT http://127.0.0.1:8787/routes
+content-type: application/json
+
+{
+  "projectId": "prj_replace_me",
+  "host": "hello.example.dev",
+  "pathPrefix": "/",
+  "deploymentId": "dep_replace_me"
+}
+
+###
+
+GET http://127.0.0.1:8787/snapshots/routes

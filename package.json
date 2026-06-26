@@ -1,0 +1,14 @@
+{
+  "name": "@mizchi/wasmplane",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "packageManager": "pnpm@10.33.0",
+  "scripts": {
+    "test": "node --experimental-strip-types --test tests/*.test.ts",
+    "start": "node --experimental-strip-types src/main.ts",
+    "runtime": "node --experimental-strip-types src/runtime/main.ts"
+  }
+}

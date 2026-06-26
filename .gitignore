@@ -1,0 +1,7 @@
+node_modules/
+target/
+.wasmplane/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+.DS_Store
