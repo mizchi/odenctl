@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { createServer } from "node:http";
 import { test } from "node:test";
 import {
   MVP_WASI_PROFILE,
@@ -7,6 +8,7 @@ import {
   type RouteSnapshot,
 } from "../src/control-plane/contracts.ts";
 import { createRuntimeNodeApp } from "../src/runtime/node-app.ts";
+import { registerRuntimeNode, sendRuntimeHeartbeat } from "../src/runtime/heartbeat.ts";
 import { createRuntimeSupervisor } from "../src/runtime/supervisor.ts";
 
 test("runtime node accepts route snapshots and invokes matched deployments", async () => {
@@ -95,6 +97,47 @@ test("runtime node accepts route snapshots and invokes matched deployments", asy
   }
 });
 
+test("runtime heartbeat client registers node and reports capacity", async () => {
+  const requests: Array<{ method: string; path: string; body: any }> = [];
+  const control = await listenControlPlaneSink(requests);
+
+  try {
+    await registerRuntimeNode({
+      controlPlaneUrl: control.baseUrl,
+      runtimeNodeId: "rt_local",
+      publicUrl: "http://127.0.0.1:8788",
+    });
+    await sendRuntimeHeartbeat({
+      controlPlaneUrl: control.baseUrl,
+      runtimeNodeId: "rt_local",
+      version: "wasmplane-runtime/0.1.0",
+      capacity: { concurrentRequests: 128, memoryMb: 4096 },
+    });
+
+    assert.deepEqual(requests, [
+      {
+        method: "POST",
+        path: "/runtime-nodes",
+        body: {
+          id: "rt_local",
+          url: "http://127.0.0.1:8788",
+        },
+      },
+      {
+        method: "POST",
+        path: "/runtime-nodes/rt_local/heartbeat",
+        body: {
+          status: "active",
+          version: "wasmplane-runtime/0.1.0",
+          capacity: { concurrentRequests: 128, memoryMb: 4096 },
+        },
+      },
+    ]);
+  } finally {
+    await control.close();
+  }
+});
+
 function snapshot(routes: RouteSnapshot["routes"]): RouteSnapshot {
   return {
     schemaVersion: 1,
@@ -141,4 +184,50 @@ function route(
 
 function digest(seed: string): string {
   return `sha256:${createHash("sha256").update(seed).digest("hex")}`;
+}
+
+async function listenControlPlaneSink(requests: Array<{ method: string; path: string; body: any }>) {
+  const server = createServer(async (request, response) => {
+    const url = new URL(request.url ?? "/", "http://control.local");
+    requests.push({
+      method: request.method ?? "GET",
+      path: url.pathname,
+      body: await readJson(request),
+    });
+    response.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+    response.end(JSON.stringify({ ok: true }));
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      server.off("error", reject);
+      resolve();
+    });
+  });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  return {
+    baseUrl: `http://127.0.0.1:${address.port}`,
+    close() {
+      return new Promise<void>((resolve, reject) => {
+        server.close((error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+          resolve();
+        });
+      });
+    },
+  };
+}
+
+async function readJson(request: any): Promise<unknown> {
+  const chunks = [];
+  for await (const chunk of request) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  const body = Buffer.concat(chunks).toString("utf8");
+  return body.trim().length > 0 ? JSON.parse(body) : {};
 }

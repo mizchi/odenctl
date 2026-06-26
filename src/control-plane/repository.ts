@@ -40,12 +40,7 @@ class SqliteControlPlaneRepository implements ControlPlaneRepository {
   constructor(db: DatabaseSync) {
     this.db = db;
     this.db.exec(schema);
-    this.ensureColumn("routes", "targets_json", "text");
-    this.ensureColumn("runtime_nodes", "status", "text not null default 'active'");
-    this.ensureColumn("runtime_nodes", "last_seen_at", "text");
-    this.ensureColumn("runtime_nodes", "version", "text");
-    this.ensureColumn("runtime_nodes", "capacity_json", "text");
-    this.db.exec(migrations);
+    this.runMigrations();
   }
 
   createProject(project: Project): Project {
@@ -270,12 +265,19 @@ class SqliteControlPlaneRepository implements ControlPlaneRepository {
     return rows.map(routeSnapshotPublicationFromRow);
   }
 
-  private ensureColumn(table: string, column: string, definition: string) {
-    const rows = this.db.prepare(`pragma table_info(${table})`).all();
-    if (rows.some((row: any) => row.name === column)) {
-      return;
+  private runMigrations() {
+    for (const migration of migrations) {
+      const row = this.db
+        .prepare("select id from schema_migrations where id = ?")
+        .get(migration.id);
+      if (row) {
+        continue;
+      }
+      migration.apply(this.db);
+      this.db
+        .prepare("insert into schema_migrations (id, applied_at) values (?, ?)")
+        .run(migration.id, new Date().toISOString());
     }
-    this.db.exec(`alter table ${table} add column ${column} ${definition}`);
   }
 }
 
@@ -373,6 +375,11 @@ function writeError(kind: string, id: string, error: unknown): ControlPlaneError
 const schema = `
 pragma foreign_keys = on;
 
+create table if not exists schema_migrations (
+  id text primary key,
+  applied_at text not null
+);
+
 create table if not exists projects (
   id text primary key,
   name text not null unique,
@@ -437,6 +444,54 @@ create table if not exists route_snapshot_publications (
 );
 `;
 
-const migrations = `
-update deployments set wasi_version = 'wasip3' where wasi_version = '0.3';
-`;
+interface SchemaMigration {
+  id: string;
+  apply(db: DatabaseSync): void;
+}
+
+const migrations: SchemaMigration[] = [
+  {
+    id: "202606260001_wasip3_alias",
+    apply(db) {
+      db.exec("update deployments set wasi_version = 'wasip3' where wasi_version = '0.3'");
+    },
+  },
+  {
+    id: "202606260002_route_targets",
+    apply(db) {
+      ensureColumn(db, "routes", "targets_json", "text");
+    },
+  },
+  {
+    id: "202606260003_runtime_node_health",
+    apply(db) {
+      ensureColumn(db, "runtime_nodes", "status", "text not null default 'active'");
+      ensureColumn(db, "runtime_nodes", "last_seen_at", "text");
+      ensureColumn(db, "runtime_nodes", "version", "text");
+      ensureColumn(db, "runtime_nodes", "capacity_json", "text");
+    },
+  },
+  {
+    id: "202606260004_route_snapshot_publications",
+    apply(db) {
+      db.exec(`
+        create table if not exists route_snapshot_publications (
+          id text primary key,
+          snapshot_generated_at text not null,
+          routes integer not null,
+          ok integer not null,
+          targets_json text not null,
+          created_at text not null
+        )
+      `);
+    },
+  },
+];
+
+function ensureColumn(db: DatabaseSync, table: string, column: string, definition: string) {
+  const rows = db.prepare(`pragma table_info(${table})`).all();
+  if (rows.some((row: any) => row.name === column)) {
+    return;
+  }
+  db.exec(`alter table ${table} add column ${column} ${definition}`);
+}

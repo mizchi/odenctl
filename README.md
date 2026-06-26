@@ -16,17 +16,23 @@ The MVP follows the design memo in `/Users/mz/Downloads/wasi-edge-worker-platfor
 just test
 pnpm start
 just runtime
+just e2e
 ```
 
 The control plane listens on `http://127.0.0.1:8787` by default and stores state in
 `wasmplane.sqlite`. Set `WASMPLANE_DB`, `HOST`, or `PORT` to override this. Set
 `WASMPLANE_RUNTIME_NODES` to a comma-separated list of static runtime node base URLs, or register
-runtime nodes through `POST /runtime-nodes`, when using `POST /snapshots/routes/publish`. Local
-artifact ingestion stores bytes in `.wasmplane/artifacts` by default; set `WASMPLANE_ARTIFACT_DIR`
-to override it.
+runtime nodes through `POST /runtime-nodes`, when using `POST /snapshots/routes/publish`.
+Local artifact ingestion stores bytes in `.wasmplane/artifacts` by default; set
+`WASMPLANE_ARTIFACT_DIR` to override it. Local artifact ingestion validates components through
+`wasmplane-wasip3-host` by default; set `WASMPLANE_VALIDATE_LOCAL_ARTIFACTS=0` to disable that
+for development.
 
 The runtime node listens on `http://127.0.0.1:8788` by default. Set `RUNTIME_HOST`,
-`RUNTIME_PORT`, or `WASMPLANE_CACHE_DIR` to override this.
+`RUNTIME_PORT`, or `WASMPLANE_CACHE_DIR` to override this. Set `CONTROL_PLANE_URL` or
+`WASMPLANE_CONTROL_PLANE_URL` to make the runtime register itself and send heartbeat updates.
+`RUNTIME_PUBLIC_URL`, `RUNTIME_NODE_ID`, `RUNTIME_CONCURRENCY`, `RUNTIME_MEMORY_MB`, and
+`RUNTIME_HEARTBEAT_INTERVAL_MS` tune the heartbeat payload.
 
 Runtime-oriented tests expect these CLIs on `PATH`:
 
@@ -48,8 +54,15 @@ just guest-invoke
 ```
 
 `guest-build` uses a WASI preview1 reactor adapter when turning the Rust guest's
-`wasm32-wasip1` core module into a component. Override `WASI_PREVIEW1_ADAPTER` if the default
-local adapter path does not exist.
+`wasm32-wasip1` core module into a component. The default adapter comes from the
+`@bytecodealliance/jco` dev dependency, so `just e2e` works on a fresh checkout after `pnpm
+install --frozen-lockfile`. Override `WASI_PREVIEW1_ADAPTER` to use a different adapter.
+
+CI runs `just test` and `just e2e` on GitHub Actions. The workflow installs Node 24, Rust stable,
+`wasm32-wasip1`, `wasm-tools 1.245.1`, and `wit-bindgen-cli 0.51.0`.
+
+SQLite schema upgrades are tracked in `schema_migrations`; repository initialization applies
+missing migrations before serving requests.
 
 Runtime node endpoints:
 

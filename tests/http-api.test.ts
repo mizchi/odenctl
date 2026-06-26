@@ -335,6 +335,83 @@ test("HTTP API stores local artifact bytes and creates a file artifact", async (
   }
 });
 
+test("HTTP API validates local artifact bytes before creating artifacts", async () => {
+  const artifactDir = await mkdtemp(join(tmpdir(), "wasmplane-artifacts-"));
+  const validatorCalls: string[] = [];
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+  });
+  const app = createHttpApp({
+    controlPlane: control,
+    artifactStoreDir: artifactDir,
+    artifactValidator: {
+      async validate(input) {
+        validatorCalls.push(input.path);
+      },
+    },
+  });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const project = await postJson(baseUrl, "/projects", { name: "hello" });
+    const artifact = await postJson(baseUrl, "/artifacts/local", {
+      projectId: project.id,
+      bytesBase64: Buffer.from("component bytes").toString("base64"),
+    });
+
+    assert.equal(validatorCalls.length, 1);
+    assert.equal(validatorCalls[0], fileURLToPath(artifact.location));
+  } finally {
+    await app.close();
+  }
+});
+
+test("HTTP API rejects local artifacts that fail validation", async () => {
+  const artifactDir = await mkdtemp(join(tmpdir(), "wasmplane-artifacts-"));
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+  });
+  const app = createHttpApp({
+    controlPlane: control,
+    artifactStoreDir: artifactDir,
+    artifactValidator: {
+      async validate() {
+        throw new Error("not a component");
+      },
+    },
+  });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const project = await postJson(baseUrl, "/projects", { name: "hello" });
+    const response = await fetch(`${baseUrl}/artifacts/local`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        projectId: project.id,
+        bytesBase64: Buffer.from("bad component").toString("base64"),
+      }),
+    });
+
+    assert.equal(response.status, 400);
+    assert.match(await response.text(), /not a component/);
+  } finally {
+    await app.close();
+  }
+});
+
 test("HTTP API exposes route snapshot publication history", async () => {
   const receivedSnapshots: RouteSnapshot[] = [];
   const runtime = await listenRuntimeSnapshotSink(receivedSnapshots);

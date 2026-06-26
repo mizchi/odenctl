@@ -1,5 +1,6 @@
 import { createControlPlane } from "./control-plane/service.ts";
 import { createSqliteRepository } from "./control-plane/repository.ts";
+import { createWasip3HostArtifactValidator } from "./control-plane/artifact-validation.ts";
 import { runtimeNodeTargetsFromEnv } from "./control-plane/snapshot-publisher.ts";
 import { createHttpApp } from "./http/app.ts";
 
@@ -14,6 +15,12 @@ const controlPlane = createControlPlane({
 const app = createHttpApp({
   controlPlane,
   artifactStoreDir,
+  artifactValidator:
+    process.env.WASMPLANE_VALIDATE_LOCAL_ARTIFACTS === "0"
+      ? undefined
+      : createWasip3HostArtifactValidator({
+          hostBin: process.env.WASMPLANE_WASIP3_HOST_BIN,
+        }),
   runtimeNodes: runtimeNodeTargetsFromEnv(process.env.WASMPLANE_RUNTIME_NODES),
 });
 

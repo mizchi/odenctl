@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import { MVP_WASI_PROFILE } from "../src/control-plane/contracts.ts";
 import { createControlPlane } from "../src/control-plane/service.ts";
-import { createMemoryRepository } from "../src/control-plane/repository.ts";
+import { createMemoryRepository, createSqliteRepository } from "../src/control-plane/repository.ts";
 
 test("creates immutable wasmtime deployments with denied-by-default host capabilities", () => {
   const control = createControlPlane({
@@ -241,6 +245,58 @@ test("route snapshots can carry weighted rollout targets", () => {
   );
 });
 
+test("sqlite repository records schema migrations and upgrades existing databases", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "wasmplane-migrations-"));
+  const dbPath = join(dir, "control.sqlite");
+  const oldDb = new DatabaseSync(dbPath);
+  oldDb.exec(oldSchema);
+  oldDb.close();
+
+  const repository = createSqliteRepository(dbPath);
+  const control = createControlPlane({
+    repository,
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+  });
+
+  control.registerRuntimeNode({ id: "rt_local", url: "http://127.0.0.1:8788" });
+  control.recordRuntimeNodeHeartbeat({
+    id: "rt_local",
+    capacity: { concurrentRequests: 16, memoryMb: 1024 },
+  });
+  control.recordRouteSnapshotPublication({
+    snapshotGeneratedAt: fixedNow(),
+    routes: 0,
+    ok: true,
+    targets: [],
+  });
+
+  const db = new DatabaseSync(dbPath);
+  const migrationIds = db
+    .prepare("select id from schema_migrations order by id asc")
+    .all()
+    .map((row: any) => row.id);
+  const routeColumns = db
+    .prepare("pragma table_info(routes)")
+    .all()
+    .map((row: any) => row.name);
+  const runtimeNodeColumns = db
+    .prepare("pragma table_info(runtime_nodes)")
+    .all()
+    .map((row: any) => row.name);
+
+  assert.deepEqual(migrationIds, [
+    "202606260001_wasip3_alias",
+    "202606260002_route_targets",
+    "202606260003_runtime_node_health",
+    "202606260004_route_snapshot_publications",
+  ]);
+  assert.ok(routeColumns.includes("targets_json"));
+  assert.ok(runtimeNodeColumns.includes("status"));
+  assert.equal(db.prepare("select count(*) as count from route_snapshot_publications").get().count, 1);
+  db.close();
+});
+
 function createSeededControlPlane() {
   const control = createControlPlane({
     repository: createMemoryRepository(),
@@ -303,3 +359,56 @@ function fixedNow() {
 function digest(seed: string): string {
   return `sha256:${createHash("sha256").update(seed).digest("hex")}`;
 }
+
+const oldSchema = `
+pragma foreign_keys = on;
+
+create table projects (
+  id text primary key,
+  name text not null unique,
+  created_at text not null
+);
+
+create table artifacts (
+  id text primary key,
+  project_id text not null,
+  digest text not null unique,
+  location text not null,
+  size_bytes integer not null,
+  created_at text not null,
+  foreign key (project_id) references projects(id)
+);
+
+create table deployments (
+  id text primary key,
+  project_id text not null,
+  artifact_id text not null,
+  world text not null,
+  runtime_backend text not null,
+  runtime_version text not null,
+  wasi_version text not null,
+  limits_json text not null,
+  capabilities_json text not null,
+  created_at text not null,
+  foreign key (project_id) references projects(id),
+  foreign key (artifact_id) references artifacts(id)
+);
+
+create table routes (
+  id text primary key,
+  project_id text not null,
+  host text not null,
+  path_prefix text not null,
+  deployment_id text not null,
+  updated_at text not null,
+  unique (project_id, host, path_prefix),
+  foreign key (project_id) references projects(id),
+  foreign key (deployment_id) references deployments(id)
+);
+
+create table runtime_nodes (
+  id text primary key,
+  url text not null unique,
+  registered_at text not null
+);
+`;

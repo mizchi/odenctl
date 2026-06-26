@@ -1,9 +1,12 @@
 import { createServer } from "node:http";
+import { unlink } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import type {
   RouteSnapshot,
   RouteSnapshotPublication,
   RuntimeNode,
 } from "../control-plane/contracts.ts";
+import type { LocalArtifactValidator } from "../control-plane/artifact-validation.ts";
 import { ControlPlaneError, isControlPlaneError } from "../control-plane/errors.ts";
 import { ingestLocalArtifact } from "../control-plane/local-artifacts.ts";
 import {
@@ -28,6 +31,7 @@ export interface HttpAppOptions {
   };
   runtimeNodes?: RuntimeNodeTarget[];
   artifactStoreDir?: string;
+  artifactValidator?: LocalArtifactValidator;
   fetch?: FetchLike;
 }
 
@@ -58,6 +62,23 @@ export function createHttpApp(options: HttpAppOptions) {
           storeDir: options.artifactStoreDir,
           bytesBase64: input.bytesBase64,
         });
+        if (options.artifactValidator) {
+          const artifactPath = filePathFromLocation(ingested.location);
+          try {
+            await options.artifactValidator.validate({
+              path: artifactPath,
+              digest: ingested.digest,
+              location: ingested.location,
+            });
+          } catch (error) {
+            await unlink(artifactPath).catch(() => undefined);
+            if (isControlPlaneError(error)) {
+              throw error;
+            }
+            const message = error instanceof Error ? error.message : String(error);
+            throw new ControlPlaneError("validation", message);
+          }
+        }
         writeJson(
           response,
           201,
@@ -221,6 +242,14 @@ function objectRecord(value: unknown): Record<string, unknown> {
     throw new ControlPlaneError("validation", "request body must be an object");
   }
   return value as Record<string, unknown>;
+}
+
+function filePathFromLocation(location: string): string {
+  const url = new URL(location);
+  if (url.protocol !== "file:") {
+    throw new ControlPlaneError("validation", "local artifact location must be a file URL");
+  }
+  return fileURLToPath(url);
 }
 
 function writeJson(response: any, status: number, value: unknown) {
