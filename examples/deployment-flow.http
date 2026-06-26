@@ -27,6 +27,18 @@ content-type: application/json
 
 ###
 
+POST http://127.0.0.1:8787/secrets
+content-type: application/json
+
+{
+  "id": "sec_api_key",
+  "projectId": "prj_replace_me",
+  "name": "API key",
+  "value": "super-secret"
+}
+
+###
+
 POST http://127.0.0.1:8787/deployments
 content-type: application/json
 
@@ -43,7 +55,9 @@ content-type: application/json
     "cpuMs": 50,
     "memoryMb": 64,
     "wallMs": 1000,
+    "requestBytes": 1048576,
     "subrequests": 20,
+    "hostCalls": 100,
     "responseBytes": 1048576
   },
   "capabilities": {
@@ -52,8 +66,23 @@ content-type: application/json
       "allow": ["https://api.example.com"]
     },
     "kv": [],
-    "secrets": []
+    "secrets": [
+      { "binding": "API_KEY", "secretId": "sec_api_key" }
+    ]
   }
+}
+
+###
+
+GET http://127.0.0.1:8787/projects/prj_replace_me/secrets
+
+###
+
+PUT http://127.0.0.1:8787/secrets/sec_api_key
+content-type: application/json
+
+{
+  "value": "rotated-secret"
 }
 
 ###

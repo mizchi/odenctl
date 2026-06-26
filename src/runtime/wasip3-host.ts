@@ -109,12 +109,15 @@ export function createWasip3HostInvoker(options: Wasip3HostInvokerOptions = {}):
           request.method,
           "--uri",
           request.uri,
+          "--headers",
+          JSON.stringify(request.headers),
           "--body",
           Buffer.from(request.body).toString("utf8"),
-        ]);
+          ...invokePolicyArgs(request),
+        ], { timeoutMs: request.component.limits?.wallMs });
         return parseInvokeResponse(result.stdout);
       } catch (error) {
-        if (error instanceof RuntimeError && error.code === "invoke") {
+        if (error instanceof RuntimeError && (error.code === "invoke" || error.code === "timeout")) {
           throw error;
         }
         const message = error instanceof Error ? error.message : String(error);
@@ -122,6 +125,22 @@ export function createWasip3HostInvoker(options: Wasip3HostInvokerOptions = {}):
       }
     },
   };
+}
+
+function invokePolicyArgs(request: InvokeComponentRequest): string[] {
+  const args: string[] = [];
+  if (request.component.limits) {
+    args.push("--wall-ms", String(request.component.limits.wallMs));
+    args.push("--memory-mb", String(request.component.limits.memoryMb));
+    args.push("--request-bytes", String(request.component.limits.requestBytes));
+    args.push("--response-bytes", String(request.component.limits.responseBytes));
+    args.push("--subrequests", String(request.component.limits.subrequests));
+    args.push("--host-calls", String(request.component.limits.hostCalls));
+  }
+  if (request.component.capabilities) {
+    args.push("--capabilities", JSON.stringify(request.component.capabilities));
+  }
+  return args;
 }
 
 function parseInvokeResponse(stdout: string): InvokeComponentResponse {

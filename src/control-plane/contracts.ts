@@ -23,6 +23,14 @@ export interface Artifact {
   createdAt: string;
 }
 
+export interface Secret {
+  id: string;
+  projectId: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface RuntimeSpec {
   backend: RuntimeBackend;
   version: string;
@@ -33,7 +41,9 @@ export interface RuntimeLimits {
   cpuMs: number;
   memoryMb: number;
   wallMs: number;
+  requestBytes: number;
   subrequests: number;
+  hostCalls: number;
   responseBytes: number;
 }
 
@@ -192,6 +202,27 @@ export function normalizeSizeBytes(value: unknown): number {
   return positiveInteger(value, "artifact sizeBytes");
 }
 
+export function normalizeSecretName(value: unknown): string {
+  const name = nonEmptyString(value, "secret name");
+  if (name.length > 120 || /[\u0000-\u001f\u007f]/.test(name)) {
+    throw new ControlPlaneError(
+      "validation",
+      "secret name must be between 1 and 120 printable characters",
+    );
+  }
+  return name;
+}
+
+export function normalizeSecretValue(value: unknown): string {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new ControlPlaneError("validation", "secret value must be a non-empty string");
+  }
+  if (value.length > 65536) {
+    throw new ControlPlaneError("validation", "secret value must be at most 65536 characters");
+  }
+  return value;
+}
+
 export function normalizeWorld(value: unknown): typeof MVP_WORKER_WORLD {
   if (value !== MVP_WORKER_WORLD) {
     throw new ControlPlaneError("validation", `deployment world must be ${MVP_WORKER_WORLD}`);
@@ -219,7 +250,9 @@ export function normalizeLimits(value: unknown): RuntimeLimits {
     cpuMs: positiveInteger(record.cpuMs, "limits.cpuMs"),
     memoryMb: positiveInteger(record.memoryMb, "limits.memoryMb"),
     wallMs: positiveInteger(record.wallMs, "limits.wallMs"),
+    requestBytes: positiveInteger(record.requestBytes, "limits.requestBytes"),
     subrequests: positiveInteger(record.subrequests, "limits.subrequests"),
+    hostCalls: positiveInteger(record.hostCalls, "limits.hostCalls"),
     responseBytes: positiveInteger(record.responseBytes, "limits.responseBytes"),
   };
 }

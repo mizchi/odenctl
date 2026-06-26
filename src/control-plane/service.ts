@@ -14,6 +14,7 @@ import type {
   RuntimeNodeStatus,
   RuntimeLimits,
   RuntimeSpec,
+  Secret,
 } from "./contracts.ts";
 import {
   MVP_WORKER_WORLD,
@@ -29,6 +30,8 @@ import {
   normalizeRuntimeNodeCapacity,
   normalizeRuntimeNodeStatus,
   normalizeRuntimeNodeUrl,
+  normalizeSecretName,
+  normalizeSecretValue,
   normalizeSizeBytes,
   normalizeWorld,
   optionalId,
@@ -53,6 +56,30 @@ export interface CreateArtifactInput {
   digest: string;
   location: string;
   sizeBytes: number;
+}
+
+export interface CreateSecretInput {
+  id?: string;
+  projectId: string;
+  name: string;
+  value: string;
+}
+
+export interface GetSecretInput {
+  id: string;
+}
+
+export interface ListProjectSecretsInput {
+  projectId: string;
+}
+
+export interface UpdateSecretValueInput {
+  id: string;
+  value: string;
+}
+
+export interface DeleteSecretInput {
+  id: string;
 }
 
 export interface CreateDeploymentInput {
@@ -120,12 +147,45 @@ export function createControlPlane(options: ControlPlaneOptions) {
     return repository.createArtifact(artifact);
   }
 
+  function createSecret(input: CreateSecretInput): Secret {
+    requireProject(repository, input.projectId);
+    const secret: Secret = {
+      id: optionalId(input.id, "secret id") ?? idGenerator("sec"),
+      projectId: input.projectId,
+      name: normalizeSecretName(input.name),
+      createdAt: now(),
+      updatedAt: now(),
+    };
+    return repository.createSecret(secret, normalizeSecretValue(input.value));
+  }
+
+  function getSecret(input: GetSecretInput): Secret {
+    return requireSecret(repository, input.id);
+  }
+
+  function listProjectSecrets(input: ListProjectSecretsInput): Secret[] {
+    requireProject(repository, input.projectId);
+    return repository.listProjectSecrets(input.projectId);
+  }
+
+  function updateSecretValue(input: UpdateSecretValueInput): Secret {
+    requireSecret(repository, input.id);
+    return repository.updateSecretValue(input.id, normalizeSecretValue(input.value), now());
+  }
+
+  function deleteSecret(input: DeleteSecretInput): void {
+    requireSecret(repository, input.id);
+    repository.deleteSecret(input.id);
+  }
+
   function createDeployment(input: CreateDeploymentInput): Deployment {
     requireProject(repository, input.projectId);
     const artifact = requireArtifact(repository, input.artifactId);
     if (artifact.projectId !== input.projectId) {
       throw new ControlPlaneError("validation", "deployment artifact must belong to the same project");
     }
+    const capabilities = normalizeCapabilities(input.capabilities);
+    requireDeploymentSecrets(repository, input.projectId, capabilities);
 
     const deployment: Deployment = {
       id: optionalId(input.id, "deployment id") ?? idGenerator("dep"),
@@ -134,7 +194,7 @@ export function createControlPlane(options: ControlPlaneOptions) {
       world: normalizeWorld(input.world),
       runtime: normalizeRuntime(input.runtime),
       limits: normalizeLimits(input.limits),
-      capabilities: normalizeCapabilities(input.capabilities),
+      capabilities,
       createdAt: now(),
     };
     return repository.createDeployment(deployment);
@@ -244,6 +304,11 @@ export function createControlPlane(options: ControlPlaneOptions) {
   return {
     createProject,
     createArtifact,
+    createSecret,
+    getSecret,
+    listProjectSecrets,
+    updateSecretValue,
+    deleteSecret,
     createDeployment,
     pointRoute,
     createRouteSnapshot,
@@ -288,6 +353,33 @@ function requireArtifact(repository: ControlPlaneRepository, id: string): Artifa
     throw new ControlPlaneError("not_found", `artifact ${id} was not found`);
   }
   return artifact;
+}
+
+function requireSecret(repository: ControlPlaneRepository, id: string): Secret {
+  const secret = repository.getSecret(id);
+  if (!secret) {
+    throw new ControlPlaneError("not_found", `secret ${id} was not found`);
+  }
+  return secret;
+}
+
+function requireDeploymentSecrets(
+  repository: ControlPlaneRepository,
+  projectId: string,
+  capabilities: CapabilityPolicy,
+) {
+  for (const binding of capabilities.secrets) {
+    const secret = repository.getSecret(binding.secretId);
+    if (!secret) {
+      throw new ControlPlaneError("validation", `secret ${binding.secretId} was not found`);
+    }
+    if (secret.projectId !== projectId) {
+      throw new ControlPlaneError(
+        "validation",
+        `deployment secret ${binding.secretId} must belong to the same project`,
+      );
+    }
+  }
 }
 
 function requireDeployment(repository: ControlPlaneRepository, id: string): Deployment {

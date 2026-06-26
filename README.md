@@ -32,7 +32,10 @@ The runtime node listens on `http://127.0.0.1:8788` by default. Set `RUNTIME_HOS
 `RUNTIME_PORT`, or `WASMPLANE_CACHE_DIR` to override this. Set `CONTROL_PLANE_URL` or
 `WASMPLANE_CONTROL_PLANE_URL` to make the runtime register itself and send heartbeat updates.
 `RUNTIME_PUBLIC_URL`, `RUNTIME_NODE_ID`, `RUNTIME_CONCURRENCY`, `RUNTIME_MEMORY_MB`, and
-`RUNTIME_HEARTBEAT_INTERVAL_MS` tune the heartbeat payload.
+`RUNTIME_HEARTBEAT_INTERVAL_MS` tune the heartbeat payload. Runtime secret values are loaded from
+environment variables named `WASMPLANE_SECRET_<secretId>` or `WASMPLANE_SECRET_<NORMALIZED_ID>` by
+default. Set `WASMPLANE_SECRET_DB` to a control-plane SQLite database path to resolve values from
+the local secret registry instead. Route snapshots only carry `secretId`, never the secret value.
 
 Runtime-oriented tests expect these CLIs on `PATH`:
 
@@ -46,6 +49,26 @@ through the Rust `wasmplane-wasip3-host` linker, and precompiling through that s
 Strict `wasm-tools component targets` validation is available as an opt-in backend setting, but it
 is not the default because WASI-adapted Rust components include additional WASI imports that the
 host linker satisfies.
+
+Runtime invocation enforces the route snapshot contract before calling guest code. The runtime node
+rejects privileged capabilities (`arbitraryFilesystem`, `arbitrarySockets`, `processSpawn`) and
+passes denied-by-default capability policy to the Rust host. The Rust host applies Wasmtime memory
+limits, wall-clock interruption through epoch deadlines, request and response byte limits, KV
+namespace allowlists, outbound HTTP allowlists, host API call counters, and subrequest counters.
+`limits.cpuMs` remains part of the deployment contract, but it is not yet a precise CPU-time meter.
+Guest components resolve configured capability bindings through WIT handles: `kv.open-namespace`
+maps a binding name such as `MAIN` to its physical namespace, and `secrets.open-secret` returns a
+secret handle whose `reveal` operation is backed by host-loaded secret values. Secret values are
+redacted from host logs.
+The control plane stores local secret values through `POST /secrets`, but all public API responses
+return only secret metadata. Deployments can only reference registered secrets owned by the same
+project.
+Outbound requests go through the host `outbound.fetch` proxy and are checked against the deployment
+allowlist and subrequest limit. The host proxy supports `http://` and `https://` upstreams, with
+system trust roots used for TLS verification. Outbound allowlists are matched by URL scheme, host,
+port, and path prefix rather than raw string prefix, and hostname targets that resolve to
+private/loopback/link-local addresses are rejected unless the allowlist uses an explicit IP literal
+for local development.
 
 The real guest example can be rebuilt and invoked through the Rust Wasmtime host:
 
@@ -67,9 +90,13 @@ missing migrations before serving requests.
 Runtime node endpoints:
 
 - `GET /__runtime/healthz`
+- `GET /__runtime/metrics`
 - `PUT /__runtime/snapshots/routes`
 - any other path: resolve by `x-forwarded-host` or `host`, prepare the component, then invoke it
   through `wasmplane-wasip3-host`.
+
+`GET /__runtime/metrics` exposes in-memory counters for worker requests, route matches/misses,
+invocations, response status codes, runtime error codes, and loaded route snapshots.
 
 ## API
 
@@ -84,6 +111,11 @@ Available endpoints:
 - `POST /projects`
 - `POST /artifacts`
 - `POST /artifacts/local`
+- `POST /secrets`
+- `GET /projects/:id/secrets`
+- `GET /secrets/:id`
+- `PUT /secrets/:id`
+- `DELETE /secrets/:id`
 - `POST /deployments`
 - `PUT /routes`
 - `POST /runtime-nodes`
@@ -98,6 +130,25 @@ Available endpoints:
 active registered runtime node, plus statically configured runtime nodes, through
 `PUT /__runtime/snapshots/routes`. The response includes a per-node publish result and stores a
 publication history record.
+
+Secret creation accepts a value, but responses omit it:
+
+```json
+{
+  "id": "sec_api_key",
+  "projectId": "prj_hello",
+  "name": "API key",
+  "value": "super-secret"
+}
+```
+
+Deployment capability bindings reference only the secret id:
+
+```json
+{
+  "secrets": [{ "binding": "API_KEY", "secretId": "sec_api_key" }]
+}
+```
 
 Routes can point at one immutable deployment or at weighted rollout targets:
 

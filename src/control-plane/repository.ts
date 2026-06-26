@@ -6,6 +6,7 @@ import type {
   RoutePointer,
   RouteSnapshotPublication,
   RuntimeNode,
+  Secret,
 } from "./contracts.ts";
 import { ControlPlaneError } from "./errors.ts";
 
@@ -14,6 +15,12 @@ export interface ControlPlaneRepository {
   getProject(id: string): Project | undefined;
   createArtifact(artifact: Artifact): Artifact;
   getArtifact(id: string): Artifact | undefined;
+  createSecret(secret: Secret, value: string): Secret;
+  getSecret(id: string): Secret | undefined;
+  getSecretValue(id: string): string | undefined;
+  listProjectSecrets(projectId: string): Secret[];
+  updateSecretValue(id: string, value: string, updatedAt: string): Secret;
+  deleteSecret(id: string): void;
   createDeployment(deployment: Deployment): Deployment;
   getDeployment(id: string): Deployment | undefined;
   upsertRoute(route: RoutePointer): RoutePointer;
@@ -82,6 +89,67 @@ class SqliteControlPlaneRepository implements ControlPlaneRepository {
   getArtifact(id: string): Artifact | undefined {
     const row = this.db.prepare("select * from artifacts where id = ?").get(id);
     return row ? artifactFromRow(row) : undefined;
+  }
+
+  createSecret(secret: Secret, value: string): Secret {
+    try {
+      this.db
+        .prepare(
+          `insert into secrets (
+            id,
+            project_id,
+            name,
+            value,
+            created_at,
+            updated_at
+          ) values (?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          secret.id,
+          secret.projectId,
+          secret.name,
+          value,
+          secret.createdAt,
+          secret.updatedAt,
+        );
+      return secret;
+    } catch (error) {
+      throw writeError("secret", secret.id, error);
+    }
+  }
+
+  getSecret(id: string): Secret | undefined {
+    const row = this.db.prepare("select * from secrets where id = ?").get(id);
+    return row ? secretFromRow(row) : undefined;
+  }
+
+  getSecretValue(id: string): string | undefined {
+    const row = this.db.prepare("select value from secrets where id = ?").get(id);
+    return row ? (row as any).value : undefined;
+  }
+
+  listProjectSecrets(projectId: string): Secret[] {
+    const rows = this.db
+      .prepare("select * from secrets where project_id = ? order by name asc, id asc")
+      .all(projectId);
+    return rows.map(secretFromRow);
+  }
+
+  updateSecretValue(id: string, value: string, updatedAt: string): Secret {
+    const result = this.db
+      .prepare("update secrets set value = ?, updated_at = ? where id = ?")
+      .run(value, updatedAt, id);
+    if (result.changes === 0) {
+      throw new ControlPlaneError("not_found", `secret ${id} was not found`);
+    }
+    return this.getSecret(id) as Secret;
+  }
+
+  deleteSecret(id: string): void {
+    const result = this.db.prepare("delete from secrets where id = ?").run(id);
+    if (result.changes === 0) {
+      throw new ControlPlaneError("not_found", `secret ${id} was not found`);
+    }
   }
 
   createDeployment(deployment: Deployment): Deployment {
@@ -300,6 +368,16 @@ function artifactFromRow(row: any): Artifact {
   };
 }
 
+function secretFromRow(row: any): Secret {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    name: row.name,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 function deploymentFromRow(row: any): Deployment {
   return {
     id: row.id,
@@ -396,6 +474,17 @@ create table if not exists artifacts (
   foreign key (project_id) references projects(id)
 );
 
+create table if not exists secrets (
+  id text primary key,
+  project_id text not null,
+  name text not null,
+  value text not null,
+  created_at text not null,
+  updated_at text not null,
+  unique (project_id, name),
+  foreign key (project_id) references projects(id)
+);
+
 create table if not exists deployments (
   id text primary key,
   project_id text not null,
@@ -482,6 +571,23 @@ const migrations: SchemaMigration[] = [
           ok integer not null,
           targets_json text not null,
           created_at text not null
+        )
+      `);
+    },
+  },
+  {
+    id: "202606270001_secret_registry",
+    apply(db) {
+      db.exec(`
+        create table if not exists secrets (
+          id text primary key,
+          project_id text not null,
+          name text not null,
+          value text not null,
+          created_at text not null,
+          updated_at text not null,
+          unique (project_id, name),
+          foreign key (project_id) references projects(id)
         )
       `);
     },

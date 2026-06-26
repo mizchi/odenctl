@@ -23,6 +23,12 @@ test("creates immutable wasmtime deployments with denied-by-default host capabil
     location: "oci://registry.example.com/mizchi/hello:v1",
     sizeBytes: 42,
   });
+  control.createSecret({
+    id: "sec_api_key",
+    projectId: project.id,
+    name: "API key",
+    value: "super-secret",
+  });
 
   const deployment = control.createDeployment({
     id: "dep_hello_v1",
@@ -38,7 +44,9 @@ test("creates immutable wasmtime deployments with denied-by-default host capabil
       cpuMs: 50,
       memoryMb: 64,
       wallMs: 1000,
+      requestBytes: 1048576,
       subrequests: 20,
+      hostCalls: 100,
       responseBytes: 1048576,
     },
     capabilities: {
@@ -71,12 +79,92 @@ test("creates immutable wasmtime deployments with denied-by-default host capabil
           cpuMs: 50,
           memoryMb: 64,
           wallMs: 1000,
+          requestBytes: 1048576,
           subrequests: 20,
+          hostCalls: 100,
           responseBytes: 1048576,
         },
         capabilities: { outboundHttp: { enabled: false, allow: [] }, kv: [], secrets: [] },
       }),
     /already exists/,
+  );
+});
+
+test("registers project secrets and validates deployment secret bindings", () => {
+  const control = createSeededControlPlane();
+  const secret = control.createSecret({
+    id: "sec_api_key",
+    projectId: "prj_hello",
+    name: "API key",
+    value: "super-secret",
+  });
+
+  assert.deepEqual(secret, {
+    id: "sec_api_key",
+    projectId: "prj_hello",
+    name: "API key",
+    createdAt: fixedNow(),
+    updatedAt: fixedNow(),
+  });
+  assert.deepEqual(control.getSecret({ id: "sec_api_key" }), secret);
+  assert.deepEqual(control.listProjectSecrets({ projectId: "prj_hello" }), [secret]);
+
+  const updated = control.updateSecretValue({ id: "sec_api_key", value: "rotated-secret" });
+  assert.deepEqual(updated, secret);
+
+  const deployment = control.createDeployment({
+    ...seedDeployment("dep_secret", "art_v1"),
+    capabilities: {
+      outboundHttp: { enabled: false, allow: [] },
+      kv: [],
+      secrets: [{ binding: "API_KEY", secretId: "sec_api_key" }],
+    },
+  });
+  control.pointRoute({
+    projectId: "prj_hello",
+    host: "hello.example.dev",
+    pathPrefix: "/",
+    deploymentId: deployment.id,
+  });
+  const snapshotSecret = control.createRouteSnapshot().routes[0]?.capabilities.secrets[0];
+  assert.deepEqual(snapshotSecret, { binding: "API_KEY", secretId: "sec_api_key" });
+  assert.equal("value" in (snapshotSecret as any), false);
+
+  assert.throws(
+    () =>
+      control.createDeployment({
+        ...seedDeployment("dep_missing_secret", "art_v1"),
+        capabilities: {
+          outboundHttp: { enabled: false, allow: [] },
+          kv: [],
+          secrets: [{ binding: "API_KEY", secretId: "sec_missing" }],
+        },
+      }),
+    /secret sec_missing/,
+  );
+});
+
+test("deployment secret bindings cannot reference another project", () => {
+  const control = createSeededControlPlane();
+  const other = control.createProject({ id: "prj_other", name: "other" });
+  control.createSecret({
+    id: "sec_other",
+    projectId: other.id,
+    name: "other-api-key",
+    value: "secret",
+  });
+
+  assert.throws(
+    () =>
+      control.createDeployment({
+        ...seedDeployment("dep_cross_project_secret", "art_v1"),
+        capabilities: {
+          outboundHttp: { enabled: false, allow: [] },
+          kv: [],
+          secrets: [{ binding: "API_KEY", secretId: "sec_other" }],
+        },
+      }),
+    /same project/,
   );
 });
 
@@ -284,15 +372,21 @@ test("sqlite repository records schema migrations and upgrades existing database
     .prepare("pragma table_info(runtime_nodes)")
     .all()
     .map((row: any) => row.name);
+  const secretColumns = db
+    .prepare("pragma table_info(secrets)")
+    .all()
+    .map((row: any) => row.name);
 
   assert.deepEqual(migrationIds, [
     "202606260001_wasip3_alias",
     "202606260002_route_targets",
     "202606260003_runtime_node_health",
     "202606260004_route_snapshot_publications",
+    "202606270001_secret_registry",
   ]);
   assert.ok(routeColumns.includes("targets_json"));
   assert.ok(runtimeNodeColumns.includes("status"));
+  assert.ok(secretColumns.includes("value"));
   assert.equal(db.prepare("select count(*) as count from route_snapshot_publications").get().count, 1);
   db.close();
 });
@@ -336,7 +430,9 @@ function seedDeployment(id: string, artifactId = "art_v1") {
       cpuMs: 50,
       memoryMb: 64,
       wallMs: 1000,
+      requestBytes: 1048576,
       subrequests: 20,
+      hostCalls: 100,
       responseBytes: 1048576,
     },
     capabilities: {

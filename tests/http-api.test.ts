@@ -45,7 +45,9 @@ test("HTTP API creates deployment and exposes compact route snapshot", async () 
         cpuMs: 50,
         memoryMb: 64,
         wallMs: 1000,
+        requestBytes: 1048576,
         subrequests: 20,
+        hostCalls: 100,
         responseBytes: 1048576,
       },
       capabilities: {
@@ -68,6 +70,118 @@ test("HTTP API creates deployment and exposes compact route snapshot", async () 
     assert.equal(snapshot.routes[0].host, "hello.example.dev");
     assert.equal(snapshot.routes[0].deploymentId, deployment.id);
     assert.equal(snapshot.routes[0].runtime.backend, "wasmtime");
+  } finally {
+    await app.close();
+  }
+});
+
+test("HTTP API manages secrets without exposing values", async () => {
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+  });
+  const app = createHttpApp({ controlPlane: control });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const project = await postJson(baseUrl, "/projects", { name: "hello" });
+    const secret = await postJson(baseUrl, "/secrets", {
+      id: "sec_api_key",
+      projectId: project.id,
+      name: "API key",
+      value: "super-secret",
+    });
+
+    assert.deepEqual(secret, {
+      id: "sec_api_key",
+      projectId: project.id,
+      name: "API key",
+      createdAt: fixedNow(),
+      updatedAt: fixedNow(),
+    });
+    assert.equal("value" in secret, false);
+
+    const getResponse = await fetch(`${baseUrl}/secrets/sec_api_key`);
+    assert.equal(getResponse.status, 200);
+    assert.deepEqual(await getResponse.json(), secret);
+
+    const listResponse = await fetch(`${baseUrl}/projects/${project.id}/secrets`);
+    assert.equal(listResponse.status, 200);
+    assert.deepEqual(await listResponse.json(), [secret]);
+
+    const updated = await putJson(baseUrl, "/secrets/sec_api_key", {
+      value: "rotated-secret",
+    });
+    assert.deepEqual(updated, secret);
+    assert.equal("value" in updated, false);
+
+    const deleteResponse = await fetch(`${baseUrl}/secrets/sec_api_key`, { method: "DELETE" });
+    assert.equal(deleteResponse.status, 204);
+
+    const deletedResponse = await fetch(`${baseUrl}/secrets/sec_api_key`);
+    assert.equal(deletedResponse.status, 404);
+  } finally {
+    await app.close();
+  }
+});
+
+test("HTTP API rejects deployments that reference unknown secrets", async () => {
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+  });
+  const app = createHttpApp({ controlPlane: control });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const project = await postJson(baseUrl, "/projects", { name: "hello" });
+    const artifact = await postJson(baseUrl, "/artifacts", {
+      projectId: project.id,
+      digest: digest("hello"),
+      location: "oci://registry.example.com/mizchi/hello:v1",
+      sizeBytes: 42,
+    });
+    const response = await fetch(`${baseUrl}/deployments`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        projectId: project.id,
+        artifactId: artifact.id,
+        world: "myedge:runtime/worker@0.1.0",
+        runtime: {
+          backend: "wasmtime",
+          version: "wasmtime-43",
+          wasi: "wasip3",
+        },
+        limits: {
+          cpuMs: 50,
+          memoryMb: 64,
+          wallMs: 1000,
+          requestBytes: 1048576,
+          subrequests: 20,
+          hostCalls: 100,
+          responseBytes: 1048576,
+        },
+        capabilities: {
+          outboundHttp: { enabled: false, allow: [] },
+          kv: [],
+          secrets: [{ binding: "API_KEY", secretId: "sec_missing" }],
+        },
+      }),
+    });
+
+    assert.equal(response.status, 400);
+    assert.match(await response.text(), /secret sec_missing/);
   } finally {
     await app.close();
   }
@@ -112,7 +226,9 @@ test("HTTP API publishes route snapshot to configured runtime nodes", async () =
         cpuMs: 50,
         memoryMb: 64,
         wallMs: 1000,
+        requestBytes: 1048576,
         subrequests: 20,
+        hostCalls: 100,
         responseBytes: 1048576,
       },
       capabilities: {
@@ -207,7 +323,9 @@ test("HTTP API registers runtime nodes and publishes snapshots through the regis
         cpuMs: 50,
         memoryMb: 64,
         wallMs: 1000,
+        requestBytes: 1048576,
         subrequests: 20,
+        hostCalls: 100,
         responseBytes: 1048576,
       },
       capabilities: {
@@ -496,7 +614,9 @@ async function createHelloRoute(baseUrl: string) {
       cpuMs: 50,
       memoryMb: 64,
       wallMs: 1000,
+      requestBytes: 1048576,
       subrequests: 20,
+      hostCalls: 100,
       responseBytes: 1048576,
     },
     capabilities: {

@@ -4,6 +4,7 @@ import type {
   RouteSnapshotEntry,
   RuntimeLimits,
   RuntimeSpec,
+  SecretBinding,
 } from "../control-plane/contracts.ts";
 
 export type { RouteSnapshot, RouteSnapshotEntry };
@@ -37,10 +38,25 @@ export interface CompileComponentRequest {
 
 export interface CompiledComponent {
   deploymentId: string;
+  projectId?: string;
   backend: "wasmtime";
   componentPath: string;
   precompiledPath: string;
   cached: boolean;
+  limits?: RuntimeLimits;
+  capabilities?: RuntimeCapabilityPolicy;
+}
+
+export interface RuntimeSecretBinding extends SecretBinding {
+  value?: string;
+}
+
+export type RuntimeCapabilityPolicy = Omit<CapabilityPolicy, "secrets"> & {
+  secrets: RuntimeSecretBinding[];
+};
+
+export interface RuntimeSecretStore {
+  getSecret(secretId: string): Promise<string | undefined>;
 }
 
 export interface RuntimeBackend {

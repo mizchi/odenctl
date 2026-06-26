@@ -1,9 +1,13 @@
 use std::collections::HashMap;
+use std::io::{Read, Write};
+use std::net::{IpAddr, SocketAddr, TcpStream, ToSocketAddrs};
 use std::path::Path;
+use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Result, bail};
+use native_tls::TlsConnector;
 use wasmtime::component::{Component, HasData, Linker, Resource, ResourceTable, bindgen};
-use wasmtime::{Config, Engine, Store};
+use wasmtime::{Config, Engine, Store, StoreLimits, StoreLimitsBuilder};
 use wasmtime_wasi::{WasiCtx, WasiCtxView, WasiView};
 
 bindgen!({
@@ -15,6 +19,7 @@ bindgen!({
         "myedge:runtime/http.incoming-body": IncomingBody,
         "myedge:runtime/http.outgoing-body": OutgoingBody,
         "myedge:runtime/kv.namespace": KvNamespace,
+        "myedge:runtime/secrets.secret": Secret,
     },
 });
 
@@ -56,9 +61,181 @@ pub struct KvNamespace {
     id: String,
 }
 
+pub struct Secret {
+    id: String,
+    value: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct InvocationLimits {
+    pub wall_ms: Option<u64>,
+    pub memory_mb: Option<u64>,
+    pub request_bytes: Option<usize>,
+    pub response_bytes: Option<usize>,
+    pub subrequests: Option<u32>,
+    pub host_calls: Option<u32>,
+}
+
+impl Default for InvocationLimits {
+    fn default() -> Self {
+        Self {
+            wall_ms: None,
+            memory_mb: None,
+            request_bytes: None,
+            response_bytes: None,
+            subrequests: None,
+            host_calls: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct HostPolicy {
+    outbound_http: OutboundHttpPolicy,
+    kv_bindings: Vec<KvBindingPolicy>,
+    secret_bindings: Vec<SecretBindingPolicy>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct OutboundHttpPolicy {
+    enabled: bool,
+    allow: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KvBindingPolicy {
+    binding: String,
+    namespace_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SecretBindingPolicy {
+    binding: String,
+    secret_id: String,
+    value: Option<String>,
+}
+
+impl HostPolicy {
+    pub fn deny_all() -> Self {
+        Self::default()
+    }
+
+    pub fn new(outbound_http: OutboundHttpPolicy, kv_namespaces: Vec<String>) -> Self {
+        let kv_bindings = kv_namespaces
+            .into_iter()
+            .map(|namespace| KvBindingPolicy::new(namespace.clone(), namespace))
+            .collect();
+        Self::with_bindings(outbound_http, kv_bindings, Vec::new())
+    }
+
+    pub fn with_bindings(
+        outbound_http: OutboundHttpPolicy,
+        kv_bindings: Vec<KvBindingPolicy>,
+        secret_bindings: Vec<SecretBindingPolicy>,
+    ) -> Self {
+        Self {
+            outbound_http,
+            kv_bindings,
+            secret_bindings,
+        }
+    }
+
+    pub fn allows_kv_namespace(&self, namespace: &str) -> bool {
+        self.kv_bindings
+            .iter()
+            .any(|item| item.namespace_id == namespace)
+    }
+
+    pub fn kv_namespace_for_binding(&self, binding: &str) -> Option<&str> {
+        self.kv_bindings
+            .iter()
+            .find(|item| item.binding == binding)
+            .map(|item| item.namespace_id.as_str())
+    }
+
+    pub fn allows_outbound_uri(&self, uri: &str) -> bool {
+        self.outbound_http.allows(uri)
+    }
+
+    pub fn secret_for_binding(&self, binding: &str) -> Option<&SecretBindingPolicy> {
+        self.secret_bindings
+            .iter()
+            .find(|item| item.binding == binding)
+    }
+
+    fn secret_values(&self) -> impl Iterator<Item = &str> {
+        self.secret_bindings
+            .iter()
+            .filter_map(|item| item.value.as_deref())
+    }
+}
+
+impl OutboundHttpPolicy {
+    pub fn disabled() -> Self {
+        Self::default()
+    }
+
+    pub fn enabled(allow: Vec<String>) -> Self {
+        Self {
+            enabled: true,
+            allow,
+        }
+    }
+
+    pub fn allows(&self, uri: &str) -> bool {
+        if !self.enabled {
+            return false;
+        }
+        let Ok(request) = parse_outbound_url(uri) else {
+            return false;
+        };
+        self.allow.iter().any(|prefix| {
+            parse_outbound_url(prefix)
+                .map(|allowed| allowed.matches_request(&request))
+                .unwrap_or(false)
+        })
+    }
+}
+
+impl KvBindingPolicy {
+    pub fn new(binding: impl Into<String>, namespace_id: impl Into<String>) -> Self {
+        Self {
+            binding: binding.into(),
+            namespace_id: namespace_id.into(),
+        }
+    }
+}
+
+impl SecretBindingPolicy {
+    pub fn new(binding: impl Into<String>, secret_id: impl Into<String>) -> Self {
+        Self {
+            binding: binding.into(),
+            secret_id: secret_id.into(),
+            value: None,
+        }
+    }
+
+    pub fn with_value(
+        binding: impl Into<String>,
+        secret_id: impl Into<String>,
+        value: impl Into<String>,
+    ) -> Self {
+        Self {
+            binding: binding.into(),
+            secret_id: secret_id.into(),
+            value: Some(value.into()),
+        }
+    }
+}
+
 pub struct WorkerHost {
     table: ResourceTable,
     wasi: WasiCtx,
+    store_limits: StoreLimits,
+    invocation_limits: InvocationLimits,
+    policy: HostPolicy,
+    subrequests: u32,
+    host_calls: u32,
     kv: HashMap<(String, String), Vec<u8>>,
     logs: Vec<LogEvent>,
 }
@@ -78,9 +255,24 @@ pub enum LogLevel {
 
 impl WorkerHost {
     pub fn new() -> Self {
+        Self::with_limits_and_policy(InvocationLimits::default(), HostPolicy::deny_all())
+    }
+
+    pub fn with_limits_and_policy(limits: InvocationLimits, policy: HostPolicy) -> Self {
+        let mut store_limits = StoreLimitsBuilder::new();
+        if let Some(memory_mb) = limits.memory_mb {
+            let bytes = memory_mb.saturating_mul(1024).saturating_mul(1024);
+            let bytes = usize::try_from(bytes).unwrap_or(usize::MAX);
+            store_limits = store_limits.memory_size(bytes).trap_on_grow_failure(true);
+        }
         Self {
             table: ResourceTable::new(),
-            wasi: WasiCtx::builder().inherit_stdio().inherit_env().build(),
+            wasi: WasiCtx::builder().build(),
+            store_limits: store_limits.build(),
+            invocation_limits: limits,
+            policy,
+            subrequests: 0,
+            host_calls: 0,
             kv: HashMap::new(),
             logs: Vec::new(),
         }
@@ -98,7 +290,22 @@ impl WorkerHost {
     }
 
     pub fn push_namespace(&mut self, id: impl Into<String>) -> Result<Resource<KvNamespace>> {
-        Ok(self.table.push(KvNamespace { id: id.into() })?)
+        let id = id.into();
+        if !self.policy.allows_kv_namespace(&id) {
+            bail!("kv namespace {id} is not allowed by worker policy");
+        }
+        Ok(self.table.push(KvNamespace { id })?)
+    }
+
+    pub fn push_secret(
+        &mut self,
+        id: impl Into<String>,
+        value: Option<String>,
+    ) -> Result<Resource<Secret>> {
+        Ok(self.table.push(Secret {
+            id: id.into(),
+            value,
+        })?)
     }
 
     pub fn outgoing_body_bytes(&self, body: &Resource<OutgoingBody>) -> Result<Vec<u8>> {
@@ -112,6 +319,125 @@ impl WorkerHost {
 
     pub fn logs(&self) -> &[LogEvent] {
         &self.logs
+    }
+
+    fn write_outgoing_chunk(
+        &mut self,
+        body: &Resource<OutgoingBody>,
+        chunk: Vec<u8>,
+    ) -> wasmtime::Result<()> {
+        let body = self.table.get_mut(body)?;
+        if body.finished {
+            wasmtime::bail!("outgoing body already finished");
+        }
+        if let Some(limit) = self.invocation_limits.response_bytes {
+            let current = body.chunks.iter().map(Vec::len).sum::<usize>();
+            let next = current.saturating_add(chunk.len());
+            if next > limit {
+                wasmtime::bail!("responseBytes limit exceeded: {next} > {limit}");
+            }
+        }
+        body.chunks.push(chunk);
+        Ok(())
+    }
+
+    fn check_kv_allowed(&self, ns: &Resource<KvNamespace>) -> wasmtime::Result<String> {
+        let namespace = self.table.get(ns)?.id.clone();
+        if !self.policy.allows_kv_namespace(&namespace) {
+            wasmtime::bail!("kv namespace {namespace} is not allowed by worker policy");
+        }
+        Ok(namespace)
+    }
+
+    fn namespace_for_binding(
+        &mut self,
+        binding: String,
+    ) -> wasmtime::Result<Option<Resource<KvNamespace>>> {
+        self.check_host_call_allowed()?;
+        let Some(namespace_id) = self
+            .policy
+            .kv_namespace_for_binding(&binding)
+            .map(str::to_string)
+        else {
+            return Ok(None);
+        };
+        Ok(Some(self.table.push(KvNamespace { id: namespace_id })?))
+    }
+
+    fn secret_for_binding(
+        &mut self,
+        binding: String,
+    ) -> wasmtime::Result<Option<Resource<Secret>>> {
+        self.check_host_call_allowed()?;
+        let Some(secret) = self.policy.secret_for_binding(&binding) else {
+            return Ok(None);
+        };
+        Ok(Some(self.table.push(Secret {
+            id: secret.secret_id.clone(),
+            value: secret.value.clone(),
+        })?))
+    }
+
+    fn reveal_secret(&mut self, secret: &Resource<Secret>) -> wasmtime::Result<String> {
+        self.check_host_call_allowed()?;
+        let secret = self.table.get(secret)?;
+        let Some(value) = &secret.value else {
+            wasmtime::bail!("secret {} value is not loaded", secret.id);
+        };
+        Ok(value.clone())
+    }
+
+    fn next_subrequest_allowed(&mut self) -> bool {
+        self.subrequests = self.subrequests.saturating_add(1);
+        self.invocation_limits
+            .subrequests
+            .map(|limit| self.subrequests <= limit)
+            .unwrap_or(true)
+    }
+
+    fn check_host_call_allowed(&mut self) -> wasmtime::Result<()> {
+        self.host_calls = self.host_calls.saturating_add(1);
+        if let Some(limit) = self.invocation_limits.host_calls {
+            if self.host_calls > limit {
+                wasmtime::bail!("hostCalls limit exceeded: {} > {limit}", self.host_calls);
+            }
+        }
+        Ok(())
+    }
+
+    fn redact_secrets(&self, message: String) -> String {
+        self.policy
+            .secret_values()
+            .fold(message, |redacted, secret| {
+                if secret.is_empty() {
+                    redacted
+                } else {
+                    redacted.replace(secret, "[secret]")
+                }
+            })
+    }
+
+    fn fetch_outbound(
+        &mut self,
+        req: myedge::runtime::outbound::Request,
+    ) -> wasmtime::Result<myedge::runtime::outbound::Response> {
+        self.check_host_call_allowed()?;
+        if !self.next_subrequest_allowed() {
+            return Ok(outbound_text_response(429, "subrequests limit exceeded"));
+        }
+        if !self.policy.allows_outbound_uri(&req.uri) {
+            return Ok(outbound_text_response(
+                403,
+                &format!("outbound fetch to {} is not allowed", req.uri),
+            ));
+        }
+        match perform_http_fetch(req) {
+            Ok(response) => Ok(response),
+            Err(error) => Ok(outbound_text_response(
+                502,
+                &format!("outbound fetch failed: {error}"),
+            )),
+        }
     }
 }
 
@@ -141,9 +467,17 @@ pub fn add_worker_imports(linker: &mut Linker<WorkerHost>) -> Result<()> {
 }
 
 impl myedge::runtime::types::Host for WorkerHost {}
-impl myedge::runtime::kv::Host for WorkerHost {}
+impl myedge::runtime::kv::Host for WorkerHost {
+    async fn open_namespace(
+        &mut self,
+        binding: String,
+    ) -> wasmtime::Result<Option<Resource<KvNamespace>>> {
+        self.namespace_for_binding(binding)
+    }
+}
 impl myedge::runtime::http::Host for WorkerHost {
     async fn new_outgoing_body(&mut self) -> wasmtime::Result<Resource<OutgoingBody>> {
+        self.check_host_call_allowed()?;
         Ok(self.table.push(OutgoingBody {
             chunks: Vec::new(),
             finished: false,
@@ -151,11 +485,32 @@ impl myedge::runtime::http::Host for WorkerHost {
     }
 }
 impl myedge::runtime::outbound::Host for WorkerHost {}
+impl myedge::runtime::secrets::Host for WorkerHost {
+    async fn open_secret(&mut self, binding: String) -> wasmtime::Result<Option<Resource<Secret>>> {
+        self.secret_for_binding(binding)
+    }
+}
 
 impl myedge::runtime::kv::HostNamespace for WorkerHost {
     async fn drop(&mut self, rep: Resource<KvNamespace>) -> wasmtime::Result<()> {
         self.table.delete(rep)?;
         Ok(())
+    }
+}
+
+impl myedge::runtime::secrets::HostSecret for WorkerHost {
+    async fn drop(&mut self, rep: Resource<Secret>) -> wasmtime::Result<()> {
+        self.table.delete(rep)?;
+        Ok(())
+    }
+}
+
+impl myedge::runtime::secrets::HostWithStore for WorkerHost {
+    async fn reveal<T: Send>(
+        accessor: &wasmtime::component::Accessor<T, Self>,
+        secret: Resource<Secret>,
+    ) -> wasmtime::Result<String> {
+        accessor.with(|mut access| access.get().reveal_secret(&secret))
     }
 }
 
@@ -167,7 +522,8 @@ impl myedge::runtime::kv::HostWithStore for WorkerHost {
     ) -> wasmtime::Result<Option<Vec<u8>>> {
         accessor.with(|mut access| {
             let host = access.get();
-            let namespace = host.table.get(&ns)?.id.clone();
+            host.check_host_call_allowed()?;
+            let namespace = host.check_kv_allowed(&ns)?;
             Ok(host.kv.get(&(namespace, key)).cloned())
         })
     }
@@ -181,7 +537,8 @@ impl myedge::runtime::kv::HostWithStore for WorkerHost {
     ) -> wasmtime::Result<()> {
         accessor.with(|mut access| {
             let host = access.get();
-            let namespace = host.table.get(&ns)?.id.clone();
+            host.check_host_call_allowed()?;
+            let namespace = host.check_kv_allowed(&ns)?;
             host.kv.insert((namespace, key), value);
             Ok(())
         })
@@ -194,7 +551,8 @@ impl myedge::runtime::kv::HostWithStore for WorkerHost {
     ) -> wasmtime::Result<()> {
         accessor.with(|mut access| {
             let host = access.get();
-            let namespace = host.table.get(&ns)?.id.clone();
+            host.check_host_call_allowed()?;
+            let namespace = host.check_kv_allowed(&ns)?;
             host.kv.remove(&(namespace, key));
             Ok(())
         })
@@ -216,6 +574,7 @@ impl myedge::runtime::http::HostIncomingBodyWithStore for WorkerHost {
     ) -> wasmtime::Result<Option<Vec<u8>>> {
         accessor.with(|mut access| {
             let host = access.get();
+            host.check_host_call_allowed()?;
             let body = host.table.get_mut(&self_)?;
             if body.offset >= body.bytes.len() {
                 return Ok(None);
@@ -244,11 +603,8 @@ impl myedge::runtime::http::HostOutgoingBodyWithStore for WorkerHost {
     ) -> wasmtime::Result<()> {
         accessor.with(|mut access| {
             let host = access.get();
-            let body = host.table.get_mut(&self_)?;
-            if body.finished {
-                wasmtime::bail!("outgoing body already finished");
-            }
-            body.chunks.push(chunk);
+            host.check_host_call_allowed()?;
+            host.write_outgoing_chunk(&self_, chunk)?;
             Ok(())
         })
     }
@@ -259,6 +615,7 @@ impl myedge::runtime::http::HostOutgoingBodyWithStore for WorkerHost {
     ) -> wasmtime::Result<()> {
         accessor.with(|mut access| {
             let host = access.get();
+            host.check_host_call_allowed()?;
             let body = host.table.get_mut(&self_)?;
             body.finished = true;
             Ok(())
@@ -269,27 +626,16 @@ impl myedge::runtime::http::HostOutgoingBodyWithStore for WorkerHost {
 impl myedge::runtime::outbound::HostWithStore for WorkerHost {
     async fn fetch<T: Send>(
         accessor: &wasmtime::component::Accessor<T, Self>,
-        _req: myedge::runtime::outbound::Request,
+        req: myedge::runtime::outbound::Request,
     ) -> wasmtime::Result<myedge::runtime::outbound::Response> {
-        accessor.with(|mut access| {
-            let host = access.get();
-            let body = host.table.push(OutgoingBody {
-                chunks: vec![b"outbound fetch is not enabled".to_vec()],
-                finished: true,
-            })?;
-            Ok(myedge::runtime::outbound::Response {
-                head: myedge::runtime::types::ResponseHead {
-                    status: 502,
-                    headers: Vec::new(),
-                },
-                body,
-            })
-        })
+        accessor.with(|mut access| access.get().fetch_outbound(req))
     }
 }
 
 impl myedge::runtime::log::Host for WorkerHost {
     async fn info(&mut self, message: String) -> wasmtime::Result<()> {
+        self.check_host_call_allowed()?;
+        let message = self.redact_secrets(message);
         self.logs.push(LogEvent {
             level: LogLevel::Info,
             message,
@@ -298,6 +644,8 @@ impl myedge::runtime::log::Host for WorkerHost {
     }
 
     async fn warn(&mut self, message: String) -> wasmtime::Result<()> {
+        self.check_host_call_allowed()?;
+        let message = self.redact_secrets(message);
         self.logs.push(LogEvent {
             level: LogLevel::Warn,
             message,
@@ -306,11 +654,344 @@ impl myedge::runtime::log::Host for WorkerHost {
     }
 
     async fn error(&mut self, message: String) -> wasmtime::Result<()> {
+        self.check_host_call_allowed()?;
+        let message = self.redact_secrets(message);
         self.logs.push(LogEvent {
             level: LogLevel::Error,
             message,
         });
         Ok(())
+    }
+}
+
+#[derive(Debug)]
+struct OutboundUrlParts {
+    scheme: String,
+    host: String,
+    port: u16,
+    authority: String,
+    target: String,
+    path: String,
+}
+
+fn perform_http_fetch(
+    req: myedge::runtime::outbound::Request,
+) -> Result<myedge::runtime::outbound::Response> {
+    let connector = TlsConnector::new()?;
+    perform_http_fetch_with_tls_connector(req, &connector)
+}
+
+fn perform_http_fetch_with_tls_connector(
+    req: myedge::runtime::outbound::Request,
+    tls_connector: &TlsConnector,
+) -> Result<myedge::runtime::outbound::Response> {
+    let url = parse_fetch_url(&req.uri)?;
+    let upstream = resolve_outbound_address(&url)?;
+    let stream = TcpStream::connect(upstream)?;
+    stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+    stream.set_write_timeout(Some(Duration::from_secs(5)))?;
+
+    let request = build_http_request(&url, &req)?;
+    match url.scheme.as_str() {
+        "http" => send_http_request(stream, &request),
+        "https" => {
+            let stream = tls_connector.connect(&url.host, stream).map_err(|error| {
+                anyhow::anyhow!("tls handshake failed for {}: {error}", url.host)
+            })?;
+            send_http_request(stream, &request)
+        }
+        _ => bail!("unsupported outbound URI scheme {}", url.scheme),
+    }
+}
+
+fn build_http_request(
+    url: &HttpUrlParts,
+    req: &myedge::runtime::outbound::Request,
+) -> Result<Vec<u8>> {
+    let method = normalize_http_method(&req.method)?;
+    let mut request = Vec::new();
+    write!(
+        request,
+        "{method} {} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\nContent-Length: {}\r\n",
+        url.target,
+        url.authority,
+        req.body.len()
+    )?;
+    for header in &req.headers {
+        if is_forwardable_request_header(&header.name) {
+            write!(request, "{}: {}\r\n", header.name, header.value)?;
+        }
+    }
+    request.extend_from_slice(b"\r\n");
+    request.extend_from_slice(&req.body);
+    Ok(request)
+}
+
+fn send_http_request(
+    mut stream: impl Read + Write,
+    request: &[u8],
+) -> Result<myedge::runtime::outbound::Response> {
+    stream.write_all(&request)?;
+
+    let mut response = Vec::new();
+    stream.read_to_end(&mut response)?;
+    parse_http_response(&response)
+}
+
+fn resolve_outbound_address(url: &HttpUrlParts) -> Result<SocketAddr> {
+    let addresses = (url.host.as_str(), url.port).to_socket_addrs()?;
+    addresses
+        .filter(|address| outbound_address_allowed_for_host(&url.host, address.ip()))
+        .next()
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "outbound host {} did not resolve to an allowed public address",
+                url.host
+            )
+        })
+}
+
+fn parse_fetch_url(uri: &str) -> Result<HttpUrlParts> {
+    let url = parse_outbound_url(uri)?;
+    if url.scheme != "http" && url.scheme != "https" {
+        bail!("only http:// and https:// outbound fetch are supported");
+    }
+    Ok(url)
+}
+
+type HttpUrlParts = OutboundUrlParts;
+
+impl OutboundUrlParts {
+    fn matches_request(&self, request: &OutboundUrlParts) -> bool {
+        self.scheme == request.scheme
+            && self.host == request.host
+            && self.port == request.port
+            && path_prefix_matches(&self.path, &request.path)
+    }
+}
+
+fn parse_outbound_url(uri: &str) -> Result<OutboundUrlParts> {
+    if uri.contains('#') {
+        bail!("outbound URI fragments are not supported");
+    }
+    let (scheme, rest) = match uri.split_once("://") {
+        Some((scheme, rest)) if scheme == "http" || scheme == "https" => (scheme, rest),
+        _ => bail!("outbound URI must be http:// or https://"),
+    };
+    let (authority, target) = split_authority_and_target(rest)?;
+    if authority.is_empty()
+        || authority.contains('@')
+        || authority.contains('[')
+        || authority.contains(']')
+    {
+        bail!("invalid outbound URI authority");
+    }
+    let (host, port) = match authority.rsplit_once(':') {
+        Some((host, port))
+            if !host.is_empty() && port.chars().all(|item| item.is_ascii_digit()) =>
+        {
+            (host.to_ascii_lowercase(), port.parse::<u16>()?)
+        }
+        Some(_) => bail!("invalid outbound URI port"),
+        _ => (
+            authority.to_ascii_lowercase(),
+            default_port_for_scheme(scheme),
+        ),
+    };
+    let path = target
+        .split_once('?')
+        .map(|(path, _)| path.to_string())
+        .unwrap_or_else(|| target.clone());
+    Ok(OutboundUrlParts {
+        scheme: scheme.to_string(),
+        host,
+        port,
+        authority: authority.to_string(),
+        target,
+        path,
+    })
+}
+
+fn split_authority_and_target(rest: &str) -> Result<(&str, String)> {
+    let split = rest.find(['/', '?']);
+    let Some(index) = split else {
+        return Ok((rest, "/".to_string()));
+    };
+    let authority = &rest[..index];
+    let suffix = &rest[index..];
+    if suffix.starts_with('/') {
+        Ok((authority, suffix.to_string()))
+    } else if suffix.starts_with('?') {
+        Ok((authority, format!("/{suffix}")))
+    } else {
+        bail!("invalid outbound URI target");
+    }
+}
+
+fn default_port_for_scheme(scheme: &str) -> u16 {
+    match scheme {
+        "https" => 443,
+        _ => 80,
+    }
+}
+
+fn path_prefix_matches(allowed: &str, request: &str) -> bool {
+    if allowed == "/" || request == allowed {
+        return true;
+    }
+    if allowed.ends_with('/') {
+        return request.starts_with(allowed);
+    }
+    request
+        .strip_prefix(allowed)
+        .map(|rest| rest.starts_with('/'))
+        .unwrap_or(false)
+}
+
+fn outbound_address_allowed_for_host(host: &str, address: IpAddr) -> bool {
+    if host.parse::<IpAddr>().is_ok() {
+        return true;
+    }
+    !is_private_or_local_address(address)
+}
+
+fn is_private_or_local_address(address: IpAddr) -> bool {
+    match address {
+        IpAddr::V4(address) => {
+            let octets = address.octets();
+            octets[0] == 0
+                || octets[0] == 10
+                || octets[0] == 127
+                || (octets[0] == 100 && (64..=127).contains(&octets[1]))
+                || (octets[0] == 169 && octets[1] == 254)
+                || (octets[0] == 172 && (16..=31).contains(&octets[1]))
+                || (octets[0] == 192 && octets[1] == 168)
+                || (octets[0] == 198 && (18..=19).contains(&octets[1]))
+                || octets[0] >= 224
+        }
+        IpAddr::V6(address) => {
+            let segments = address.segments();
+            address.is_loopback()
+                || address.is_unspecified()
+                || (segments[0] & 0xfe00) == 0xfc00
+                || (segments[0] & 0xffc0) == 0xfe80
+                || (segments[0] & 0xff00) == 0xff00
+        }
+    }
+}
+
+fn normalize_http_method(method: &str) -> Result<&str> {
+    match method {
+        "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS" => Ok(method),
+        _ => bail!("unsupported outbound method {method}"),
+    }
+}
+
+fn is_forwardable_request_header(name: &str) -> bool {
+    !matches!(
+        name.to_ascii_lowercase().as_str(),
+        "host" | "connection" | "content-length" | "transfer-encoding"
+    )
+}
+
+fn parse_http_response(bytes: &[u8]) -> Result<myedge::runtime::outbound::Response> {
+    let Some(header_end) = find_header_end(bytes) else {
+        bail!("upstream response missing headers");
+    };
+    let header_text = std::str::from_utf8(&bytes[..header_end])?;
+    let mut lines = header_text.split("\r\n");
+    let status_line = lines.next().unwrap_or_default();
+    let status = parse_status(status_line)?;
+    let mut headers = Vec::new();
+    let mut chunked = false;
+    for line in lines {
+        if line.is_empty() {
+            continue;
+        }
+        let Some((name, value)) = line.split_once(':') else {
+            continue;
+        };
+        let name = name.trim().to_string();
+        let value = value.trim().to_string();
+        if name.eq_ignore_ascii_case("transfer-encoding")
+            && value.to_ascii_lowercase().contains("chunked")
+        {
+            chunked = true;
+        }
+        if is_safe_outbound_response_header(&name) {
+            headers.push(myedge::runtime::types::Header { name, value });
+        }
+    }
+    let raw_body = &bytes[header_end + 4..];
+    let body = if chunked {
+        decode_chunked_body(raw_body)?
+    } else {
+        raw_body.to_vec()
+    };
+    Ok(myedge::runtime::outbound::Response {
+        status,
+        headers,
+        body,
+    })
+}
+
+fn parse_status(status_line: &str) -> Result<u16> {
+    let mut parts = status_line.split_whitespace();
+    let version = parts.next().unwrap_or_default();
+    if !version.starts_with("HTTP/") {
+        bail!("upstream response has invalid status line");
+    }
+    let status = parts
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("upstream response missing status"))?
+        .parse::<u16>()?;
+    Ok(status)
+}
+
+fn find_header_end(bytes: &[u8]) -> Option<usize> {
+    bytes.windows(4).position(|window| window == b"\r\n\r\n")
+}
+
+fn decode_chunked_body(bytes: &[u8]) -> Result<Vec<u8>> {
+    let mut body = Vec::new();
+    let mut offset = 0;
+    loop {
+        let Some(line_end) = find_crlf(&bytes[offset..]) else {
+            bail!("invalid chunked response");
+        };
+        let size_text = std::str::from_utf8(&bytes[offset..offset + line_end])?;
+        let size = usize::from_str_radix(size_text.split(';').next().unwrap_or("").trim(), 16)?;
+        offset += line_end + 2;
+        if size == 0 {
+            return Ok(body);
+        }
+        if offset + size + 2 > bytes.len() {
+            bail!("truncated chunked response");
+        }
+        body.extend_from_slice(&bytes[offset..offset + size]);
+        offset += size + 2;
+    }
+}
+
+fn find_crlf(bytes: &[u8]) -> Option<usize> {
+    bytes.windows(2).position(|window| window == b"\r\n")
+}
+
+fn is_safe_outbound_response_header(name: &str) -> bool {
+    !matches!(
+        name.to_ascii_lowercase().as_str(),
+        "connection" | "transfer-encoding"
+    )
+}
+
+fn outbound_text_response(status: u16, message: &str) -> myedge::runtime::outbound::Response {
+    myedge::runtime::outbound::Response {
+        status,
+        headers: vec![myedge::runtime::types::Header {
+            name: "content-type".to_string(),
+            value: "text/plain".to_string(),
+        }],
+        body: message.as_bytes().to_vec(),
     }
 }
 
@@ -320,6 +1001,7 @@ pub fn wasip3_engine() -> Result<Engine> {
     config.wasm_component_model_async(true);
     config.wasm_component_model_async_stackful(true);
     config.concurrency_support(true);
+    config.epoch_interruption(true);
     Ok(Engine::new(&config)?)
 }
 
@@ -340,11 +1022,39 @@ pub fn invoke_component_handle(
     component_path: &Path,
     request: HttpRequestInput,
 ) -> Result<HttpResponseOutput> {
+    invoke_component_handle_with_limits_and_policy(
+        component_path,
+        request,
+        InvocationLimits::default(),
+        HostPolicy::deny_all(),
+    )
+}
+
+pub fn invoke_component_handle_with_limits_and_policy(
+    component_path: &Path,
+    request: HttpRequestInput,
+    limits: InvocationLimits,
+    policy: HostPolicy,
+) -> Result<HttpResponseOutput> {
+    enforce_request_body_limit(&request, limits)?;
     let engine = wasip3_engine()?;
     let component = Component::from_file(&engine, component_path)?;
     let mut linker = Linker::<WorkerHost>::new(&engine);
     add_worker_imports(&mut linker)?;
-    let mut store = Store::new(&engine, WorkerHost::new());
+    let mut store = Store::new(&engine, WorkerHost::with_limits_and_policy(limits, policy));
+    store.limiter(|host| &mut host.store_limits);
+    #[cfg(target_has_atomic = "64")]
+    {
+        store.epoch_deadline_trap();
+        store.set_epoch_deadline(1);
+        if let Some(wall_ms) = limits.wall_ms {
+            let engine = engine.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(wall_ms));
+                engine.increment_epoch();
+            });
+        }
+    }
     let worker =
         futures::executor::block_on(Worker::instantiate_async(&mut store, &component, &linker))?;
 
@@ -387,10 +1097,24 @@ pub fn invoke_component_handle(
     })
 }
 
+fn enforce_request_body_limit(request: &HttpRequestInput, limits: InvocationLimits) -> Result<()> {
+    if let Some(limit) = limits.request_bytes {
+        let actual = request.body.len();
+        if actual > limit {
+            bail!("requestBytes limit exceeded: {actual} > {limit}");
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
     use std::path::PathBuf;
     use std::process::Command;
+
+    use native_tls::{Identity, TlsAcceptor, TlsConnector};
 
     use super::*;
 
@@ -434,6 +1158,8 @@ mod tests {
         let mut linker = Linker::<WorkerHost>::new(&engine);
         add_worker_imports(&mut linker).expect("imports");
         let mut store = Store::new(&engine, WorkerHost::new());
+        #[cfg(target_has_atomic = "64")]
+        store.set_epoch_deadline(1);
 
         futures::executor::block_on(Worker::instantiate_async(&mut store, &component, &linker))
             .expect("instantiate");
@@ -487,6 +1213,358 @@ mod tests {
         assert!(host.is_outgoing_body_finished(&outgoing).expect("finished"));
     }
 
+    #[test]
+    fn host_policy_denies_unbound_kv_namespaces() {
+        let mut host =
+            WorkerHost::with_limits_and_policy(InvocationLimits::default(), HostPolicy::deny_all());
+
+        let error = host
+            .push_namespace("kv_main")
+            .expect_err("unbound kv namespace should be denied");
+
+        assert!(format!("{error:?}").contains("kv namespace kv_main is not allowed"));
+    }
+
+    #[test]
+    fn host_policy_allows_bound_kv_namespaces() {
+        let mut host = WorkerHost::with_limits_and_policy(
+            InvocationLimits::default(),
+            HostPolicy::new(OutboundHttpPolicy::disabled(), vec!["kv_main".to_string()]),
+        );
+
+        let namespace = host
+            .push_namespace("kv_main")
+            .expect("bound namespace should be allowed");
+
+        assert_eq!(
+            host.check_kv_allowed(&namespace).expect("namespace id"),
+            "kv_main"
+        );
+    }
+
+    #[test]
+    fn host_policy_resolves_kv_bindings_to_namespace_handles() {
+        let mut host = WorkerHost::with_limits_and_policy(
+            InvocationLimits::default(),
+            HostPolicy::with_bindings(
+                OutboundHttpPolicy::disabled(),
+                vec![KvBindingPolicy::new("MAIN", "tenant_a/main")],
+                Vec::new(),
+            ),
+        );
+
+        let namespace = host
+            .namespace_for_binding("MAIN".to_string())
+            .expect("binding lookup")
+            .expect("namespace handle");
+
+        assert_eq!(
+            host.check_kv_allowed(&namespace).expect("namespace id"),
+            "tenant_a/main"
+        );
+        assert!(
+            host.namespace_for_binding("OTHER".to_string())
+                .expect("unknown binding")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn host_policy_resolves_secret_bindings_and_redacts_revealed_values_from_logs() {
+        let mut host = WorkerHost::with_limits_and_policy(
+            InvocationLimits::default(),
+            HostPolicy::with_bindings(
+                OutboundHttpPolicy::disabled(),
+                Vec::new(),
+                vec![SecretBindingPolicy::with_value(
+                    "API_KEY",
+                    "sec_api_key",
+                    "super-secret",
+                )],
+            ),
+        );
+        let secret = host
+            .secret_for_binding("API_KEY".to_string())
+            .expect("binding lookup")
+            .expect("secret handle");
+
+        assert_eq!(
+            host.reveal_secret(&secret).expect("secret value"),
+            "super-secret"
+        );
+        futures::executor::block_on(myedge::runtime::log::Host::info(
+            &mut host,
+            "token=super-secret".to_string(),
+        ))
+        .expect("log write");
+
+        assert_eq!(host.logs()[0].message, "token=[secret]");
+    }
+
+    #[test]
+    fn secret_reveal_fails_when_value_is_not_loaded() {
+        let mut host = WorkerHost::with_limits_and_policy(
+            InvocationLimits::default(),
+            HostPolicy::with_bindings(
+                OutboundHttpPolicy::disabled(),
+                Vec::new(),
+                vec![SecretBindingPolicy::new("API_KEY", "sec_api_key")],
+            ),
+        );
+        let secret = host
+            .secret_for_binding("API_KEY".to_string())
+            .expect("binding lookup")
+            .expect("secret handle");
+
+        let error = host
+            .reveal_secret(&secret)
+            .expect_err("unloaded secret should not reveal");
+
+        assert!(format!("{error:?}").contains("value is not loaded"));
+    }
+
+    #[test]
+    fn outgoing_body_write_enforces_response_byte_limit() {
+        let mut host = WorkerHost::with_limits_and_policy(
+            InvocationLimits {
+                response_bytes: Some(3),
+                ..InvocationLimits::default()
+            },
+            HostPolicy::deny_all(),
+        );
+        let outgoing = host.push_outgoing_body().expect("outgoing body");
+
+        host.write_outgoing_chunk(&outgoing, b"abc".to_vec())
+            .expect("within limit");
+        let error = host
+            .write_outgoing_chunk(&outgoing, b"d".to_vec())
+            .expect_err("response byte limit should be enforced");
+
+        assert!(format!("{error:?}").contains("responseBytes limit exceeded"));
+    }
+
+    #[test]
+    fn host_policy_allows_only_configured_outbound_prefixes() {
+        let policy = HostPolicy::new(
+            OutboundHttpPolicy::enabled(vec!["https://api.example.dev/v1/".to_string()]),
+            Vec::new(),
+        );
+
+        assert!(policy.allows_outbound_uri("https://api.example.dev/v1/users"));
+        assert!(!policy.allows_outbound_uri("https://api.example.dev/v2/users"));
+        assert!(!HostPolicy::deny_all().allows_outbound_uri("https://api.example.dev/v1/users"));
+    }
+
+    #[test]
+    fn host_policy_matches_outbound_allowlist_by_url_origin_and_path() {
+        let policy = HostPolicy::new(
+            OutboundHttpPolicy::enabled(vec![
+                "https://api.example.dev/v1/".to_string(),
+                "http://127.0.0.1:8080/".to_string(),
+            ]),
+            Vec::new(),
+        );
+
+        assert!(policy.allows_outbound_uri("https://API.EXAMPLE.DEV:443/v1/users"));
+        assert!(policy.allows_outbound_uri("http://127.0.0.1:8080/probe"));
+        assert!(!policy.allows_outbound_uri("https://api.example.dev.evil/v1/users"));
+        assert!(!policy.allows_outbound_uri("https://api.example.dev/v10/users"));
+        assert!(!policy.allows_outbound_uri("http://127.0.0.1/probe"));
+        assert!(!policy.allows_outbound_uri("ftp://api.example.dev/v1/users"));
+    }
+
+    #[test]
+    fn host_policy_allows_exact_path_prefix_without_trailing_slash() {
+        let policy = HostPolicy::new(
+            OutboundHttpPolicy::enabled(vec!["https://api.example.dev/v1".to_string()]),
+            Vec::new(),
+        );
+
+        assert!(policy.allows_outbound_uri("https://api.example.dev/v1"));
+        assert!(policy.allows_outbound_uri("https://api.example.dev/v1/users"));
+        assert!(!policy.allows_outbound_uri("https://api.example.dev/v10"));
+    }
+
+    #[test]
+    fn outbound_dns_rebinding_guard_blocks_private_addresses_for_hostnames() {
+        assert!(!outbound_address_allowed_for_host(
+            "api.example.dev",
+            "127.0.0.1".parse().unwrap(),
+        ));
+        assert!(!outbound_address_allowed_for_host(
+            "api.example.dev",
+            "10.0.0.1".parse().unwrap(),
+        ));
+        assert!(!outbound_address_allowed_for_host(
+            "api.example.dev",
+            "169.254.1.1".parse().unwrap(),
+        ));
+        assert!(!outbound_address_allowed_for_host(
+            "api.example.dev",
+            "::1".parse().unwrap(),
+        ));
+        assert!(outbound_address_allowed_for_host(
+            "api.example.dev",
+            "93.184.216.34".parse().unwrap(),
+        ));
+        assert!(outbound_address_allowed_for_host(
+            "127.0.0.1",
+            "127.0.0.1".parse().unwrap(),
+        ));
+    }
+
+    #[test]
+    fn invocation_limits_count_subrequests() {
+        let mut host = WorkerHost::with_limits_and_policy(
+            InvocationLimits {
+                subrequests: Some(1),
+                ..InvocationLimits::default()
+            },
+            HostPolicy::deny_all(),
+        );
+
+        assert!(host.next_subrequest_allowed());
+        assert!(!host.next_subrequest_allowed());
+    }
+
+    #[test]
+    fn outbound_fetch_proxies_allowlisted_http_requests() {
+        let upstream = listen_once(|request| {
+            assert!(request.starts_with("POST /probe?q=1 HTTP/1.1\r\n"));
+            assert!(request.contains("Host: "));
+            assert!(request.ends_with("\r\n\r\npayload"));
+            b"HTTP/1.1 207 Multi-Status\r\ncontent-type: text/plain\r\ncontent-length: 11\r\nconnection: close\r\n\r\nupstream-ok".to_vec()
+        });
+        let mut host = WorkerHost::with_limits_and_policy(
+            InvocationLimits {
+                subrequests: Some(1),
+                ..InvocationLimits::default()
+            },
+            HostPolicy::with_bindings(
+                OutboundHttpPolicy::enabled(vec![format!("{}/", upstream.base_url)]),
+                Vec::new(),
+                Vec::new(),
+            ),
+        );
+
+        let response = host
+            .fetch_outbound(myedge::runtime::outbound::Request {
+                method: "POST".to_string(),
+                uri: format!("{}/probe?q=1", upstream.base_url),
+                headers: Vec::new(),
+                body: b"payload".to_vec(),
+            })
+            .expect("outbound fetch");
+
+        assert_eq!(response.status, 207);
+        assert_eq!(response.body, b"upstream-ok");
+        assert_eq!(response.headers[0].name, "content-type");
+        upstream.join();
+    }
+
+    #[test]
+    fn outbound_fetch_proxies_allowlisted_https_requests() {
+        let upstream = listen_tls_once(|request| {
+            assert!(request.starts_with("GET /secure HTTP/1.1\r\n"));
+            assert!(request.contains("Host: "));
+            b"HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 9\r\nconnection: close\r\n\r\ntls-works".to_vec()
+        });
+        let connector = trusted_test_tls_connector();
+
+        let response = perform_http_fetch_with_tls_connector(
+            myedge::runtime::outbound::Request {
+                method: "GET".to_string(),
+                uri: format!("{}/secure", upstream.base_url),
+                headers: Vec::new(),
+                body: Vec::new(),
+            },
+            &connector,
+        )
+        .expect("https outbound fetch");
+
+        assert_eq!(response.status, 200);
+        assert_eq!(response.body, b"tls-works");
+        upstream.join();
+    }
+
+    #[test]
+    fn outbound_fetch_denies_urls_outside_allowlist() {
+        let mut host =
+            WorkerHost::with_limits_and_policy(InvocationLimits::default(), HostPolicy::deny_all());
+
+        let response = host
+            .fetch_outbound(myedge::runtime::outbound::Request {
+                method: "GET".to_string(),
+                uri: "http://127.0.0.1/probe".to_string(),
+                headers: Vec::new(),
+                body: Vec::new(),
+            })
+            .expect("policy response");
+
+        assert_eq!(response.status, 403);
+        assert!(String::from_utf8_lossy(&response.body).contains("not allowed"));
+    }
+
+    #[test]
+    fn outbound_fetch_denies_hostname_rebinding_to_loopback() {
+        let mut host = WorkerHost::with_limits_and_policy(
+            InvocationLimits::default(),
+            HostPolicy::with_bindings(
+                OutboundHttpPolicy::enabled(vec!["http://localhost/".to_string()]),
+                Vec::new(),
+                Vec::new(),
+            ),
+        );
+
+        let response = host
+            .fetch_outbound(myedge::runtime::outbound::Request {
+                method: "GET".to_string(),
+                uri: "http://localhost/probe".to_string(),
+                headers: Vec::new(),
+                body: Vec::new(),
+            })
+            .expect("policy response");
+
+        assert_eq!(response.status, 502);
+        assert!(String::from_utf8_lossy(&response.body).contains("allowed public address"));
+    }
+
+    #[test]
+    fn invocation_limits_reject_oversized_request_bodies() {
+        let error = enforce_request_body_limit(
+            &HttpRequestInput {
+                method: "POST".to_string(),
+                uri: "https://hello.example.dev/".to_string(),
+                headers: Vec::new(),
+                body: b"too large".to_vec(),
+            },
+            InvocationLimits {
+                request_bytes: Some(4),
+                ..InvocationLimits::default()
+            },
+        )
+        .expect_err("request byte limit should be enforced");
+
+        assert!(format!("{error:?}").contains("requestBytes limit exceeded"));
+    }
+
+    #[test]
+    fn invocation_limits_count_host_calls() {
+        let mut host = WorkerHost::with_limits_and_policy(
+            InvocationLimits {
+                host_calls: Some(1),
+                ..InvocationLimits::default()
+            },
+            HostPolicy::deny_all(),
+        );
+
+        assert!(host.check_host_call_allowed().is_ok());
+        let error = host
+            .check_host_call_allowed()
+            .expect_err("host call limit should be enforced");
+        assert!(format!("{error:?}").contains("hostCalls limit exceeded"));
+    }
+
     fn temp_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
             "wasmplane-{name}-{}-{:?}",
@@ -537,4 +1615,164 @@ mod tests {
 
         component_path
     }
+
+    struct UpstreamServer {
+        base_url: String,
+        handle: std::thread::JoinHandle<()>,
+    }
+
+    impl UpstreamServer {
+        fn join(self) {
+            self.handle.join().expect("upstream thread");
+        }
+    }
+
+    fn listen_once(handler: impl FnOnce(String) -> Vec<u8> + Send + 'static) -> UpstreamServer {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind upstream");
+        let address = listener.local_addr().expect("upstream address");
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept upstream request");
+            let mut request = Vec::new();
+            let mut buffer = [0; 1024];
+            loop {
+                let read = stream.read(&mut buffer).expect("read upstream request");
+                if read == 0 {
+                    break;
+                }
+                request.extend_from_slice(&buffer[..read]);
+                if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                    let request_text = String::from_utf8_lossy(&request);
+                    if let Some(length) = content_length(&request_text) {
+                        let header_end = request
+                            .windows(4)
+                            .position(|window| window == b"\r\n\r\n")
+                            .expect("headers");
+                        if request.len() >= header_end + 4 + length {
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
+                }
+            }
+            let response = handler(String::from_utf8_lossy(&request).into_owned());
+            stream
+                .write_all(&response)
+                .expect("write upstream response");
+        });
+        UpstreamServer {
+            base_url: format!("http://{address}"),
+            handle,
+        }
+    }
+
+    fn listen_tls_once(handler: impl FnOnce(String) -> Vec<u8> + Send + 'static) -> UpstreamServer {
+        let identity =
+            Identity::from_pkcs8(TEST_TLS_CERT_PEM.as_bytes(), TEST_TLS_KEY_PEM.as_bytes())
+                .expect("test tls identity");
+        let acceptor = TlsAcceptor::new(identity).expect("test tls acceptor");
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind tls upstream");
+        let address = listener.local_addr().expect("tls upstream address");
+        let handle = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("accept tls upstream request");
+            let mut stream = acceptor.accept(stream).expect("accept test tls");
+            let mut request = Vec::new();
+            let mut buffer = [0; 1024];
+            loop {
+                let read = stream.read(&mut buffer).expect("read tls upstream request");
+                if read == 0 {
+                    break;
+                }
+                request.extend_from_slice(&buffer[..read]);
+                if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                    let request_text = String::from_utf8_lossy(&request);
+                    if let Some(length) = content_length(&request_text) {
+                        let header_end = request
+                            .windows(4)
+                            .position(|window| window == b"\r\n\r\n")
+                            .expect("headers");
+                        if request.len() >= header_end + 4 + length {
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
+                }
+            }
+            let response = handler(String::from_utf8_lossy(&request).into_owned());
+            stream
+                .write_all(&response)
+                .expect("write tls upstream response");
+        });
+        UpstreamServer {
+            base_url: format!("https://{address}"),
+            handle,
+        }
+    }
+
+    fn trusted_test_tls_connector() -> TlsConnector {
+        // Test-only connector for the self-signed local fixture. Production uses TlsConnector::new().
+        let mut builder = TlsConnector::builder();
+        builder.danger_accept_invalid_certs(true);
+        builder.danger_accept_invalid_hostnames(true);
+        builder.build().expect("test tls connector")
+    }
+
+    fn content_length(request: &str) -> Option<usize> {
+        request.lines().find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            if name.eq_ignore_ascii_case("content-length") {
+                value.trim().parse().ok()
+            } else {
+                None
+            }
+        })
+    }
+
+    const TEST_TLS_CERT_PEM: &str = r#"-----BEGIN CERTIFICATE-----
+MIICyTCCAbGgAwIBAgIJALzWUGNZ9OqRMA0GCSqGSIb3DQEBCwUAMBQxEjAQBgNV
+BAMMCWxvY2FsaG9zdDAeFw0yNjA2MjYxNjE3MThaFw0zNjA2MjMxNjE3MThaMBQx
+EjAQBgNVBAMMCWxvY2FsaG9zdDCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoC
+ggEBANzpQ0OCgvrAkw6xjkcUDYbTFJDz3/hdUX0S8AJhW0QLxgsg5KRPb+mc6S82
+kAOWbrzrcQUrC+lEAE6fTGSlE03jPFDSlBPZOEt1+qPhduQXjVc0g0yxNvzTOzdV
++5EV3Noioi4enKpsu3F1nlYd+Twtw0xaTGIq1KTxpME0IFa1LCukOK203WkLGpub
+PY1V3DO6/QPXlkw37bdlNJRvETZww4HY6JCeK8zdvKfrbV+xu1v/Xd7adNY6iIsQ
+qlnHqw5pX+dJhe8ZyYkyouHFAtDNQ/fn/xBJ48tOYNn/PbJCG1QJI1jqxD32M4P+
+mDprjZ3QAHZTkNaeoLtgin9mglkCAwEAAaMeMBwwGgYDVR0RBBMwEYIJbG9jYWxo
+b3N0hwR/AAABMA0GCSqGSIb3DQEBCwUAA4IBAQAU3Sh6viD5OhgfM+yEUcOE4Nqg
+hzAHEP0xUzPmamXE1gUctmi4xLVojdvOoEvWVzWOsp/jPZVrRVbCJkalQz3iTevc
+eQM1h/qKAe9UabRQ0YSLVWKbhRJMNY8i0GDaUE5kdRj1oF9l05KzFrhiEpfcImg/
+6UtciUvM4hA8PTsykgBWzeSjIMcnaAyYHtuQ8VALY5I/gvj6w8zRWIdW/eN/Re4y
+kCTCuaFXBU/B5npHrhfRK3rgNSoTYDTG/t6nXO6cjfm3lISBKuGqeh9lkUk20gkI
+VPOzAUVY9zo0BDaX2kPrul0aLtRJyZZUi8MOJdgziPXG/bQunv/p6Lsva10H
+-----END CERTIFICATE-----"#;
+
+    const TEST_TLS_KEY_PEM: &str = r#"-----BEGIN PRIVATE KEY-----
+MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDc6UNDgoL6wJMO
+sY5HFA2G0xSQ89/4XVF9EvACYVtEC8YLIOSkT2/pnOkvNpADlm6863EFKwvpRABO
+n0xkpRNN4zxQ0pQT2ThLdfqj4XbkF41XNINMsTb80zs3VfuRFdzaIqIuHpyqbLtx
+dZ5WHfk8LcNMWkxiKtSk8aTBNCBWtSwrpDittN1pCxqbmz2NVdwzuv0D15ZMN+23
+ZTSUbxE2cMOB2OiQnivM3byn621fsbtb/13e2nTWOoiLEKpZx6sOaV/nSYXvGcmJ
+MqLhxQLQzUP35/8QSePLTmDZ/z2yQhtUCSNY6sQ99jOD/pg6a42d0AB2U5DWnqC7
+YIp/ZoJZAgMBAAECggEAXrnPU/V0wJ0u8dAFGElq+3MrkHRih5dMR/uE2yBwCB+c
+Tk1OfX5qmJvmCY619jPdTDkQ/4xT0TSNhSkdktKOEonr5SRGxrQQRZtTXE5jsq6+
+trQX0Rz0XTkeXT4LX00mpIrRTEFoIFP7lE1BFeBIbRuacPUPZ9DB2fCcGxSFAWhm
+inh+nNO4f1b0dbqpFwQaIqWZyHSD8Vke8jRBAq0mWNXU6sw7prdqgasO8lEZGdQC
+NLCn2tP+NCqWXez1f1ZqR6SOPk/oDJvCmjps+xEUE2Y2XQDqRRilCVzL3Ww9LiIa
+bMNJwUoxT8woGeTkq41rcALUHa6xECMJxqmZt8hK4QKBgQDyaPbkvbKzT4EpKXrd
+3/E8H3iGsZiANODRPpv2o7LO7grXlHmeYevLlP6xNiTA2AI3CClf47ADGFiVEgJY
+M58ePqYmbvLlwqap16kRPvitlm+HNXOmQiaFd79sBnTY6tup3IIjNg3YS3MPgJpU
+Pw/HNuLIbs7wC7J/4ZiG5L6vrQKBgQDpS7/+KsNHBb1JfmC8N2AiAz7Cfu+OI8GV
+FwvukYUG2fgUVP5N2qQnU9wyZzCylrAw0mXY2tPt8QkLf+BJLrQ9wd8xNXQsld5a
+EYHsiW+yA8dEFPClWDbX/r+35hrsFzBvnm2ibcgJbSIfo+B2MLjd6QKkxqZdEFZP
+u1erjj+C3QKBgEkDzLoBWX4hCGp5kAScm3DcmdUYUTLsunrMPPYBQK6LjMB6fFd0
+by2W51BBWrirV59z2eKEFlQYVTYxgntGsTrO7ATPjmIeS00FJGuJaCYBFf7H3tnJ
+OwkglIvZNgDQXPHA9YHdmjX4I+QbfGC7zejXY1+z4Kj1HQLf1K1s4PLRAoGAeNmp
+miNSxw69ED4sJDPXU6c0spIIzCvPksi+gJXXQEZXUUj59yCEmm7BiUaVHl4a5R+I
+bL5mvEJ5OgDDEYXlDnzIfng/Nv1nkmaxU/OZ7bAxYB4szqoUtu0bKUtEtPoKODfs
+eRC/Z8qlu5grpW31xdZ3bR4OffUBkQnuD0t/sO0CgYEA2T7okKzCO1lVhcVXv9Ft
+43VgWVAG/Ef1AyndNxf6YffJNIjdkYYs+Er4/l5BUybVTjkNVPMywWiUgGP7//wO
+XjsKL6zBwgFiWtW1thvEGITmAucOJzAg3GWlwk2b576Hjm8PHK5gxzatvifwPs19
+RE8ffzBnwu+O7+fKnA7hQss=
+-----END PRIVATE KEY-----"#;
 }

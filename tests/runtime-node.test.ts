@@ -9,6 +9,7 @@ import {
 } from "../src/control-plane/contracts.ts";
 import { createRuntimeNodeApp } from "../src/runtime/node-app.ts";
 import { registerRuntimeNode, sendRuntimeHeartbeat } from "../src/runtime/heartbeat.ts";
+import { createEnvSecretStore, createRepositorySecretStore } from "../src/runtime/secrets.ts";
 import { createRuntimeSupervisor } from "../src/runtime/supervisor.ts";
 
 test("runtime node accepts route snapshots and invokes matched deployments", async () => {
@@ -97,6 +98,289 @@ test("runtime node accepts route snapshots and invokes matched deployments", asy
   }
 });
 
+test("runtime node enforces response byte limits", async () => {
+  const supervisor = createRuntimeSupervisor({
+    snapshot: snapshot([route("dep_small", "hello.example.dev", "/", digest("small"))]),
+    artifactStore: materializedArtifactStore(),
+    backend: compiledBackend(),
+  });
+  const app = createRuntimeNodeApp({
+    supervisor,
+    invoker: {
+      async invoke() {
+        return {
+          status: 200,
+          headers: [],
+          body: Buffer.from("too large"),
+        };
+      },
+    },
+  });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const response = await fetch(`${baseUrl}/`, {
+      headers: { "x-forwarded-host": "hello.example.dev" },
+    });
+    assert.equal(response.status, 500);
+    const body = await response.json();
+    assert.equal(body.error.code, "limits");
+    assert.match(body.error.message, /responseBytes/);
+  } finally {
+    await app.close();
+  }
+});
+
+test("runtime node rejects request bodies over the configured byte limit before invocation", async () => {
+  const supervisor = createRuntimeSupervisor({
+    snapshot: snapshot([route("dep_tiny_request", "hello.example.dev", "/", digest("tiny-request"))]),
+    artifactStore: materializedArtifactStore(),
+    backend: compiledBackend(),
+  });
+  let invoked = false;
+  const app = createRuntimeNodeApp({
+    supervisor,
+    invoker: {
+      async invoke() {
+        invoked = true;
+        return {
+          status: 200,
+          headers: [],
+          body: Buffer.from("should not run"),
+        };
+      },
+    },
+  });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const response = await fetch(`${baseUrl}/`, {
+      method: "POST",
+      headers: { "x-forwarded-host": "hello.example.dev" },
+      body: "too large",
+    });
+    assert.equal(response.status, 413);
+    const body = await response.json();
+    assert.equal(body.error.code, "limits");
+    assert.match(body.error.message, /requestBytes/);
+    assert.equal(invoked, false);
+  } finally {
+    await app.close();
+  }
+});
+
+test("runtime node maps wall clock limit timeouts to 504", async () => {
+  const supervisor = createRuntimeSupervisor({
+    snapshot: snapshot([route("dep_timeout", "hello.example.dev", "/", digest("timeout"))]),
+    artifactStore: materializedArtifactStore(),
+    backend: compiledBackend(),
+  });
+  const app = createRuntimeNodeApp({
+    supervisor,
+    invoker: {
+      async invoke() {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        return {
+          status: 200,
+          headers: [],
+          body: Buffer.from("late"),
+        };
+      },
+    },
+  });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const response = await fetch(`${baseUrl}/`, {
+      headers: { "x-forwarded-host": "hello.example.dev" },
+    });
+    assert.equal(response.status, 504);
+    const body = await response.json();
+    assert.equal(body.error.code, "timeout");
+  } finally {
+    await app.close();
+  }
+});
+
+test("runtime node rejects privileged capabilities from route snapshots before invocation", async () => {
+  const privileged = route("dep_privileged", "hello.example.dev", "/", digest("privileged"));
+  privileged.capabilities.arbitrarySockets = true as false;
+  const supervisor = createRuntimeSupervisor({
+    snapshot: snapshot([privileged]),
+    artifactStore: materializedArtifactStore(),
+    backend: compiledBackend(),
+  });
+  let invoked = false;
+  const app = createRuntimeNodeApp({
+    supervisor,
+    invoker: {
+      async invoke() {
+        invoked = true;
+        return {
+          status: 200,
+          headers: [],
+          body: Buffer.from("should not run"),
+        };
+      },
+    },
+  });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const response = await fetch(`${baseUrl}/`, {
+      headers: { "x-forwarded-host": "hello.example.dev" },
+    });
+    assert.equal(response.status, 500);
+    const body = await response.json();
+    assert.equal(body.error.code, "policy");
+    assert.match(body.error.message, /arbitrarySockets/);
+    assert.equal(invoked, false);
+  } finally {
+    await app.close();
+  }
+});
+
+test("runtime node resolves secret values from a host-only secret store before invocation", async () => {
+  const withSecret = route("dep_secret", "hello.example.dev", "/", digest("secret"));
+  withSecret.capabilities.secrets = [{ binding: "API_KEY", secretId: "sec_api_key" }];
+  const supervisor = createRuntimeSupervisor({
+    snapshot: snapshot([withSecret]),
+    artifactStore: materializedArtifactStore(),
+    backend: compiledBackend(),
+  });
+  const app = createRuntimeNodeApp({
+    supervisor,
+    secretStore: {
+      async getSecret(secretId) {
+        assert.equal(secretId, "sec_api_key");
+        return "super-secret";
+      },
+    },
+    invoker: {
+      async invoke(request) {
+        assert.deepEqual(request.component.capabilities?.secrets, [
+          { binding: "API_KEY", secretId: "sec_api_key", value: "super-secret" },
+        ]);
+        assert.deepEqual(withSecret.capabilities.secrets, [
+          { binding: "API_KEY", secretId: "sec_api_key" },
+        ]);
+        return {
+          status: 200,
+          headers: [],
+          body: Buffer.from("ok"),
+        };
+      },
+    },
+  });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const response = await fetch(`${baseUrl}/`, {
+      headers: { "x-forwarded-host": "hello.example.dev" },
+    });
+    assert.equal(response.status, 200);
+    assert.equal(await response.text(), "ok");
+  } finally {
+    await app.close();
+  }
+});
+
+test("runtime node exposes worker request metrics", async () => {
+  const supervisor = createRuntimeSupervisor({
+    snapshot: snapshot([route("dep_metrics", "hello.example.dev", "/", digest("metrics"))]),
+    artifactStore: materializedArtifactStore(),
+    backend: compiledBackend(),
+  });
+  const app = createRuntimeNodeApp({
+    supervisor,
+    now: fixedNow,
+    invoker: {
+      async invoke() {
+        return {
+          status: 201,
+          headers: [],
+          body: Buffer.from("created"),
+        };
+      },
+    },
+  });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const initialMetricsResponse = await fetch(`${baseUrl}/__runtime/metrics`);
+    assert.equal(initialMetricsResponse.status, 200);
+    assert.deepEqual(await initialMetricsResponse.json(), {
+      startedAt: fixedNow(),
+      requests: { total: 0, matched: 0, missed: 0 },
+      invocations: { total: 0, succeeded: 0, failed: 0 },
+      responses: { byStatus: {} },
+      errors: {},
+      snapshots: { loaded: 0 },
+    });
+
+    const hit = await fetch(`${baseUrl}/created`, {
+      headers: { "x-forwarded-host": "hello.example.dev" },
+    });
+    assert.equal(hit.status, 201);
+    assert.equal(await hit.text(), "created");
+
+    const miss = await fetch(`${baseUrl}/missing`, {
+      headers: { "x-forwarded-host": "other.example.dev" },
+    });
+    assert.equal(miss.status, 404);
+
+    const snapshotUpdate = snapshot([]);
+    snapshotUpdate.generatedAt = "2026-06-26T10:01:00.000Z";
+    const update = await fetch(`${baseUrl}/__runtime/snapshots/routes`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(snapshotUpdate),
+    });
+    assert.equal(update.status, 200);
+
+    const metricsResponse = await fetch(`${baseUrl}/__runtime/metrics`);
+    assert.equal(metricsResponse.status, 200);
+    assert.deepEqual(await metricsResponse.json(), {
+      startedAt: fixedNow(),
+      requests: { total: 2, matched: 1, missed: 1 },
+      invocations: { total: 1, succeeded: 1, failed: 0 },
+      responses: { byStatus: { "201": 1, "404": 1 } },
+      errors: { not_found: 1 },
+      snapshots: {
+        loaded: 1,
+        routes: 0,
+        generatedAt: "2026-06-26T10:01:00.000Z",
+      },
+    });
+  } finally {
+    await app.close();
+  }
+});
+
 test("runtime heartbeat client registers node and reports capacity", async () => {
   const requests: Array<{ method: string; path: string; body: any }> = [];
   const control = await listenControlPlaneSink(requests);
@@ -138,11 +422,59 @@ test("runtime heartbeat client registers node and reports capacity", async () =>
   }
 });
 
+test("runtime env secret store resolves exact and normalized secret ids", async () => {
+  const store = createEnvSecretStore({
+    WASMPLANE_SECRET_sec_api_key: "exact",
+    WASMPLANE_SECRET_SEC_OTHER: "normalized",
+  });
+
+  assert.equal(await store.getSecret("sec_api_key"), "exact");
+  assert.equal(await store.getSecret("sec-other"), "normalized");
+});
+
+test("runtime repository secret store resolves values by secret id", async () => {
+  const store = createRepositorySecretStore({
+    getSecretValue(secretId) {
+      return secretId === "sec_api_key" ? "super-secret" : undefined;
+    },
+  });
+
+  assert.equal(await store.getSecret("sec_api_key"), "super-secret");
+  assert.equal(await store.getSecret("sec_missing"), undefined);
+});
+
 function snapshot(routes: RouteSnapshot["routes"]): RouteSnapshot {
   return {
     schemaVersion: 1,
     generatedAt: "2026-06-26T10:00:00.000Z",
     routes,
+  };
+}
+
+function materializedArtifactStore() {
+  return {
+    async materialize(artifact: any) {
+      return {
+        path: "/tmp/worker.component.wasm",
+        digest: artifact.digest,
+        location: artifact.location,
+        verified: true,
+      };
+    },
+  };
+}
+
+function compiledBackend() {
+  return {
+    async compileComponent(request: any) {
+      return {
+        deploymentId: request.deploymentId,
+        backend: "wasmtime" as const,
+        componentPath: request.artifact.path,
+        precompiledPath: `/cache/${request.deploymentId}.cwasm`,
+        cached: false,
+      };
+    },
   };
 }
 
@@ -162,9 +494,11 @@ function route(
     limits: {
       cpuMs: 50,
       memoryMb: 64,
-      wallMs: 1000,
+      wallMs: deploymentId.includes("timeout") ? 10 : 1000,
+      requestBytes: deploymentId.includes("tiny_request") ? 4 : 1048576,
       subrequests: 20,
-      responseBytes: 1048576,
+      hostCalls: 100,
+      responseBytes: deploymentId.includes("small") ? 4 : 1048576,
     },
     capabilities: {
       outboundHttp: { enabled: false, allow: [] },
@@ -184,6 +518,10 @@ function route(
 
 function digest(seed: string): string {
   return `sha256:${createHash("sha256").update(seed).digest("hex")}`;
+}
+
+function fixedNow() {
+  return "2026-06-26T10:00:00.000Z";
 }
 
 async function listenControlPlaneSink(requests: Array<{ method: string; path: string; body: any }>) {

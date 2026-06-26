@@ -62,7 +62,7 @@ export function createRuntimeSupervisor(options: RuntimeSupervisorOptions) {
 
   async function materializeAndCompile(route: CompilableRouteTarget): Promise<CompiledComponent> {
     const artifact = await options.artifactStore.materialize(route.artifact);
-    return options.backend.compileComponent({
+    const compiled = await options.backend.compileComponent({
       deploymentId: route.deploymentId,
       projectId: route.projectId,
       world: route.world,
@@ -71,6 +71,12 @@ export function createRuntimeSupervisor(options: RuntimeSupervisorOptions) {
       capabilities: route.capabilities,
       artifact,
     });
+    return {
+      ...compiled,
+      projectId: route.projectId,
+      limits: route.limits,
+      capabilities: route.capabilities,
+    };
   }
 
   function loadSnapshot(snapshot: RouteSnapshot) {

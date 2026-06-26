@@ -1,7 +1,9 @@
 import { MVP_WASI_PROFILE } from "../control-plane/contracts.ts";
+import { createSqliteRepository } from "../control-plane/repository.ts";
 import { createFileArtifactStore } from "./artifacts.ts";
 import { startRuntimeHeartbeat } from "./heartbeat.ts";
 import { createRuntimeNodeApp } from "./node-app.ts";
+import { createEnvSecretStore, createRepositorySecretStore } from "./secrets.ts";
 import { createRuntimeSupervisor } from "./supervisor.ts";
 import { createWasip3HostBackend, createWasip3HostInvoker } from "./wasip3-host.ts";
 
@@ -13,6 +15,7 @@ const publicUrl = process.env.RUNTIME_PUBLIC_URL ?? `http://${host}:${port}`;
 const runtimeNodeId =
   process.env.RUNTIME_NODE_ID ?? `rt_${host.replaceAll(/[^a-zA-Z0-9]/g, "_")}_${port}`;
 const controlPlaneUrl = process.env.CONTROL_PLANE_URL ?? process.env.WASMPLANE_CONTROL_PLANE_URL;
+const secretDbPath = process.env.WASMPLANE_SECRET_DB;
 
 const supervisor = createRuntimeSupervisor({
   snapshot: {
@@ -27,6 +30,9 @@ const supervisor = createRuntimeSupervisor({
 const app = createRuntimeNodeApp({
   supervisor,
   invoker: createWasip3HostInvoker({ hostBin }),
+  secretStore: secretDbPath
+    ? createRepositorySecretStore(createSqliteRepository(secretDbPath))
+    : createEnvSecretStore(),
 });
 await app.listen({ port, host });
 if (controlPlaneUrl) {

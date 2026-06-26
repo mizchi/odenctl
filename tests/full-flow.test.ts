@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mkdtemp, readFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
@@ -10,6 +11,7 @@ import { createControlPlane } from "../src/control-plane/service.ts";
 import { createHttpApp } from "../src/http/app.ts";
 import { createFileArtifactStore } from "../src/runtime/artifacts.ts";
 import { createRuntimeNodeApp } from "../src/runtime/node-app.ts";
+import { createMemorySecretStore } from "../src/runtime/secrets.ts";
 import { createRuntimeSupervisor } from "../src/runtime/supervisor.ts";
 import { createWasip3HostBackend, createWasip3HostInvoker } from "../src/runtime/wasip3-host.ts";
 
@@ -23,6 +25,7 @@ test(
     const hostBin = process.env.WASMPLANE_E2E_HOST_BIN ?? "target/debug/wasmplane-wasip3-host";
     const cacheDir = await mkdtemp(join(tmpdir(), "wasmplane-e2e-cache-"));
     const digest = await sha256File(absoluteComponentPath);
+    const upstream = await listenUpstream();
 
     const runtimeApp = createRuntimeNodeApp({
       supervisor: createRuntimeSupervisor({
@@ -35,6 +38,7 @@ test(
         backend: createWasip3HostBackend({ cacheDir, hostBin }),
       }),
       invoker: createWasip3HostInvoker({ hostBin }),
+      secretStore: createMemorySecretStore({ sec_api_key: "super-secret" }),
     });
     const runtimeServer = await runtimeApp.listen({ port: 0, host: "127.0.0.1" });
     const runtimeAddress = runtimeServer.address();
@@ -66,6 +70,12 @@ test(
         location: pathToFileURL(absoluteComponentPath).href,
         sizeBytes: (await readFile(absoluteComponentPath)).byteLength,
       });
+      await postJson(controlBaseUrl, "/secrets", {
+        id: "sec_api_key",
+        projectId: project.id,
+        name: "API key",
+        value: "super-secret",
+      });
       const deployment = await postJson(controlBaseUrl, "/deployments", {
         projectId: project.id,
         artifactId: artifact.id,
@@ -79,13 +89,15 @@ test(
           cpuMs: 50,
           memoryMb: 64,
           wallMs: 10000,
+          requestBytes: 1048576,
           subrequests: 20,
+          hostCalls: 100,
           responseBytes: 1048576,
         },
         capabilities: {
-          outboundHttp: { enabled: false, allow: [] },
-          kv: [],
-          secrets: [],
+          outboundHttp: { enabled: true, allow: [`${upstream.baseUrl}/`] },
+          kv: [{ binding: "MAIN", namespaceId: "kv_main" }],
+          secrets: [{ binding: "API_KEY", secretId: "sec_api_key" }],
         },
       });
       await putJson(controlBaseUrl, "/routes", {
@@ -108,9 +120,24 @@ test(
       }
       assert.equal(response.headers.get("x-wasmplane-deployment"), deployment.id);
       assert.equal(await response.text(), "hello from wasmplane: GET http://hello.example.dev/");
+
+      const capabilityResponse = await fetch(`${runtimeBaseUrl}/capabilities`, {
+        headers: {
+          "x-forwarded-host": "hello.example.dev",
+          "x-upstream-url": `${upstream.baseUrl}/probe`,
+        },
+      });
+      if (capabilityResponse.status !== 200) {
+        assert.fail(await capabilityResponse.text());
+      }
+      assert.equal(
+        await capabilityResponse.text(),
+        "capabilities: kv=checked secret-len=12 outbound=upstream-ok",
+      );
     } finally {
       await controlApp.close();
       await runtimeApp.close();
+      await upstream.close();
     }
   },
 );
@@ -159,4 +186,40 @@ function requiredEnv(name: string): string {
 async function sha256File(path: string): Promise<string> {
   const body = await readFile(path);
   return `sha256:${createHash("sha256").update(body).digest("hex")}`;
+}
+
+async function listenUpstream() {
+  const server = createServer((request, response) => {
+    if (request.method !== "GET" || request.url !== "/probe") {
+      response.writeHead(404, { "content-type": "text/plain", "content-length": "9" });
+      response.end("not found");
+      return;
+    }
+    response.writeHead(200, { "content-type": "text/plain", "content-length": "11" });
+    response.end("upstream-ok");
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      server.off("error", reject);
+      resolve();
+    });
+  });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  return {
+    baseUrl: `http://127.0.0.1:${address.port}`,
+    close() {
+      return new Promise<void>((resolve, reject) => {
+        server.close((error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+          resolve();
+        });
+      });
+    },
+  };
 }

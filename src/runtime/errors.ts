@@ -2,7 +2,10 @@ export type RuntimeErrorCode =
   | "artifact"
   | "compile"
   | "invoke"
+  | "limits"
   | "not_found"
+  | "policy"
+  | "timeout"
   | "unsupported"
   | "validation";
 

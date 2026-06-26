@@ -7,6 +7,12 @@ export { createHttpApp } from "./http/app.ts";
 export { createFileArtifactStore } from "./runtime/artifacts.ts";
 export { registerRuntimeNode, sendRuntimeHeartbeat, startRuntimeHeartbeat } from "./runtime/heartbeat.ts";
 export { createRuntimeNodeApp } from "./runtime/node-app.ts";
+export {
+  createEnvSecretStore,
+  createMemorySecretStore,
+  createRepositorySecretStore,
+  resolveRuntimeCapabilities,
+} from "./runtime/secrets.ts";
 export { createRouteCache, createRuntimeSupervisor } from "./runtime/supervisor.ts";
 export { createWasip3HostBackend, createWasip3HostInvoker } from "./runtime/wasip3-host.ts";
 export { createWasmtimeCliBackend } from "./runtime/wasmtime.ts";

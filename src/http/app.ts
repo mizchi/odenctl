@@ -19,6 +19,11 @@ export interface HttpAppOptions {
   controlPlane: {
     createProject(input: any): unknown;
     createArtifact(input: any): unknown;
+    createSecret(input: any): unknown;
+    getSecret(input: any): unknown;
+    listProjectSecrets(input: any): unknown;
+    updateSecretValue(input: any): unknown;
+    deleteSecret(input: any): void;
     createDeployment(input: any): unknown;
     pointRoute(input: any): unknown;
     createRouteSnapshot(): RouteSnapshot;
@@ -90,6 +95,40 @@ export function createHttpApp(options: HttpAppOptions) {
             sizeBytes: ingested.sizeBytes,
           }),
         );
+        return;
+      }
+      if (method === "POST" && url.pathname === "/secrets") {
+        writeJson(response, 201, options.controlPlane.createSecret(await readJson(request)));
+        return;
+      }
+      const projectSecrets = projectSecretsMatch(method, url.pathname);
+      if (projectSecrets) {
+        writeJson(
+          response,
+          200,
+          options.controlPlane.listProjectSecrets({ projectId: projectSecrets.projectId }),
+        );
+        return;
+      }
+      const secret = secretMatch(method, url.pathname);
+      if (secret && method === "GET") {
+        writeJson(response, 200, options.controlPlane.getSecret({ id: secret.id }));
+        return;
+      }
+      if (secret && method === "PUT") {
+        writeJson(
+          response,
+          200,
+          options.controlPlane.updateSecretValue({
+            ...(await readJson(request)),
+            id: secret.id,
+          }),
+        );
+        return;
+      }
+      if (secret && method === "DELETE") {
+        options.controlPlane.deleteSecret({ id: secret.id });
+        response.writeHead(204).end();
         return;
       }
       if (method === "POST" && url.pathname === "/deployments") {
@@ -219,6 +258,28 @@ function runtimeNodeHeartbeatMatch(method: string, pathname: string): { id: stri
     return undefined;
   }
   const match = /^\/runtime-nodes\/([^/]+)\/heartbeat$/.exec(pathname);
+  if (!match) {
+    return undefined;
+  }
+  return { id: decodeURIComponent(match[1]) };
+}
+
+function projectSecretsMatch(method: string, pathname: string): { projectId: string } | undefined {
+  if (method !== "GET") {
+    return undefined;
+  }
+  const match = /^\/projects\/([^/]+)\/secrets$/.exec(pathname);
+  if (!match) {
+    return undefined;
+  }
+  return { projectId: decodeURIComponent(match[1]) };
+}
+
+function secretMatch(method: string, pathname: string): { id: string } | undefined {
+  if (method !== "GET" && method !== "PUT" && method !== "DELETE") {
+    return undefined;
+  }
+  const match = /^\/secrets\/([^/]+)$/.exec(pathname);
   if (!match) {
     return undefined;
   }

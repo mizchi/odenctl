@@ -204,7 +204,7 @@ export function createSpawnCommandRunner(): CommandRunner {
         if (options.timeoutMs) {
           timeout = setTimeout(() => {
             child.kill("SIGKILL");
-            reject(new RuntimeError("compile", `${command} timed out after ${options.timeoutMs}ms`));
+            reject(new RuntimeError("timeout", `${command} timed out after ${options.timeoutMs}ms`));
           }, options.timeoutMs);
         }
 
