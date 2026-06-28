@@ -76,6 +76,11 @@ test(
         name: "API key",
         value: "super-secret",
       });
+      await postJson(controlBaseUrl, "/kv-namespaces", {
+        id: "kv_main",
+        projectId: project.id,
+        name: "Main KV",
+      });
       const deployment = await postJson(controlBaseUrl, "/deployments", {
         projectId: project.id,
         artifactId: artifact.id,

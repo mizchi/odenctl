@@ -2,6 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import type {
   Artifact,
   Deployment,
+  KvNamespace,
   Project,
   RoutePointer,
   RouteSnapshotPublication,
@@ -21,6 +22,10 @@ export interface ControlPlaneRepository {
   listProjectSecrets(projectId: string): Secret[];
   updateSecretValue(id: string, value: string, updatedAt: string): Secret;
   deleteSecret(id: string): void;
+  createKvNamespace(namespace: KvNamespace): KvNamespace;
+  getKvNamespace(id: string): KvNamespace | undefined;
+  listProjectKvNamespaces(projectId: string): KvNamespace[];
+  deleteKvNamespace(id: string): void;
   createDeployment(deployment: Deployment): Deployment;
   getDeployment(id: string): Deployment | undefined;
   upsertRoute(route: RoutePointer): RoutePointer;
@@ -149,6 +154,50 @@ class SqliteControlPlaneRepository implements ControlPlaneRepository {
     const result = this.db.prepare("delete from secrets where id = ?").run(id);
     if (result.changes === 0) {
       throw new ControlPlaneError("not_found", `secret ${id} was not found`);
+    }
+  }
+
+  createKvNamespace(namespace: KvNamespace): KvNamespace {
+    try {
+      this.db
+        .prepare(
+          `insert into kv_namespaces (
+            id,
+            project_id,
+            name,
+            created_at,
+            updated_at
+          ) values (?, ?, ?, ?, ?)`,
+        )
+        .run(
+          namespace.id,
+          namespace.projectId,
+          namespace.name,
+          namespace.createdAt,
+          namespace.updatedAt,
+        );
+      return namespace;
+    } catch (error) {
+      throw writeError("kv namespace", namespace.id, error);
+    }
+  }
+
+  getKvNamespace(id: string): KvNamespace | undefined {
+    const row = this.db.prepare("select * from kv_namespaces where id = ?").get(id);
+    return row ? kvNamespaceFromRow(row) : undefined;
+  }
+
+  listProjectKvNamespaces(projectId: string): KvNamespace[] {
+    const rows = this.db
+      .prepare("select * from kv_namespaces where project_id = ? order by name asc, id asc")
+      .all(projectId);
+    return rows.map(kvNamespaceFromRow);
+  }
+
+  deleteKvNamespace(id: string): void {
+    const result = this.db.prepare("delete from kv_namespaces where id = ?").run(id);
+    if (result.changes === 0) {
+      throw new ControlPlaneError("not_found", `kv namespace ${id} was not found`);
     }
   }
 
@@ -378,6 +427,16 @@ function secretFromRow(row: any): Secret {
   };
 }
 
+function kvNamespaceFromRow(row: any): KvNamespace {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    name: row.name,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 function deploymentFromRow(row: any): Deployment {
   return {
     id: row.id,
@@ -485,6 +544,16 @@ create table if not exists secrets (
   foreign key (project_id) references projects(id)
 );
 
+create table if not exists kv_namespaces (
+  id text primary key,
+  project_id text not null,
+  name text not null,
+  created_at text not null,
+  updated_at text not null,
+  unique (project_id, name),
+  foreign key (project_id) references projects(id)
+);
+
 create table if not exists deployments (
   id text primary key,
   project_id text not null,
@@ -584,6 +653,22 @@ const migrations: SchemaMigration[] = [
           project_id text not null,
           name text not null,
           value text not null,
+          created_at text not null,
+          updated_at text not null,
+          unique (project_id, name),
+          foreign key (project_id) references projects(id)
+        )
+      `);
+    },
+  },
+  {
+    id: "202606270002_kv_namespace_registry",
+    apply(db) {
+      db.exec(`
+        create table if not exists kv_namespaces (
+          id text primary key,
+          project_id text not null,
+          name text not null,
           created_at text not null,
           updated_at text not null,
           unique (project_id, name),

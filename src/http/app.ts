@@ -24,6 +24,10 @@ export interface HttpAppOptions {
     listProjectSecrets(input: any): unknown;
     updateSecretValue(input: any): unknown;
     deleteSecret(input: any): void;
+    createKvNamespace(input: any): unknown;
+    getKvNamespace(input: any): unknown;
+    listProjectKvNamespaces(input: any): unknown;
+    deleteKvNamespace(input: any): void;
     createDeployment(input: any): unknown;
     pointRoute(input: any): unknown;
     createRouteSnapshot(): RouteSnapshot;
@@ -128,6 +132,31 @@ export function createHttpApp(options: HttpAppOptions) {
       }
       if (secret && method === "DELETE") {
         options.controlPlane.deleteSecret({ id: secret.id });
+        response.writeHead(204).end();
+        return;
+      }
+      if (method === "POST" && url.pathname === "/kv-namespaces") {
+        writeJson(response, 201, options.controlPlane.createKvNamespace(await readJson(request)));
+        return;
+      }
+      const projectKvNamespaces = projectKvNamespacesMatch(method, url.pathname);
+      if (projectKvNamespaces) {
+        writeJson(
+          response,
+          200,
+          options.controlPlane.listProjectKvNamespaces({
+            projectId: projectKvNamespaces.projectId,
+          }),
+        );
+        return;
+      }
+      const kvNamespace = kvNamespaceMatch(method, url.pathname);
+      if (kvNamespace && method === "GET") {
+        writeJson(response, 200, options.controlPlane.getKvNamespace({ id: kvNamespace.id }));
+        return;
+      }
+      if (kvNamespace && method === "DELETE") {
+        options.controlPlane.deleteKvNamespace({ id: kvNamespace.id });
         response.writeHead(204).end();
         return;
       }
@@ -280,6 +309,28 @@ function secretMatch(method: string, pathname: string): { id: string } | undefin
     return undefined;
   }
   const match = /^\/secrets\/([^/]+)$/.exec(pathname);
+  if (!match) {
+    return undefined;
+  }
+  return { id: decodeURIComponent(match[1]) };
+}
+
+function projectKvNamespacesMatch(method: string, pathname: string): { projectId: string } | undefined {
+  if (method !== "GET") {
+    return undefined;
+  }
+  const match = /^\/projects\/([^/]+)\/kv-namespaces$/.exec(pathname);
+  if (!match) {
+    return undefined;
+  }
+  return { projectId: decodeURIComponent(match[1]) };
+}
+
+function kvNamespaceMatch(method: string, pathname: string): { id: string } | undefined {
+  if (method !== "GET" && method !== "DELETE") {
+    return undefined;
+  }
+  const match = /^\/kv-namespaces\/([^/]+)$/.exec(pathname);
   if (!match) {
     return undefined;
   }

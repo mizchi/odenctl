@@ -431,7 +431,7 @@ impl WorkerHost {
                 &format!("outbound fetch to {} is not allowed", req.uri),
             ));
         }
-        match perform_http_fetch(req) {
+        match perform_http_fetch(req, &self.policy) {
             Ok(response) => Ok(response),
             Err(error) => Ok(outbound_text_response(
                 502,
@@ -674,15 +674,39 @@ struct OutboundUrlParts {
     path: String,
 }
 
+const MAX_OUTBOUND_REDIRECTS: usize = 5;
+
 fn perform_http_fetch(
     req: myedge::runtime::outbound::Request,
+    policy: &HostPolicy,
 ) -> Result<myedge::runtime::outbound::Response> {
     let connector = TlsConnector::new()?;
-    perform_http_fetch_with_tls_connector(req, &connector)
+    perform_http_fetch_with_tls_connector(req, &connector, policy)
 }
 
 fn perform_http_fetch_with_tls_connector(
-    req: myedge::runtime::outbound::Request,
+    mut req: myedge::runtime::outbound::Request,
+    tls_connector: &TlsConnector,
+    policy: &HostPolicy,
+) -> Result<myedge::runtime::outbound::Response> {
+    let mut url = parse_fetch_url(&req.uri)?;
+    for redirects in 0..=MAX_OUTBOUND_REDIRECTS {
+        let response = perform_single_http_fetch(&req, tls_connector)?;
+        let Some(location) = redirect_location(&response) else {
+            return Ok(response);
+        };
+        if redirects == MAX_OUTBOUND_REDIRECTS {
+            bail!("outbound redirect limit exceeded");
+        }
+        let next_uri = validate_redirect_target(policy, &url, location)?;
+        req = redirected_request(&req, next_uri);
+        url = parse_fetch_url(&req.uri)?;
+    }
+    bail!("outbound redirect limit exceeded")
+}
+
+fn perform_single_http_fetch(
+    req: &myedge::runtime::outbound::Request,
     tls_connector: &TlsConnector,
 ) -> Result<myedge::runtime::outbound::Response> {
     let url = parse_fetch_url(&req.uri)?;
@@ -702,6 +726,83 @@ fn perform_http_fetch_with_tls_connector(
         }
         _ => bail!("unsupported outbound URI scheme {}", url.scheme),
     }
+}
+
+fn redirect_location(response: &myedge::runtime::outbound::Response) -> Option<&str> {
+    if !matches!(response.status, 301 | 302 | 303 | 307 | 308) {
+        return None;
+    }
+    response
+        .headers
+        .iter()
+        .find(|header| header.name.eq_ignore_ascii_case("location"))
+        .map(|header| header.value.trim())
+        .filter(|value| !value.is_empty())
+}
+
+fn validate_redirect_target(
+    policy: &HostPolicy,
+    current: &HttpUrlParts,
+    location: &str,
+) -> Result<String> {
+    let next_uri = resolve_redirect_uri(current, location)?;
+    let next = parse_fetch_url(&next_uri)?;
+    if current.scheme == "https" && next.scheme == "http" {
+        bail!("outbound redirect downgrade from https to http is not allowed");
+    }
+    if !policy.allows_outbound_uri(&next_uri) {
+        bail!("outbound redirect to {next_uri} is not allowed");
+    }
+    Ok(next_uri)
+}
+
+fn redirected_request(
+    request: &myedge::runtime::outbound::Request,
+    uri: String,
+) -> myedge::runtime::outbound::Request {
+    myedge::runtime::outbound::Request {
+        method: request.method.clone(),
+        uri,
+        headers: request.headers.clone(),
+        body: request.body.clone(),
+    }
+}
+
+fn resolve_redirect_uri(current: &HttpUrlParts, location: &str) -> Result<String> {
+    let location = location.trim();
+    if location.starts_with("http://") || location.starts_with("https://") {
+        return Ok(location.to_string());
+    }
+    if let Some(rest) = location.strip_prefix("//") {
+        return Ok(format!("{}://{rest}", current.scheme));
+    }
+    if location.starts_with('/') {
+        return Ok(format!(
+            "{}://{}{}",
+            current.scheme, current.authority, location
+        ));
+    }
+    if location.starts_with('?') {
+        return Ok(format!(
+            "{}://{}{}{}",
+            current.scheme, current.authority, current.path, location
+        ));
+    }
+    let base = current
+        .path
+        .rsplit_once('/')
+        .map(|(prefix, _)| {
+            if prefix.is_empty() {
+                "/".to_string()
+            } else {
+                format!("{prefix}/")
+            }
+        })
+        .unwrap_or_else(|| "/".to_string());
+    Ok(format!(
+        "{}://{}{}{}",
+        current.scheme, current.authority, base, location
+    ))
 }
 
 fn build_http_request(
@@ -1470,6 +1571,11 @@ mod tests {
             b"HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 9\r\nconnection: close\r\n\r\ntls-works".to_vec()
         });
         let connector = trusted_test_tls_connector();
+        let policy = HostPolicy::with_bindings(
+            OutboundHttpPolicy::enabled(vec![format!("{}/", upstream.base_url)]),
+            Vec::new(),
+            Vec::new(),
+        );
 
         let response = perform_http_fetch_with_tls_connector(
             myedge::runtime::outbound::Request {
@@ -1479,12 +1585,131 @@ mod tests {
                 body: Vec::new(),
             },
             &connector,
+            &policy,
         )
         .expect("https outbound fetch");
 
         assert_eq!(response.status, 200);
         assert_eq!(response.body, b"tls-works");
         upstream.join();
+    }
+
+    #[test]
+    fn outbound_fetch_follows_allowlisted_redirects() {
+        let upstream = listen_many(2, |index, request, base_url| match index {
+            0 => {
+                assert!(request.starts_with("GET /start HTTP/1.1\r\n"));
+                format!(
+                    "HTTP/1.1 302 Found\r\nlocation: {base_url}/final\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+                )
+                .into_bytes()
+            }
+            1 => {
+                assert!(request.starts_with("GET /final HTTP/1.1\r\n"));
+                b"HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 10\r\nconnection: close\r\n\r\nredirected".to_vec()
+            }
+            _ => unreachable!("unexpected request"),
+        });
+        let mut host = WorkerHost::with_limits_and_policy(
+            InvocationLimits::default(),
+            HostPolicy::with_bindings(
+                OutboundHttpPolicy::enabled(vec![format!("{}/", upstream.base_url)]),
+                Vec::new(),
+                Vec::new(),
+            ),
+        );
+
+        let response = host
+            .fetch_outbound(myedge::runtime::outbound::Request {
+                method: "GET".to_string(),
+                uri: format!("{}/start", upstream.base_url),
+                headers: Vec::new(),
+                body: Vec::new(),
+            })
+            .expect("redirected fetch");
+
+        assert_eq!(response.status, 200);
+        assert_eq!(response.body, b"redirected");
+        upstream.join();
+    }
+
+    #[test]
+    fn outbound_fetch_revalidates_redirects_against_allowlist() {
+        let upstream = listen_many(1, |_index, _request, base_url| {
+            format!(
+                "HTTP/1.1 302 Found\r\nlocation: {base_url}/final\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+            )
+            .into_bytes()
+        });
+        let mut host = WorkerHost::with_limits_and_policy(
+            InvocationLimits::default(),
+            HostPolicy::with_bindings(
+                OutboundHttpPolicy::enabled(vec![format!("{}/start", upstream.base_url)]),
+                Vec::new(),
+                Vec::new(),
+            ),
+        );
+
+        let response = host
+            .fetch_outbound(myedge::runtime::outbound::Request {
+                method: "GET".to_string(),
+                uri: format!("{}/start", upstream.base_url),
+                headers: Vec::new(),
+                body: Vec::new(),
+            })
+            .expect("policy response");
+
+        assert_eq!(response.status, 502);
+        assert!(String::from_utf8_lossy(&response.body).contains("redirect"));
+        upstream.join();
+    }
+
+    #[test]
+    fn outbound_fetch_rejects_redirect_loops_after_limit() {
+        let upstream = listen_many(MAX_OUTBOUND_REDIRECTS + 1, |_index, _request, base_url| {
+            format!(
+                "HTTP/1.1 302 Found\r\nlocation: {base_url}/loop\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+            )
+            .into_bytes()
+        });
+        let mut host = WorkerHost::with_limits_and_policy(
+            InvocationLimits::default(),
+            HostPolicy::with_bindings(
+                OutboundHttpPolicy::enabled(vec![format!("{}/", upstream.base_url)]),
+                Vec::new(),
+                Vec::new(),
+            ),
+        );
+
+        let response = host
+            .fetch_outbound(myedge::runtime::outbound::Request {
+                method: "GET".to_string(),
+                uri: format!("{}/loop", upstream.base_url),
+                headers: Vec::new(),
+                body: Vec::new(),
+            })
+            .expect("policy response");
+
+        assert_eq!(response.status, 502);
+        assert!(String::from_utf8_lossy(&response.body).contains("redirect limit"));
+        upstream.join();
+    }
+
+    #[test]
+    fn outbound_redirect_policy_rejects_https_to_http_downgrade() {
+        let policy = HostPolicy::with_bindings(
+            OutboundHttpPolicy::enabled(vec![
+                "https://api.example.dev/".to_string(),
+                "http://api.example.dev/".to_string(),
+            ]),
+            Vec::new(),
+            Vec::new(),
+        );
+        let current = parse_fetch_url("https://api.example.dev/start").expect("url");
+        let error = validate_redirect_target(&policy, &current, "http://api.example.dev/final")
+            .expect_err("downgrade should be rejected");
+
+        assert!(format!("{error:?}").contains("downgrade"));
     }
 
     #[test]
@@ -1628,42 +1853,57 @@ mod tests {
     }
 
     fn listen_once(handler: impl FnOnce(String) -> Vec<u8> + Send + 'static) -> UpstreamServer {
+        let mut handler = Some(handler);
+        listen_many(1, move |_index, request, _base_url| {
+            handler.take().expect("single request handler")(request)
+        })
+    }
+
+    fn listen_many(
+        requests: usize,
+        mut handler: impl FnMut(usize, String, String) -> Vec<u8> + Send + 'static,
+    ) -> UpstreamServer {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind upstream");
         let address = listener.local_addr().expect("upstream address");
+        let base_url = format!("http://{address}");
+        let thread_base_url = base_url.clone();
         let handle = std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().expect("accept upstream request");
-            let mut request = Vec::new();
-            let mut buffer = [0; 1024];
-            loop {
-                let read = stream.read(&mut buffer).expect("read upstream request");
-                if read == 0 {
-                    break;
-                }
-                request.extend_from_slice(&buffer[..read]);
-                if request.windows(4).any(|window| window == b"\r\n\r\n") {
-                    let request_text = String::from_utf8_lossy(&request);
-                    if let Some(length) = content_length(&request_text) {
-                        let header_end = request
-                            .windows(4)
-                            .position(|window| window == b"\r\n\r\n")
-                            .expect("headers");
-                        if request.len() >= header_end + 4 + length {
-                            break;
-                        }
-                    } else {
+            for index in 0..requests {
+                let (mut stream, _) = listener.accept().expect("accept upstream request");
+                let mut request = Vec::new();
+                let mut buffer = [0; 1024];
+                loop {
+                    let read = stream.read(&mut buffer).expect("read upstream request");
+                    if read == 0 {
                         break;
                     }
+                    request.extend_from_slice(&buffer[..read]);
+                    if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                        let request_text = String::from_utf8_lossy(&request);
+                        if let Some(length) = content_length(&request_text) {
+                            let header_end = request
+                                .windows(4)
+                                .position(|window| window == b"\r\n\r\n")
+                                .expect("headers");
+                            if request.len() >= header_end + 4 + length {
+                                break;
+                            }
+                        } else {
+                            break;
+                        }
+                    }
                 }
+                let response = handler(
+                    index,
+                    String::from_utf8_lossy(&request).into_owned(),
+                    thread_base_url.clone(),
+                );
+                stream
+                    .write_all(&response)
+                    .expect("write upstream response");
             }
-            let response = handler(String::from_utf8_lossy(&request).into_owned());
-            stream
-                .write_all(&response)
-                .expect("write upstream response");
         });
-        UpstreamServer {
-            base_url: format!("http://{address}"),
-            handle,
-        }
+        UpstreamServer { base_url, handle }
     }
 
     fn listen_tls_once(handler: impl FnOnce(String) -> Vec<u8> + Send + 'static) -> UpstreamServer {

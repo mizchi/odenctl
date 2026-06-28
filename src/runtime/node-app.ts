@@ -1,5 +1,10 @@
 import { createServer } from "node:http";
-import type { RouteSnapshot } from "../control-plane/contracts.ts";
+import {
+  MVP_RUNTIME_BACKEND,
+  MVP_WASI_PROFILE,
+  MVP_WORKER_WORLD,
+  type RouteSnapshot,
+} from "../control-plane/contracts.ts";
 import { RuntimeError } from "./errors.ts";
 import { enforceRuntimeCapabilities } from "./policy.ts";
 import { resolveRuntimeCapabilities } from "./secrets.ts";
@@ -319,6 +324,9 @@ function runtimeErrorResponse(error: unknown): { status: number; code: string; m
   if (error instanceof RuntimeError && error.code === "timeout") {
     return { status: 504, code: error.code, message: error.message };
   }
+  if (error instanceof RuntimeError && error.code === "validation") {
+    return { status: 400, code: error.code, message: error.message };
+  }
   if (error instanceof RuntimeError && isRequestBytesLimit(error)) {
     return { status: 413, code: error.code, message: error.message };
   }
@@ -374,10 +382,210 @@ function requiredHeader(value: string | undefined): string {
   return value;
 }
 
-function assertRouteSnapshot(value: RouteSnapshot) {
-  if (!value || value.schemaVersion !== 1 || !Array.isArray(value.routes)) {
+function assertRouteSnapshot(value: unknown): asserts value is RouteSnapshot {
+  const snapshot = objectRecord(value, "route snapshot");
+  if (snapshot.schemaVersion !== 1 || !Array.isArray(snapshot.routes)) {
     throw new RuntimeError("validation", "route snapshot must have schemaVersion 1 and routes");
   }
+  stringValue(snapshot.generatedAt, "route snapshot.generatedAt");
+  snapshot.routes.forEach((route, index) => assertRouteSnapshotEntry(route, `routes[${index}]`));
+}
+
+function assertRouteSnapshotEntry(value: unknown, field: string) {
+  const route = objectRecord(value, field);
+  dnsHost(route.host, `${field}.host`);
+  pathPrefix(route.pathPrefix, `${field}.pathPrefix`);
+  nonEmptyString(route.projectId, `${field}.projectId`);
+  const deploymentId = nonEmptyString(route.deploymentId, `${field}.deploymentId`);
+  assertWorld(route.world, `${field}.world`);
+  assertRuntime(route.runtime, `${field}.runtime`);
+  assertLimits(route.limits, `${field}.limits`);
+  assertCapabilities(route.capabilities, `${field}.capabilities`);
+  assertArtifact(route.artifact, `${field}.artifact`);
+  if (!Array.isArray(route.targets) || route.targets.length === 0) {
+    throw new RuntimeError("validation", `${field}.targets must be a non-empty array`);
+  }
+  route.targets.forEach((target, index) =>
+    assertRouteSnapshotTarget(target, `${field}.targets[${index}]`),
+  );
+  const primary = objectRecord(route.targets[0], `${field}.targets[0]`);
+  if (primary.deploymentId !== deploymentId) {
+    throw new RuntimeError(
+      "validation",
+      `${field}.deploymentId must match ${field}.targets[0].deploymentId`,
+    );
+  }
+}
+
+function assertRouteSnapshotTarget(value: unknown, field: string) {
+  const target = objectRecord(value, field);
+  nonEmptyString(target.deploymentId, `${field}.deploymentId`);
+  positiveInteger(target.weight, `${field}.weight`);
+  assertWorld(target.world, `${field}.world`);
+  assertRuntime(target.runtime, `${field}.runtime`);
+  assertLimits(target.limits, `${field}.limits`);
+  assertCapabilities(target.capabilities, `${field}.capabilities`);
+  assertArtifact(target.artifact, `${field}.artifact`);
+}
+
+function assertWorld(value: unknown, field: string) {
+  if (value !== MVP_WORKER_WORLD) {
+    throw new RuntimeError("validation", `${field} must be ${MVP_WORKER_WORLD}`);
+  }
+}
+
+function assertRuntime(value: unknown, field: string) {
+  const runtime = objectRecord(value, field);
+  if (runtime.backend !== MVP_RUNTIME_BACKEND) {
+    throw new RuntimeError("validation", `${field}.backend must be ${MVP_RUNTIME_BACKEND}`);
+  }
+  if (runtime.wasi !== MVP_WASI_PROFILE) {
+    throw new RuntimeError("validation", `${field}.wasi must be ${MVP_WASI_PROFILE}`);
+  }
+  nonEmptyString(runtime.version, `${field}.version`);
+}
+
+function assertLimits(value: unknown, field: string) {
+  const limits = objectRecord(value, field);
+  positiveInteger(limits.cpuMs, `${field}.cpuMs`);
+  positiveInteger(limits.memoryMb, `${field}.memoryMb`);
+  positiveInteger(limits.wallMs, `${field}.wallMs`);
+  positiveInteger(limits.requestBytes, `${field}.requestBytes`);
+  positiveInteger(limits.subrequests, `${field}.subrequests`);
+  positiveInteger(limits.hostCalls, `${field}.hostCalls`);
+  positiveInteger(limits.responseBytes, `${field}.responseBytes`);
+}
+
+function assertCapabilities(value: unknown, field: string) {
+  const capabilities = objectRecord(value, field);
+  assertOutboundHttp(capabilities.outboundHttp, `${field}.outboundHttp`);
+  assertKvBindings(capabilities.kv, `${field}.kv`);
+  assertSecretBindings(capabilities.secrets, `${field}.secrets`);
+  falseValue(capabilities.arbitraryFilesystem, `${field}.arbitraryFilesystem`);
+  falseValue(capabilities.arbitrarySockets, `${field}.arbitrarySockets`);
+  falseValue(capabilities.processSpawn, `${field}.processSpawn`);
+}
+
+function assertOutboundHttp(value: unknown, field: string) {
+  const outbound = objectRecord(value, field);
+  if (typeof outbound.enabled !== "boolean") {
+    throw new RuntimeError("validation", `${field}.enabled must be a boolean`);
+  }
+  const allow = stringArray(outbound.allow, `${field}.allow`);
+  if (!outbound.enabled && allow.length > 0) {
+    throw new RuntimeError("validation", `${field}.allow requires ${field}.enabled`);
+  }
+}
+
+function assertKvBindings(value: unknown, field: string) {
+  if (!Array.isArray(value)) {
+    throw new RuntimeError("validation", `${field} must be an array`);
+  }
+  value.forEach((item, index) => {
+    const binding = objectRecord(item, `${field}[${index}]`);
+    bindingName(binding.binding, `${field}[${index}].binding`);
+    nonEmptyString(binding.namespaceId, `${field}[${index}].namespaceId`);
+  });
+}
+
+function assertSecretBindings(value: unknown, field: string) {
+  if (!Array.isArray(value)) {
+    throw new RuntimeError("validation", `${field} must be an array`);
+  }
+  value.forEach((item, index) => {
+    const binding = objectRecord(item, `${field}[${index}]`);
+    bindingName(binding.binding, `${field}[${index}].binding`);
+    nonEmptyString(binding.secretId, `${field}[${index}].secretId`);
+  });
+}
+
+function assertArtifact(value: unknown, field: string) {
+  const artifact = objectRecord(value, field);
+  nonEmptyString(artifact.id, `${field}.id`);
+  digestValue(artifact.digest, `${field}.digest`);
+  locationValue(artifact.location, `${field}.location`);
+}
+
+function objectRecord(value: unknown, field: string): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new RuntimeError("validation", `${field} must be an object`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function stringValue(value: unknown, field: string): string {
+  if (typeof value !== "string") {
+    throw new RuntimeError("validation", `${field} must be a string`);
+  }
+  return value;
+}
+
+function nonEmptyString(value: unknown, field: string): string {
+  const text = stringValue(value, field).trim();
+  if (text.length === 0) {
+    throw new RuntimeError("validation", `${field} must be a non-empty string`);
+  }
+  return text;
+}
+
+function stringArray(value: unknown, field: string): string[] {
+  if (!Array.isArray(value)) {
+    throw new RuntimeError("validation", `${field} must be an array`);
+  }
+  return value.map((item, index) => nonEmptyString(item, `${field}[${index}]`));
+}
+
+function positiveInteger(value: unknown, field: string): number {
+  if (!Number.isInteger(value) || (value as number) <= 0) {
+    throw new RuntimeError("validation", `${field} must be a positive integer`);
+  }
+  return value as number;
+}
+
+function falseValue(value: unknown, field: string) {
+  if (value !== false) {
+    throw new RuntimeError("validation", `${field} must be false`);
+  }
+}
+
+function bindingName(value: unknown, field: string): string {
+  const name = nonEmptyString(value, field);
+  if (!/^[A-Z][A-Z0-9_]*$/.test(name)) {
+    throw new RuntimeError("validation", `${field} must be an uppercase binding name`);
+  }
+  return name;
+}
+
+function dnsHost(value: unknown, field: string): string {
+  const host = nonEmptyString(value, field).toLowerCase();
+  if (!/^[a-z0-9.-]+$/.test(host) || host.startsWith(".") || host.endsWith(".")) {
+    throw new RuntimeError("validation", `${field} must be a DNS host`);
+  }
+  return host;
+}
+
+function pathPrefix(value: unknown, field: string): string {
+  const prefix = nonEmptyString(value, field);
+  if (!prefix.startsWith("/")) {
+    throw new RuntimeError("validation", `${field} must start with /`);
+  }
+  return prefix;
+}
+
+function digestValue(value: unknown, field: string): string {
+  const digest = nonEmptyString(value, field);
+  if (!/^sha256:[a-fA-F0-9]{64}$/.test(digest)) {
+    throw new RuntimeError("validation", `${field} must be a sha256:<64 hex chars> value`);
+  }
+  return digest.toLowerCase();
+}
+
+function locationValue(value: unknown, field: string): string {
+  const location = nonEmptyString(value, field);
+  if (!/^(oci|s3|file):\/\//.test(location)) {
+    throw new RuntimeError("validation", `${field} must use oci://, s3://, or file://`);
+  }
+  return location;
 }
 
 function writeInvocationResponse(

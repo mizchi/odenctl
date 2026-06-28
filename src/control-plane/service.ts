@@ -3,6 +3,7 @@ import type {
   Artifact,
   CapabilityPolicy,
   Deployment,
+  KvNamespace,
   Project,
   RoutePointer,
   RouteSnapshot,
@@ -21,6 +22,7 @@ import {
   normalizeCapabilities,
   normalizeDigest,
   normalizeHost,
+  normalizeKvNamespaceName,
   normalizeLimits,
   normalizeLocation,
   normalizePathPrefix,
@@ -79,6 +81,24 @@ export interface UpdateSecretValueInput {
 }
 
 export interface DeleteSecretInput {
+  id: string;
+}
+
+export interface CreateKvNamespaceInput {
+  id?: string;
+  projectId: string;
+  name: string;
+}
+
+export interface GetKvNamespaceInput {
+  id: string;
+}
+
+export interface ListProjectKvNamespacesInput {
+  projectId: string;
+}
+
+export interface DeleteKvNamespaceInput {
   id: string;
 }
 
@@ -178,6 +198,32 @@ export function createControlPlane(options: ControlPlaneOptions) {
     repository.deleteSecret(input.id);
   }
 
+  function createKvNamespace(input: CreateKvNamespaceInput): KvNamespace {
+    requireProject(repository, input.projectId);
+    const namespace: KvNamespace = {
+      id: optionalId(input.id, "kv namespace id") ?? idGenerator("kv"),
+      projectId: input.projectId,
+      name: normalizeKvNamespaceName(input.name),
+      createdAt: now(),
+      updatedAt: now(),
+    };
+    return repository.createKvNamespace(namespace);
+  }
+
+  function getKvNamespace(input: GetKvNamespaceInput): KvNamespace {
+    return requireKvNamespace(repository, input.id);
+  }
+
+  function listProjectKvNamespaces(input: ListProjectKvNamespacesInput): KvNamespace[] {
+    requireProject(repository, input.projectId);
+    return repository.listProjectKvNamespaces(input.projectId);
+  }
+
+  function deleteKvNamespace(input: DeleteKvNamespaceInput): void {
+    requireKvNamespace(repository, input.id);
+    repository.deleteKvNamespace(input.id);
+  }
+
   function createDeployment(input: CreateDeploymentInput): Deployment {
     requireProject(repository, input.projectId);
     const artifact = requireArtifact(repository, input.artifactId);
@@ -185,6 +231,7 @@ export function createControlPlane(options: ControlPlaneOptions) {
       throw new ControlPlaneError("validation", "deployment artifact must belong to the same project");
     }
     const capabilities = normalizeCapabilities(input.capabilities);
+    requireDeploymentKvNamespaces(repository, input.projectId, capabilities);
     requireDeploymentSecrets(repository, input.projectId, capabilities);
 
     const deployment: Deployment = {
@@ -309,6 +356,10 @@ export function createControlPlane(options: ControlPlaneOptions) {
     listProjectSecrets,
     updateSecretValue,
     deleteSecret,
+    createKvNamespace,
+    getKvNamespace,
+    listProjectKvNamespaces,
+    deleteKvNamespace,
     createDeployment,
     pointRoute,
     createRouteSnapshot,
@@ -361,6 +412,33 @@ function requireSecret(repository: ControlPlaneRepository, id: string): Secret {
     throw new ControlPlaneError("not_found", `secret ${id} was not found`);
   }
   return secret;
+}
+
+function requireKvNamespace(repository: ControlPlaneRepository, id: string): KvNamespace {
+  const namespace = repository.getKvNamespace(id);
+  if (!namespace) {
+    throw new ControlPlaneError("not_found", `kv namespace ${id} was not found`);
+  }
+  return namespace;
+}
+
+function requireDeploymentKvNamespaces(
+  repository: ControlPlaneRepository,
+  projectId: string,
+  capabilities: CapabilityPolicy,
+) {
+  for (const binding of capabilities.kv) {
+    const namespace = repository.getKvNamespace(binding.namespaceId);
+    if (!namespace) {
+      throw new ControlPlaneError("validation", `kv namespace ${binding.namespaceId} was not found`);
+    }
+    if (namespace.projectId !== projectId) {
+      throw new ControlPlaneError(
+        "validation",
+        `deployment kv namespace ${binding.namespaceId} must belong to the same project`,
+      );
+    }
+  }
 }
 
 function requireDeploymentSecrets(

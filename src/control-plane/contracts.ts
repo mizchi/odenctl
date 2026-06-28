@@ -31,6 +31,14 @@ export interface Secret {
   updatedAt: string;
 }
 
+export interface KvNamespace {
+  id: string;
+  projectId: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface RuntimeSpec {
   backend: RuntimeBackend;
   version: string;
@@ -221,6 +229,17 @@ export function normalizeSecretValue(value: unknown): string {
     throw new ControlPlaneError("validation", "secret value must be at most 65536 characters");
   }
   return value;
+}
+
+export function normalizeKvNamespaceName(value: unknown): string {
+  const name = nonEmptyString(value, "kv namespace name");
+  if (name.length > 120 || /[\u0000-\u001f\u007f]/.test(name)) {
+    throw new ControlPlaneError(
+      "validation",
+      "kv namespace name must be between 1 and 120 printable characters",
+    );
+  }
+  return name;
 }
 
 export function normalizeWorld(value: unknown): typeof MVP_WORKER_WORLD {

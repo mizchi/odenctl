@@ -39,6 +39,17 @@ content-type: application/json
 
 ###
 
+POST http://127.0.0.1:8787/kv-namespaces
+content-type: application/json
+
+{
+  "id": "kv_main",
+  "projectId": "prj_replace_me",
+  "name": "Main KV"
+}
+
+###
+
 POST http://127.0.0.1:8787/deployments
 content-type: application/json
 
@@ -65,7 +76,9 @@ content-type: application/json
       "enabled": true,
       "allow": ["https://api.example.com"]
     },
-    "kv": [],
+    "kv": [
+      { "binding": "MAIN", "namespaceId": "kv_main" }
+    ],
     "secrets": [
       { "binding": "API_KEY", "secretId": "sec_api_key" }
     ]
@@ -75,6 +88,10 @@ content-type: application/json
 ###
 
 GET http://127.0.0.1:8787/projects/prj_replace_me/secrets
+
+###
+
+GET http://127.0.0.1:8787/projects/prj_replace_me/kv-namespaces
 
 ###
 

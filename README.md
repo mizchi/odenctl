@@ -61,14 +61,15 @@ maps a binding name such as `MAIN` to its physical namespace, and `secrets.open-
 secret handle whose `reveal` operation is backed by host-loaded secret values. Secret values are
 redacted from host logs.
 The control plane stores local secret values through `POST /secrets`, but all public API responses
-return only secret metadata. Deployments can only reference registered secrets owned by the same
-project.
+return only secret metadata. KV namespaces are also registered in the control plane. Deployments can
+only reference registered secrets and KV namespaces owned by the same project.
 Outbound requests go through the host `outbound.fetch` proxy and are checked against the deployment
 allowlist and subrequest limit. The host proxy supports `http://` and `https://` upstreams, with
 system trust roots used for TLS verification. Outbound allowlists are matched by URL scheme, host,
 port, and path prefix rather than raw string prefix, and hostname targets that resolve to
 private/loopback/link-local addresses are rejected unless the allowlist uses an explicit IP literal
-for local development.
+for local development. Redirects are followed up to five hops, with each target rechecked against
+the allowlist; HTTPS-to-HTTP redirect downgrades are rejected.
 
 The real guest example can be rebuilt and invoked through the Rust Wasmtime host:
 
@@ -116,6 +117,10 @@ Available endpoints:
 - `GET /secrets/:id`
 - `PUT /secrets/:id`
 - `DELETE /secrets/:id`
+- `POST /kv-namespaces`
+- `GET /projects/:id/kv-namespaces`
+- `GET /kv-namespaces/:id`
+- `DELETE /kv-namespaces/:id`
 - `POST /deployments`
 - `PUT /routes`
 - `POST /runtime-nodes`
@@ -147,6 +152,24 @@ Deployment capability bindings reference only the secret id:
 ```json
 {
   "secrets": [{ "binding": "API_KEY", "secretId": "sec_api_key" }]
+}
+```
+
+KV namespace creation returns metadata:
+
+```json
+{
+  "id": "kv_main",
+  "projectId": "prj_hello",
+  "name": "Main KV"
+}
+```
+
+Deployment KV capability bindings reference the registered namespace id:
+
+```json
+{
+  "kv": [{ "binding": "MAIN", "namespaceId": "kv_main" }]
 }
 ```
 

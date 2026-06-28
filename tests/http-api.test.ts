@@ -187,6 +187,110 @@ test("HTTP API rejects deployments that reference unknown secrets", async () => 
   }
 });
 
+test("HTTP API manages KV namespaces", async () => {
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+  });
+  const app = createHttpApp({ controlPlane: control });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const project = await postJson(baseUrl, "/projects", { name: "hello" });
+    const namespace = await postJson(baseUrl, "/kv-namespaces", {
+      id: "kv_main",
+      projectId: project.id,
+      name: "Main KV",
+    });
+
+    assert.deepEqual(namespace, {
+      id: "kv_main",
+      projectId: project.id,
+      name: "Main KV",
+      createdAt: fixedNow(),
+      updatedAt: fixedNow(),
+    });
+
+    const getResponse = await fetch(`${baseUrl}/kv-namespaces/kv_main`);
+    assert.equal(getResponse.status, 200);
+    assert.deepEqual(await getResponse.json(), namespace);
+
+    const listResponse = await fetch(`${baseUrl}/projects/${project.id}/kv-namespaces`);
+    assert.equal(listResponse.status, 200);
+    assert.deepEqual(await listResponse.json(), [namespace]);
+
+    const deleteResponse = await fetch(`${baseUrl}/kv-namespaces/kv_main`, { method: "DELETE" });
+    assert.equal(deleteResponse.status, 204);
+
+    const deletedResponse = await fetch(`${baseUrl}/kv-namespaces/kv_main`);
+    assert.equal(deletedResponse.status, 404);
+  } finally {
+    await app.close();
+  }
+});
+
+test("HTTP API rejects deployments that reference unknown KV namespaces", async () => {
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+  });
+  const app = createHttpApp({ controlPlane: control });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const project = await postJson(baseUrl, "/projects", { name: "hello" });
+    const artifact = await postJson(baseUrl, "/artifacts", {
+      projectId: project.id,
+      digest: digest("hello"),
+      location: "oci://registry.example.com/mizchi/hello:v1",
+      sizeBytes: 42,
+    });
+    const response = await fetch(`${baseUrl}/deployments`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        projectId: project.id,
+        artifactId: artifact.id,
+        world: "myedge:runtime/worker@0.1.0",
+        runtime: {
+          backend: "wasmtime",
+          version: "wasmtime-43",
+          wasi: "wasip3",
+        },
+        limits: {
+          cpuMs: 50,
+          memoryMb: 64,
+          wallMs: 1000,
+          requestBytes: 1048576,
+          subrequests: 20,
+          hostCalls: 100,
+          responseBytes: 1048576,
+        },
+        capabilities: {
+          outboundHttp: { enabled: false, allow: [] },
+          kv: [{ binding: "MAIN", namespaceId: "kv_missing" }],
+          secrets: [],
+        },
+      }),
+    });
+
+    assert.equal(response.status, 400);
+    assert.match(await response.text(), /kv namespace kv_missing/);
+  } finally {
+    await app.close();
+  }
+});
+
 test("HTTP API publishes route snapshot to configured runtime nodes", async () => {
   const receivedSnapshots: RouteSnapshot[] = [];
   const runtime = await listenRuntimeSnapshotSink(receivedSnapshots);

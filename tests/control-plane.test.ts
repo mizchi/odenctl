@@ -29,6 +29,11 @@ test("creates immutable wasmtime deployments with denied-by-default host capabil
     name: "API key",
     value: "super-secret",
   });
+  control.createKvNamespace({
+    id: "kv_main",
+    projectId: project.id,
+    name: "Main KV",
+  });
 
   const deployment = control.createDeployment({
     id: "dep_hello_v1",
@@ -162,6 +167,79 @@ test("deployment secret bindings cannot reference another project", () => {
           outboundHttp: { enabled: false, allow: [] },
           kv: [],
           secrets: [{ binding: "API_KEY", secretId: "sec_other" }],
+        },
+      }),
+    /same project/,
+  );
+});
+
+test("registers project KV namespaces and validates deployment bindings", () => {
+  const control = createSeededControlPlane();
+  const namespace = control.createKvNamespace({
+    id: "kv_main",
+    projectId: "prj_hello",
+    name: "Main KV",
+  });
+
+  assert.deepEqual(namespace, {
+    id: "kv_main",
+    projectId: "prj_hello",
+    name: "Main KV",
+    createdAt: fixedNow(),
+    updatedAt: fixedNow(),
+  });
+  assert.deepEqual(control.getKvNamespace({ id: "kv_main" }), namespace);
+  assert.deepEqual(control.listProjectKvNamespaces({ projectId: "prj_hello" }), [namespace]);
+
+  const deployment = control.createDeployment({
+    ...seedDeployment("dep_kv", "art_v1"),
+    capabilities: {
+      outboundHttp: { enabled: false, allow: [] },
+      kv: [{ binding: "MAIN", namespaceId: "kv_main" }],
+      secrets: [],
+    },
+  });
+  control.pointRoute({
+    projectId: "prj_hello",
+    host: "hello.example.dev",
+    pathPrefix: "/",
+    deploymentId: deployment.id,
+  });
+  assert.deepEqual(control.createRouteSnapshot().routes[0]?.capabilities.kv, [
+    { binding: "MAIN", namespaceId: "kv_main" },
+  ]);
+
+  assert.throws(
+    () =>
+      control.createDeployment({
+        ...seedDeployment("dep_missing_kv", "art_v1"),
+        capabilities: {
+          outboundHttp: { enabled: false, allow: [] },
+          kv: [{ binding: "MAIN", namespaceId: "kv_missing" }],
+          secrets: [],
+        },
+      }),
+    /kv namespace kv_missing/,
+  );
+});
+
+test("deployment KV bindings cannot reference another project", () => {
+  const control = createSeededControlPlane();
+  const other = control.createProject({ id: "prj_other", name: "other" });
+  control.createKvNamespace({
+    id: "kv_other",
+    projectId: other.id,
+    name: "Other KV",
+  });
+
+  assert.throws(
+    () =>
+      control.createDeployment({
+        ...seedDeployment("dep_cross_project_kv", "art_v1"),
+        capabilities: {
+          outboundHttp: { enabled: false, allow: [] },
+          kv: [{ binding: "MAIN", namespaceId: "kv_other" }],
+          secrets: [],
         },
       }),
     /same project/,
@@ -376,6 +454,10 @@ test("sqlite repository records schema migrations and upgrades existing database
     .prepare("pragma table_info(secrets)")
     .all()
     .map((row: any) => row.name);
+  const kvNamespaceColumns = db
+    .prepare("pragma table_info(kv_namespaces)")
+    .all()
+    .map((row: any) => row.name);
 
   assert.deepEqual(migrationIds, [
     "202606260001_wasip3_alias",
@@ -383,10 +465,12 @@ test("sqlite repository records schema migrations and upgrades existing database
     "202606260003_runtime_node_health",
     "202606260004_route_snapshot_publications",
     "202606270001_secret_registry",
+    "202606270002_kv_namespace_registry",
   ]);
   assert.ok(routeColumns.includes("targets_json"));
   assert.ok(runtimeNodeColumns.includes("status"));
   assert.ok(secretColumns.includes("value"));
+  assert.ok(kvNamespaceColumns.includes("project_id"));
   assert.equal(db.prepare("select count(*) as count from route_snapshot_publications").get().count, 1);
   db.close();
 });

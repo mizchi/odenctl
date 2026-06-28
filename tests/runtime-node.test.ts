@@ -98,6 +98,99 @@ test("runtime node accepts route snapshots and invokes matched deployments", asy
   }
 });
 
+test("runtime node rejects invalid route snapshots before loading them", async () => {
+  const loadedSnapshots: RouteSnapshot[] = [];
+  const app = createRuntimeNodeApp({
+    supervisor: {
+      loadSnapshot(snapshot) {
+        loadedSnapshots.push(snapshot);
+      },
+      async prepareRoute() {
+        throw new Error("not used");
+      },
+    },
+  });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  const cases: Array<{ name: string; snapshot: any; message: RegExp }> = [
+    {
+      name: "runtime backend",
+      snapshot: snapshot([
+        {
+          ...route("dep_bad_runtime", "hello.example.dev", "/", digest("runtime")),
+          runtime: { backend: "wasmedge", version: "wasmedge-1", wasi: MVP_WASI_PROFILE },
+        },
+      ]),
+      message: /runtime.backend/,
+    },
+    {
+      name: "artifact digest",
+      snapshot: snapshot([
+        {
+          ...route("dep_bad_digest", "hello.example.dev", "/", digest("digest")),
+          artifact: {
+            id: "art_bad",
+            digest: "sha256:not-hex",
+            location: "file:///tmp/worker.component.wasm",
+          },
+        },
+      ]),
+      message: /artifact.digest/,
+    },
+    {
+      name: "privileged capabilities",
+      snapshot: snapshot([
+        {
+          ...route("dep_privileged_snapshot", "hello.example.dev", "/", digest("privileged")),
+          capabilities: {
+            ...route("dep_privileged_snapshot", "hello.example.dev", "/", digest("privileged"))
+              .capabilities,
+            arbitraryFilesystem: true,
+          },
+        },
+      ]),
+      message: /arbitraryFilesystem/,
+    },
+    {
+      name: "route target mismatch",
+      snapshot: snapshot([
+        {
+          ...route("dep_route", "hello.example.dev", "/", digest("route")),
+          targets: [
+            {
+              ...route("dep_target", "hello.example.dev", "/", digest("target")),
+              deploymentId: "dep_target",
+              weight: 100,
+            },
+          ],
+        },
+      ]),
+      message: /deploymentId/,
+    },
+  ];
+
+  try {
+    for (const item of cases) {
+      const response = await fetch(`${baseUrl}/__runtime/snapshots/routes`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(item.snapshot),
+      });
+      assert.equal(response.status, 400, item.name);
+      const body = await response.json();
+      assert.equal(body.error.code, "validation");
+      assert.match(body.error.message, item.message);
+    }
+    assert.deepEqual(loadedSnapshots, []);
+  } finally {
+    await app.close();
+  }
+});
+
 test("runtime node enforces response byte limits", async () => {
   const supervisor = createRuntimeSupervisor({
     snapshot: snapshot([route("dep_small", "hello.example.dev", "/", digest("small"))]),
@@ -484,35 +577,40 @@ function route(
   pathPrefix: string,
   artifactDigest: string,
 ): RouteSnapshot["routes"][number] {
+  const runtime = { backend: "wasmtime" as const, version: "wasmtime-42", wasi: MVP_WASI_PROFILE };
+  const limits = {
+    cpuMs: 50,
+    memoryMb: 64,
+    wallMs: deploymentId.includes("timeout") ? 10 : 1000,
+    requestBytes: deploymentId.includes("tiny_request") ? 4 : 1048576,
+    subrequests: 20,
+    hostCalls: 100,
+    responseBytes: deploymentId.includes("small") ? 4 : 1048576,
+  };
+  const capabilities = {
+    outboundHttp: { enabled: false, allow: [] },
+    kv: [],
+    secrets: [],
+    arbitraryFilesystem: false,
+    arbitrarySockets: false,
+    processSpawn: false,
+  };
+  const artifact = {
+    id: `art_${deploymentId}`,
+    digest: artifactDigest,
+    location: "file:///tmp/worker.component.wasm",
+  };
   return {
     host,
     pathPrefix,
     projectId: "prj_hello",
     deploymentId,
     world: MVP_WORKER_WORLD,
-    runtime: { backend: "wasmtime", version: "wasmtime-42", wasi: MVP_WASI_PROFILE },
-    limits: {
-      cpuMs: 50,
-      memoryMb: 64,
-      wallMs: deploymentId.includes("timeout") ? 10 : 1000,
-      requestBytes: deploymentId.includes("tiny_request") ? 4 : 1048576,
-      subrequests: 20,
-      hostCalls: 100,
-      responseBytes: deploymentId.includes("small") ? 4 : 1048576,
-    },
-    capabilities: {
-      outboundHttp: { enabled: false, allow: [] },
-      kv: [],
-      secrets: [],
-      arbitraryFilesystem: false,
-      arbitrarySockets: false,
-      processSpawn: false,
-    },
-    artifact: {
-      id: `art_${deploymentId}`,
-      digest: artifactDigest,
-      location: "file:///tmp/worker.component.wasm",
-    },
+    runtime,
+    limits,
+    capabilities,
+    artifact,
+    targets: [{ deploymentId, weight: 100, world: MVP_WORKER_WORLD, runtime, limits, capabilities, artifact }],
   };
 }
 
