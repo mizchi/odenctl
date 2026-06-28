@@ -98,6 +98,62 @@ test("runtime node accepts route snapshots and invokes matched deployments", asy
   }
 });
 
+test("runtime node requires management bearer token for runtime endpoints when configured", async () => {
+  const loadedSnapshots: RouteSnapshot[] = [];
+  const app = createRuntimeNodeApp({
+    managementToken: "runtime-secret",
+    supervisor: {
+      loadSnapshot(snapshot) {
+        loadedSnapshots.push(snapshot);
+      },
+      async prepareRoute() {
+        throw new Error("not used");
+      },
+    },
+  });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+  const routeSnapshot = snapshot([route("dep_auth", "hello.example.dev", "/", digest("auth"))]);
+
+  try {
+    const health = await fetch(`${baseUrl}/__runtime/healthz`);
+    assert.equal(health.status, 200);
+
+    const metrics = await fetch(`${baseUrl}/__runtime/metrics`);
+    assert.equal(metrics.status, 401);
+
+    const missing = await fetch(`${baseUrl}/__runtime/snapshots/routes`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(routeSnapshot),
+    });
+    assert.equal(missing.status, 401);
+    assert.deepEqual(await missing.json(), {
+      error: { code: "unauthorized", message: "missing or invalid runtime bearer token" },
+    });
+
+    const wrong = await fetch(`${baseUrl}/__runtime/snapshots/routes`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", authorization: "Bearer wrong" },
+      body: JSON.stringify(routeSnapshot),
+    });
+    assert.equal(wrong.status, 401);
+
+    const ok = await fetch(`${baseUrl}/__runtime/snapshots/routes`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", authorization: "Bearer runtime-secret" },
+      body: JSON.stringify(routeSnapshot),
+    });
+    assert.equal(ok.status, 200, await ok.text());
+    assert.equal(loadedSnapshots.length, 1);
+  } finally {
+    await app.close();
+  }
+});
+
 test("runtime node rejects invalid route snapshots before loading them", async () => {
   const loadedSnapshots: RouteSnapshot[] = [];
   const app = createRuntimeNodeApp({
@@ -668,6 +724,57 @@ test("runtime heartbeat client registers node and reports capacity", async () =>
     ]);
   } finally {
     await control.close();
+  }
+});
+
+test("runtime heartbeat client sends bearer token when configured", async () => {
+  const requests: Array<{ method: string; path: string; authorization?: string; body: any }> = [];
+  const server = createServer(async (request, response) => {
+    const url = new URL(request.url ?? "/", "http://control.local");
+    requests.push({
+      method: request.method ?? "GET",
+      path: url.pathname,
+      authorization: request.headers.authorization,
+      body: await readJson(request),
+    });
+    response.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+    response.end(JSON.stringify({ ok: true }));
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      server.off("error", reject);
+      resolve();
+    });
+  });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    await registerRuntimeNode({
+      controlPlaneUrl: baseUrl,
+      runtimeNodeId: "rt_local",
+      publicUrl: "http://127.0.0.1:8788",
+      token: "control-secret",
+    });
+    await sendRuntimeHeartbeat({
+      controlPlaneUrl: baseUrl,
+      runtimeNodeId: "rt_local",
+      version: "wasmplane-runtime/0.1.0",
+      capacity: { concurrentRequests: 128, memoryMb: 4096 },
+      token: "control-secret",
+    });
+
+    assert.deepEqual(
+      requests.map((request) => request.authorization),
+      ["Bearer control-secret", "Bearer control-secret"],
+    );
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => (error ? reject(error) : resolve()));
+    });
   }
 });
 

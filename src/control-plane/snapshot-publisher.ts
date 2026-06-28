@@ -3,6 +3,7 @@ import type { RouteSnapshot } from "./contracts.ts";
 export interface RuntimeNodeTarget {
   id?: string;
   url: string;
+  token?: string;
 }
 
 export interface RouteSnapshotPublishReport {
@@ -78,7 +79,7 @@ async function publishToRuntimeNode(
   try {
     const response = await fetchImpl(snapshotEndpoint(target.url), {
       method: "PUT",
-      headers: { "content-type": "application/json" },
+      headers: publishHeaders(target),
       body: JSON.stringify(snapshot),
     });
     if (!response.ok) {
@@ -101,6 +102,13 @@ async function publishToRuntimeNode(
       error: error instanceof Error ? error.message : String(error),
     });
   }
+}
+
+function publishHeaders(target: RuntimeNodeTarget): Record<string, string> {
+  return {
+    "content-type": "application/json",
+    ...(target.token ? { authorization: `Bearer ${target.token}` } : {}),
+  };
 }
 
 function withTarget(

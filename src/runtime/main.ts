@@ -17,6 +17,8 @@ const publicUrl = process.env.RUNTIME_PUBLIC_URL ?? `http://${host}:${port}`;
 const runtimeNodeId =
   process.env.RUNTIME_NODE_ID ?? `rt_${host.replaceAll(/[^a-zA-Z0-9]/g, "_")}_${port}`;
 const controlPlaneUrl = process.env.CONTROL_PLANE_URL ?? process.env.WASMPLANE_CONTROL_PLANE_URL;
+const controlPlaneToken = process.env.CONTROL_PLANE_TOKEN ?? process.env.WASMPLANE_CONTROL_PLANE_TOKEN;
+const runtimeManagementToken = process.env.WASMPLANE_RUNTIME_TOKEN;
 const secretDbPath = process.env.WASMPLANE_SECRET_DB;
 const runtimeConcurrency = Number.parseInt(process.env.RUNTIME_CONCURRENCY ?? "128", 10);
 
@@ -33,6 +35,7 @@ const supervisor = createRuntimeSupervisor({
 const app = createRuntimeNodeApp({
   supervisor,
   invoker: createWasip3HostInvoker({ hostBin, kvStoreDir }),
+  managementToken: runtimeManagementToken,
   maxConcurrentInvocations: runtimeConcurrency,
   secretStore: secretDbPath
     ? createRepositorySecretStore(createSqliteRepository(secretDbPath))
@@ -44,6 +47,7 @@ if (controlPlaneUrl) {
     controlPlaneUrl,
     runtimeNodeId,
     publicUrl,
+    token: controlPlaneToken,
     version: "wasmplane-runtime/0.1.0",
     capacity: {
       concurrentRequests: runtimeConcurrency,

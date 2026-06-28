@@ -39,8 +39,10 @@ export interface HttpAppOptions {
     listRouteSnapshotPublications(): RouteSnapshotPublication[];
   };
   runtimeNodes?: RuntimeNodeTarget[];
+  runtimeNodeToken?: string;
   artifactStoreDir?: string;
   artifactValidator?: LocalArtifactValidator;
+  apiToken?: string;
   fetch?: FetchLike;
 }
 
@@ -52,6 +54,12 @@ export function createHttpApp(options: HttpAppOptions) {
 
       if (method === "GET" && url.pathname === "/healthz") {
         writeJson(response, 200, { ok: true });
+        return;
+      }
+      if (!authorizeRequest(options, request.headers)) {
+        writeJson(response, 401, {
+          error: { code: "unauthorized", message: "missing or invalid bearer token" },
+        });
         return;
       }
       if (method === "POST" && url.pathname === "/projects") {
@@ -249,6 +257,20 @@ export function createHttpApp(options: HttpAppOptions) {
   };
 }
 
+function authorizeRequest(
+  options: HttpAppOptions,
+  headers: Record<string, string | string[] | undefined>,
+): boolean {
+  if (!options.apiToken) {
+    return true;
+  }
+  return firstHeader(headers.authorization) === `Bearer ${options.apiToken}`;
+}
+
+function firstHeader(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
+}
+
 function publishTargets(options: HttpAppOptions): RuntimeNodeTarget[] {
   const targets = [
     ...(options.runtimeNodes ?? []),
@@ -261,7 +283,10 @@ function publishTargets(options: HttpAppOptions): RuntimeNodeTarget[] {
     }
     seen.add(target.url);
     return true;
-  });
+  }).map((target) => ({
+    ...target,
+    token: target.token ?? options.runtimeNodeToken,
+  }));
 }
 
 async function publishAndRecordRouteSnapshot(

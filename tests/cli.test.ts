@@ -16,7 +16,7 @@ test("CLI deploy flow uploads component, creates deployment, points route, and p
   const componentPath = join(dir, "worker.component.wasm");
   const componentBytes = Buffer.from("component bytes");
   await writeFile(componentPath, componentBytes);
-  const calls: Array<{ path: string; method: string; body: any }> = [];
+  const calls: Array<{ path: string; method: string; headers: Record<string, string>; body: any }> = [];
 
   const result = await deployComponent({
     controlPlaneUrl: "http://control-plane.local",
@@ -30,11 +30,12 @@ test("CLI deploy flow uploads component, creates deployment, points route, and p
     outboundAllow: ["https://api.example.dev/v1/"],
     kv: [{ binding: "MAIN", namespaceId: "kv_main" }],
     secrets: [{ binding: "API_KEY", secretId: "sec_api_key" }],
+    token: "control-secret",
     publish: true,
     fetch: async (url, init) => {
       const parsed = new URL(url);
       const body = init?.body ? JSON.parse(init.body) : {};
-      calls.push({ path: parsed.pathname, method: init?.method ?? "GET", body });
+      calls.push({ path: parsed.pathname, method: init?.method ?? "GET", headers: init?.headers ?? {}, body });
       if (parsed.pathname === "/artifacts/local") {
         return jsonResponse(201, {
           id: body.id,
@@ -67,6 +68,10 @@ test("CLI deploy flow uploads component, creates deployment, points route, and p
     ],
   );
   assert.equal(calls[0]?.body.bytesBase64, componentBytes.toString("base64"));
+  assert.deepEqual(
+    calls.map((call) => call.headers.authorization),
+    ["Bearer control-secret", "Bearer control-secret", "Bearer control-secret", "Bearer control-secret"],
+  );
   assert.deepEqual(calls[1]?.body, {
     id: "dep_cli",
     projectId: "prj_hello",
@@ -118,6 +123,8 @@ test("CLI deploy args parse capability bindings and limit overrides", () => {
       "https://api.example.dev/",
       "--limit",
       "wallMs=2500",
+      "--token",
+      "control-secret",
       "--no-publish",
     ],
     { WASMPLANE_CONTROL_PLANE_URL: "http://127.0.0.1:9999" },
@@ -128,7 +135,27 @@ test("CLI deploy args parse capability bindings and limit overrides", () => {
   assert.deepEqual(input.secrets, [{ binding: "API_KEY", secretId: "sec_api_key" }]);
   assert.deepEqual(input.outboundAllow, ["https://api.example.dev/"]);
   assert.deepEqual(input.limits, { wallMs: 2500 });
+  assert.equal(input.token, "control-secret");
   assert.equal(input.publish, false);
+});
+
+test("CLI deploy args read token from environment", () => {
+  const input = parseDeployArgs(
+    [
+      "--project-id",
+      "prj_hello",
+      "--component",
+      "worker.component.wasm",
+      "--host",
+      "hello.example.dev",
+    ],
+    {
+      WASMPLANE_CONTROL_PLANE_URL: "http://127.0.0.1:9999",
+      WASMPLANE_CONTROL_PLANE_TOKEN: "env-secret",
+    },
+  );
+
+  assert.equal(input.token, "env-secret");
 });
 
 function jsonResponse(status: number, body: any) {

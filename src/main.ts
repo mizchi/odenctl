@@ -8,6 +8,8 @@ const dbPath = process.env.WASMPLANE_DB ?? "wasmplane.sqlite";
 const port = Number.parseInt(process.env.PORT ?? "8787", 10);
 const host = process.env.HOST ?? "127.0.0.1";
 const artifactStoreDir = process.env.WASMPLANE_ARTIFACT_DIR ?? ".wasmplane/artifacts";
+const apiToken = process.env.WASMPLANE_API_TOKEN;
+const runtimeNodeToken = process.env.WASMPLANE_RUNTIME_TOKEN;
 
 const controlPlane = createControlPlane({
   repository: createSqliteRepository(dbPath),
@@ -21,6 +23,8 @@ const app = createHttpApp({
       : createWasip3HostArtifactValidator({
           hostBin: process.env.WASMPLANE_WASIP3_HOST_BIN,
         }),
+  apiToken,
+  runtimeNodeToken,
   runtimeNodes: runtimeNodeTargetsFromEnv(process.env.WASMPLANE_RUNTIME_NODES),
 });
 

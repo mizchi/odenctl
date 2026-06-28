@@ -24,6 +24,7 @@ export interface DeployComponentInput {
   outboundAllow?: string[];
   kv?: Array<{ binding: string; namespaceId: string }>;
   secrets?: Array<{ binding: string; secretId: string }>;
+  token?: string;
   publish?: boolean;
   fetch?: FetchFunction;
 }
@@ -80,12 +81,12 @@ export async function deployComponent(input: DeployComponentInput): Promise<Depl
     processSpawn: false,
   };
 
-  const artifact = await postJson(fetchImpl, input.controlPlaneUrl, "/artifacts/local", {
+  const artifact = await postJson(fetchImpl, input.controlPlaneUrl, "/artifacts/local", input.token, {
     id: artifactId,
     projectId: input.projectId,
     bytesBase64: bytes.toString("base64"),
   });
-  const deployment = await postJson(fetchImpl, input.controlPlaneUrl, "/deployments", {
+  const deployment = await postJson(fetchImpl, input.controlPlaneUrl, "/deployments", input.token, {
     id: deploymentId,
     projectId: input.projectId,
     artifactId: artifact.id,
@@ -94,7 +95,7 @@ export async function deployComponent(input: DeployComponentInput): Promise<Depl
     limits,
     capabilities,
   });
-  const route = await putJson(fetchImpl, input.controlPlaneUrl, "/routes", {
+  const route = await putJson(fetchImpl, input.controlPlaneUrl, "/routes", input.token, {
     ...(routeId ? { id: routeId } : {}),
     projectId: input.projectId,
     host: input.host,
@@ -103,7 +104,7 @@ export async function deployComponent(input: DeployComponentInput): Promise<Depl
   });
   const publish = input.publish === false
     ? undefined
-    : await postJson(fetchImpl, input.controlPlaneUrl, "/snapshots/routes/publish", {});
+    : await postJson(fetchImpl, input.controlPlaneUrl, "/snapshots/routes/publish", input.token, {});
 
   return { artifact, deployment, route, publish };
 }
@@ -111,6 +112,7 @@ export async function deployComponent(input: DeployComponentInput): Promise<Depl
 export function parseDeployArgs(args: string[], env: Record<string, string | undefined> = process.env): DeployComponentInput {
   const input: Partial<DeployComponentInput> = {
     controlPlaneUrl: env.WASMPLANE_CONTROL_PLANE_URL ?? "http://127.0.0.1:8787",
+    token: env.WASMPLANE_CONTROL_PLANE_TOKEN,
     pathPrefix: "/",
     outboundAllow: [],
     kv: [],
@@ -157,6 +159,10 @@ export function parseDeployArgs(args: string[], env: Record<string, string | und
         input.runtimeVersion = requiredValue(flag, value);
         index += 1;
         break;
+      case "--token":
+        input.token = requiredValue(flag, value);
+        index += 1;
+        break;
       case "--outbound":
         input.outboundAllow?.push(requiredValue(flag, value));
         index += 1;
@@ -196,12 +202,24 @@ export function parseDeployArgs(args: string[], env: Record<string, string | und
   return input as DeployComponentInput;
 }
 
-async function postJson(fetchImpl: FetchFunction, baseUrl: string, path: string, body: unknown): Promise<any> {
-  return requestJson(fetchImpl, baseUrl, path, "POST", body);
+async function postJson(
+  fetchImpl: FetchFunction,
+  baseUrl: string,
+  path: string,
+  token: string | undefined,
+  body: unknown,
+): Promise<any> {
+  return requestJson(fetchImpl, baseUrl, path, "POST", token, body);
 }
 
-async function putJson(fetchImpl: FetchFunction, baseUrl: string, path: string, body: unknown): Promise<any> {
-  return requestJson(fetchImpl, baseUrl, path, "PUT", body);
+async function putJson(
+  fetchImpl: FetchFunction,
+  baseUrl: string,
+  path: string,
+  token: string | undefined,
+  body: unknown,
+): Promise<any> {
+  return requestJson(fetchImpl, baseUrl, path, "PUT", token, body);
 }
 
 async function requestJson(
@@ -209,11 +227,12 @@ async function requestJson(
   baseUrl: string,
   path: string,
   method: string,
+  token: string | undefined,
   body: unknown,
 ): Promise<any> {
   const response = await fetchImpl(new URL(path, baseUrl).href, {
     method,
-    headers: { "content-type": "application/json" },
+    headers: requestHeaders(token),
     body: JSON.stringify(body),
   });
   if (!response.ok) {
@@ -221,6 +240,13 @@ async function requestJson(
     throw new Error(`${method} ${path} failed with ${response.status}: ${text}`);
   }
   return response.json();
+}
+
+function requestHeaders(token: string | undefined): Record<string, string> {
+  return {
+    "content-type": "application/json",
+    ...(token ? { authorization: `Bearer ${token}` } : {}),
+  };
 }
 
 function parseBinding(value: string, targetKey: "namespaceId" | "secretId") {

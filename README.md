@@ -24,6 +24,10 @@ The control plane listens on `http://127.0.0.1:8787` by default and stores state
 `wasmplane.sqlite`. Set `WASMPLANE_DB`, `HOST`, or `PORT` to override this. Set
 `WASMPLANE_RUNTIME_NODES` to a comma-separated list of static runtime node base URLs, or register
 runtime nodes through `POST /runtime-nodes`, when using `POST /snapshots/routes/publish`.
+Set `WASMPLANE_API_TOKEN` to require `Authorization: Bearer <token>` on all control-plane API
+endpoints except `GET /healthz`.
+Set `WASMPLANE_RUNTIME_TOKEN` on the control plane to sign route snapshot publishes sent to runtime
+nodes.
 Local artifact ingestion stores bytes in `.wasmplane/artifacts` by default; set
 `WASMPLANE_ARTIFACT_DIR` to override it. Local artifact ingestion validates components through
 `wasmplane-wasip3-host` by default; set `WASMPLANE_VALIDATE_LOCAL_ARTIFACTS=0` to disable that
@@ -40,6 +44,11 @@ default. Set `WASMPLANE_SECRET_DB` to a control-plane SQLite database path to re
 the local secret registry instead. Route snapshots only carry `secretId`, never the secret value.
 Set `WASMPLANE_KV_STORE_DIR` to choose the host-side persistent KV directory; the default is
 `.wasmplane/kv`.
+Set `WASMPLANE_CONTROL_PLANE_TOKEN` or `CONTROL_PLANE_TOKEN` on the runtime node when the control
+plane requires bearer-token authentication for registration and heartbeat updates.
+Set `WASMPLANE_RUNTIME_TOKEN` on the runtime node to require `Authorization: Bearer <token>` for
+runtime management endpoints such as `PUT /__runtime/snapshots/routes`; `GET /__runtime/healthz`
+remains unauthenticated.
 
 Runtime-oriented tests expect these CLIs on `PATH`:
 
@@ -119,6 +128,7 @@ The CLI deploy flow assumes a prebuilt component and orchestrates the control-pl
 ```sh
 pnpm wasmplane deploy \
   --control-plane-url http://127.0.0.1:8787 \
+  --token "$WASMPLANE_CONTROL_PLANE_TOKEN" \
   --project-id prj_hello \
   --component examples/hello-worker/target/wasm32-wasip1/debug/hello_worker.component.wasm \
   --host hello.example.dev \
@@ -130,7 +140,8 @@ pnpm wasmplane deploy \
 
 The command uploads bytes through `POST /artifacts/local`, creates an immutable deployment, points
 the route, then publishes a route snapshot unless `--no-publish` is passed. Limit overrides use
-`--limit name=value`, for example `--limit wallMs=2500`.
+`--limit name=value`, for example `--limit wallMs=2500`. The CLI also reads
+`WASMPLANE_CONTROL_PLANE_TOKEN` when `--token` is omitted.
 
 ## API
 

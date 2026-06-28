@@ -7,6 +7,7 @@ export interface RuntimeHeartbeatOptions {
   publicUrl: string;
   version: string;
   capacity: RuntimeNodeCapacity;
+  token?: string;
   intervalMs?: number;
   fetch?: typeof fetch;
 }
@@ -15,6 +16,7 @@ export interface RuntimeNodeRegistrationInput {
   controlPlaneUrl: string;
   runtimeNodeId: string;
   publicUrl: string;
+  token?: string;
   fetch?: typeof fetch;
 }
 
@@ -23,13 +25,14 @@ export interface RuntimeNodeHeartbeatInput {
   runtimeNodeId: string;
   version: string;
   capacity: RuntimeNodeCapacity;
+  token?: string;
   fetch?: typeof fetch;
 }
 
 export async function registerRuntimeNode(input: RuntimeNodeRegistrationInput): Promise<void> {
   const response = await (input.fetch ?? fetch)(endpoint(input.controlPlaneUrl, "/runtime-nodes"), {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: requestHeaders(input.token),
     body: JSON.stringify({
       id: input.runtimeNodeId,
       url: input.publicUrl,
@@ -49,7 +52,7 @@ export async function sendRuntimeHeartbeat(input: RuntimeNodeHeartbeatInput): Pr
     ),
     {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: requestHeaders(input.token),
       body: JSON.stringify({
         status: "active",
         version: input.version,
@@ -92,4 +95,11 @@ export function startRuntimeHeartbeat(options: RuntimeHeartbeatOptions): () => v
 
 function endpoint(baseUrl: string, path: string): string {
   return `${baseUrl.replace(/\/+$/, "")}${path}`;
+}
+
+function requestHeaders(token: string | undefined): Record<string, string> {
+  return {
+    "content-type": "application/json",
+    ...(token ? { authorization: `Bearer ${token}` } : {}),
+  };
 }

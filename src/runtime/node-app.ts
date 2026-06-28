@@ -22,6 +22,7 @@ export interface RuntimeNodeAppOptions {
   supervisor: RuntimeNodeSupervisor;
   invoker?: RuntimeInvoker;
   secretStore?: RuntimeSecretStore;
+  managementToken?: string;
   maxConcurrentInvocations?: number;
   requestIdGenerator?: () => string;
   monotonicNowMs?: () => number;
@@ -59,6 +60,13 @@ export function createRuntimeNodeApp(options: RuntimeNodeAppOptions) {
 
       if (method === "GET" && url.pathname === "/__runtime/healthz") {
         writeJson(response, 200, { ok: true });
+        return;
+      }
+
+      if (url.pathname.startsWith("/__runtime/") && !authorizeRuntimeManagement(options, request.headers)) {
+        writeJson(response, 401, {
+          error: { code: "unauthorized", message: "missing or invalid runtime bearer token" },
+        });
         return;
       }
 
@@ -216,6 +224,16 @@ export function createRuntimeNodeApp(options: RuntimeNodeAppOptions) {
       });
     },
   };
+}
+
+function authorizeRuntimeManagement(
+  options: RuntimeNodeAppOptions,
+  headers: Record<string, string | string[] | undefined>,
+): boolean {
+  if (!options.managementToken) {
+    return true;
+  }
+  return firstHeader(headers.authorization) === `Bearer ${options.managementToken}`;
 }
 
 interface RuntimeMetricsSnapshot {

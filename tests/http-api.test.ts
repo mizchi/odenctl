@@ -75,6 +75,60 @@ test("HTTP API creates deployment and exposes compact route snapshot", async () 
   }
 });
 
+test("HTTP API requires bearer token when API auth is configured", async () => {
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+  });
+  const app = createHttpApp({ controlPlane: control, apiToken: "control-secret" });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const health = await fetch(`${baseUrl}/healthz`);
+    assert.equal(health.status, 200);
+
+    const missing = await fetch(`${baseUrl}/projects`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "hello" }),
+    });
+    assert.equal(missing.status, 401);
+    assert.deepEqual(await missing.json(), {
+      error: { code: "unauthorized", message: "missing or invalid bearer token" },
+    });
+
+    const wrong = await fetch(`${baseUrl}/projects`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer wrong",
+      },
+      body: JSON.stringify({ name: "hello" }),
+    });
+    assert.equal(wrong.status, 401);
+
+    const ok = await fetch(`${baseUrl}/projects`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer control-secret",
+      },
+      body: JSON.stringify({ name: "hello" }),
+    });
+    if (ok.status !== 201) {
+      assert.fail(await ok.text());
+    }
+    assert.equal((await ok.json()).name, "hello");
+  } finally {
+    await app.close();
+  }
+});
+
 test("HTTP API manages secrets without exposing values", async () => {
   const control = createControlPlane({
     repository: createMemoryRepository(),
@@ -373,6 +427,52 @@ test("HTTP API publishes route snapshot to configured runtime nodes", async () =
   } finally {
     await app.close();
     await runtime.close();
+  }
+});
+
+test("HTTP API signs runtime snapshot publishes with configured runtime token", async () => {
+  const calls: Array<{ url: string; authorization?: string }> = [];
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+  });
+  const app = createHttpApp({
+    controlPlane: control,
+    runtimeNodes: [{ id: "local-runtime", url: "http://runtime.local" }],
+    runtimeNodeToken: "runtime-secret",
+    fetch: async (url, init) => {
+      calls.push({ url, authorization: init.headers.authorization });
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return { ok: true, routes: 1, generatedAt: fixedNow() };
+        },
+        async text() {
+          return "ok";
+        },
+      };
+    },
+  });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    await createHelloRoute(baseUrl);
+    const response = await fetch(`${baseUrl}/snapshots/routes/publish`, { method: "POST" });
+    assert.equal(response.status, 200, await response.text());
+    assert.deepEqual(calls, [
+      {
+        url: "http://runtime.local/__runtime/snapshots/routes",
+        authorization: "Bearer runtime-secret",
+      },
+    ]);
+  } finally {
+    await app.close();
   }
 });
 
