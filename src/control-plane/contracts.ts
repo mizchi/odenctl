@@ -200,8 +200,11 @@ export function normalizeLocation(value: unknown): string {
   if (typeof value !== "string" || value.length < 1) {
     throw new ControlPlaneError("validation", "artifact location must be a non-empty string");
   }
-  if (!/^(oci|s3|file):\/\//.test(value)) {
-    throw new ControlPlaneError("validation", "artifact location must use oci://, s3://, or file://");
+  if (!/^(oci|s3|file|https?):\/\//.test(value)) {
+    throw new ControlPlaneError(
+      "validation",
+      "artifact location must use oci://, s3://, file://, http://, or https://",
+    );
   }
   return value;
 }

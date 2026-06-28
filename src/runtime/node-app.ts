@@ -694,8 +694,11 @@ function digestValue(value: unknown, field: string): string {
 
 function locationValue(value: unknown, field: string): string {
   const location = nonEmptyString(value, field);
-  if (!/^(oci|s3|file):\/\//.test(location)) {
-    throw new RuntimeError("validation", `${field} must use oci://, s3://, or file://`);
+  if (!/^(oci|s3|file|https?):\/\//.test(location)) {
+    throw new RuntimeError(
+      "validation",
+      `${field} must use oci://, s3://, file://, http://, or https://`,
+    );
   }
   return location;
 }

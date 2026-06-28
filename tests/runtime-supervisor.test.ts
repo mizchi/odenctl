@@ -12,7 +12,7 @@ import {
   MVP_WORKER_WORLD,
   type RouteSnapshot,
 } from "../src/control-plane/contracts.ts";
-import { createFileArtifactStore } from "../src/runtime/artifacts.ts";
+import { createFileArtifactStore, createRuntimeArtifactStore } from "../src/runtime/artifacts.ts";
 import { createRouteCache, createRuntimeSupervisor } from "../src/runtime/supervisor.ts";
 import { createWasip3HostBackend, createWasip3HostInvoker } from "../src/runtime/wasip3-host.ts";
 import { createWasmtimeCliBackend } from "../src/runtime/wasmtime.ts";
@@ -213,6 +213,73 @@ test("file artifact store verifies sha256 digests", async () => {
         id: "art_1",
         digest: digest("wrong"),
         location: pathToFileURL(artifactPath).href,
+      }),
+    /digest mismatch/,
+  );
+});
+
+test("runtime artifact store materializes remote HTTP artifacts into a verified cache", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "wasmplane-remote-artifact-"));
+  const bytes = Buffer.from("remote component bytes");
+  const artifactDigest = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+  const fetches: string[] = [];
+  const store = createRuntimeArtifactStore({
+    cacheDir: join(dir, "cache"),
+    fetch: async (url) => {
+      fetches.push(url);
+      return {
+        ok: true,
+        status: 200,
+        async arrayBuffer() {
+          return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+        },
+        async text() {
+          return bytes.toString("utf8");
+        },
+      };
+    },
+  });
+
+  const first = await store.materialize({
+    id: "art_remote",
+    digest: artifactDigest,
+    location: "https://artifacts.example.dev/workers/hello.component.wasm",
+  });
+  const second = await store.materialize({
+    id: "art_remote",
+    digest: artifactDigest,
+    location: "https://artifacts.example.dev/workers/hello.component.wasm",
+  });
+
+  assert.equal(first.path, second.path);
+  assert.equal(first.verified, true);
+  assert.equal(first.location, "https://artifacts.example.dev/workers/hello.component.wasm");
+  assert.equal((await readFile(first.path)).toString("utf8"), "remote component bytes");
+  assert.deepEqual(fetches, ["https://artifacts.example.dev/workers/hello.component.wasm"]);
+});
+
+test("runtime artifact store rejects remote artifacts with digest mismatches", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "wasmplane-remote-artifact-bad-"));
+  const store = createRuntimeArtifactStore({
+    cacheDir: join(dir, "cache"),
+    fetch: async () => ({
+      ok: true,
+      status: 200,
+      async arrayBuffer() {
+        return Buffer.from("tampered").buffer;
+      },
+      async text() {
+        return "tampered";
+      },
+    }),
+  });
+
+  await assert.rejects(
+    () =>
+      store.materialize({
+        id: "art_remote",
+        digest: digest("expected"),
+        location: "https://artifacts.example.dev/workers/hello.component.wasm",
       }),
     /digest mismatch/,
   );

@@ -95,6 +95,25 @@ test("creates immutable wasmtime deployments with denied-by-default host capabil
   );
 });
 
+test("accepts remote HTTP artifact locations for runtime materialization", () => {
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+  });
+  const project = control.createProject({ id: "prj_remote", name: "remote artifacts" });
+
+  const artifact = control.createArtifact({
+    id: "art_remote",
+    projectId: project.id,
+    digest: digest("remote"),
+    location: "https://artifacts.example.dev/workers/hello.component.wasm",
+    sizeBytes: 1024,
+  });
+
+  assert.equal(artifact.location, "https://artifacts.example.dev/workers/hello.component.wasm");
+});
+
 test("registers project secrets and validates deployment secret bindings", () => {
   const control = createSeededControlPlane();
   const secret = control.createSecret({

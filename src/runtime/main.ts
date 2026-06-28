@@ -1,6 +1,6 @@
 import { MVP_WASI_PROFILE } from "../control-plane/contracts.ts";
 import { createSqliteRepository } from "../control-plane/repository.ts";
-import { createFileArtifactStore } from "./artifacts.ts";
+import { createRuntimeArtifactStore } from "./artifacts.ts";
 import { startRuntimeHeartbeat } from "./heartbeat.ts";
 import { createRuntimeNodeApp } from "./node-app.ts";
 import { createEnvSecretStore, createRepositorySecretStore } from "./secrets.ts";
@@ -10,6 +10,7 @@ import { createWasip3HostBackend, createWasip3HostInvoker } from "./wasip3-host.
 const port = Number.parseInt(process.env.RUNTIME_PORT ?? "8788", 10);
 const host = process.env.RUNTIME_HOST ?? "127.0.0.1";
 const cacheDir = process.env.WASMPLANE_CACHE_DIR ?? ".wasmplane/cache";
+const artifactCacheDir = process.env.WASMPLANE_ARTIFACT_CACHE_DIR ?? ".wasmplane/runtime-artifacts";
 const kvStoreDir = process.env.WASMPLANE_KV_STORE_DIR ?? ".wasmplane/kv";
 const hostBin = process.env.WASMPLANE_WASIP3_HOST_BIN ?? "target/debug/wasmplane-wasip3-host";
 const publicUrl = process.env.RUNTIME_PUBLIC_URL ?? `http://${host}:${port}`;
@@ -25,7 +26,7 @@ const supervisor = createRuntimeSupervisor({
     generatedAt: new Date().toISOString(),
     routes: [],
   },
-  artifactStore: createFileArtifactStore(),
+  artifactStore: createRuntimeArtifactStore({ cacheDir: artifactCacheDir }),
   backend: createWasip3HostBackend({ cacheDir, hostBin }),
 });
 

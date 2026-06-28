@@ -191,6 +191,40 @@ test("runtime node rejects invalid route snapshots before loading them", async (
   }
 });
 
+test("runtime node accepts remote artifact locations in route snapshots", async () => {
+  const loadedSnapshots: RouteSnapshot[] = [];
+  const app = createRuntimeNodeApp({
+    supervisor: {
+      loadSnapshot(snapshot) {
+        loadedSnapshots.push(snapshot);
+      },
+      async prepareRoute() {
+        throw new Error("not used");
+      },
+    },
+  });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+  const withRemoteArtifact = route("dep_remote", "hello.example.dev", "/", digest("remote"));
+  withRemoteArtifact.artifact.location = "https://artifacts.example.dev/workers/hello.component.wasm";
+  withRemoteArtifact.targets[0].artifact.location = "https://artifacts.example.dev/workers/hello.component.wasm";
+
+  try {
+    const response = await fetch(`${baseUrl}/__runtime/snapshots/routes`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(snapshot([withRemoteArtifact])),
+    });
+    assert.equal(response.status, 200, await response.text());
+    assert.equal(loadedSnapshots.length, 1);
+  } finally {
+    await app.close();
+  }
+});
+
 test("runtime node enforces response byte limits", async () => {
   const supervisor = createRuntimeSupervisor({
     snapshot: snapshot([route("dep_small", "hello.example.dev", "/", digest("small"))]),

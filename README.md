@@ -30,8 +30,9 @@ Local artifact ingestion stores bytes in `.wasmplane/artifacts` by default; set
 for development.
 
 The runtime node listens on `http://127.0.0.1:8788` by default. Set `RUNTIME_HOST`,
-`RUNTIME_PORT`, or `WASMPLANE_CACHE_DIR` to override this. Set `CONTROL_PLANE_URL` or
-`WASMPLANE_CONTROL_PLANE_URL` to make the runtime register itself and send heartbeat updates.
+`RUNTIME_PORT`, `WASMPLANE_CACHE_DIR`, or `WASMPLANE_ARTIFACT_CACHE_DIR` to override this.
+Set `CONTROL_PLANE_URL` or `WASMPLANE_CONTROL_PLANE_URL` to make the runtime register itself and
+send heartbeat updates.
 `RUNTIME_PUBLIC_URL`, `RUNTIME_NODE_ID`, `RUNTIME_CONCURRENCY`, `RUNTIME_MEMORY_MB`, and
 `RUNTIME_HEARTBEAT_INTERVAL_MS` tune the heartbeat payload. Runtime secret values are loaded from
 environment variables named `WASMPLANE_SECRET_<secretId>` or `WASMPLANE_SECRET_<NORMALIZED_ID>` by
@@ -47,8 +48,9 @@ Runtime-oriented tests expect these CLIs on `PATH`:
 - `wit-bindgen`
 
 The runtime supervisor code currently prepares deployments by resolving a route snapshot,
-materializing `file://` artifacts, verifying their `sha256` digest, validating the component
-through the Rust `wasmplane-wasip3-host` linker, and precompiling through that same host binary.
+materializing `file://`, `http://`, or `https://` artifacts, verifying their `sha256` digest,
+validating the component through the Rust `wasmplane-wasip3-host` linker, and precompiling through
+that same host binary. Remote HTTP(S) artifacts are cached under `WASMPLANE_ARTIFACT_CACHE_DIR`.
 Strict `wasm-tools component targets` validation is available as an opt-in backend setting, but it
 is not the default because WASI-adapted Rust components include additional WASI imports that the
 host linker satisfies.
@@ -161,6 +163,10 @@ Available endpoints:
 - `POST /snapshots/routes/publish`
 - `GET /snapshots/routes/publishes`
 - `GET /healthz`
+
+Artifact locations may use `file://`, `http://`, `https://`, `oci://`, or `s3://`. The runtime
+materializer currently supports direct `file://` and HTTP(S) artifact bytes; OCI/S3 locations are
+accepted at the contract layer for future backends.
 
 `POST /snapshots/routes/publish` creates a fresh compact route snapshot and pushes it to each
 active registered runtime node, plus statically configured runtime nodes, through
