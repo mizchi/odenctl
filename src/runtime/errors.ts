@@ -4,6 +4,7 @@ export type RuntimeErrorCode =
   | "invoke"
   | "limits"
   | "not_found"
+  | "overloaded"
   | "policy"
   | "timeout"
   | "unsupported"

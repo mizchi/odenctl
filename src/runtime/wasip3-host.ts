@@ -31,6 +31,7 @@ export interface Wasip3HostBackendOptions {
 export interface Wasip3HostInvokerOptions {
   hostBin?: string;
   hostArgsPrefix?: string[];
+  kvStoreDir?: string;
   commandRunner?: CommandRunner;
 }
 
@@ -95,6 +96,7 @@ export function createWasip3HostBackend(options: Wasip3HostBackendOptions): Runt
 export function createWasip3HostInvoker(options: Wasip3HostInvokerOptions = {}): RuntimeInvoker {
   const hostBin = options.hostBin ?? "wasmplane-wasip3-host";
   const hostArgsPrefix = options.hostArgsPrefix ?? [];
+  const kvStoreDir = options.kvStoreDir;
   const commandRunner = options.commandRunner ?? createSpawnCommandRunner();
 
   return {
@@ -114,6 +116,7 @@ export function createWasip3HostInvoker(options: Wasip3HostInvokerOptions = {}):
           "--body",
           Buffer.from(request.body).toString("utf8"),
           ...invokePolicyArgs(request),
+          ...kvStoreArgs(kvStoreDir),
         ], { timeoutMs: request.component.limits?.wallMs });
         return parseInvokeResponse(result.stdout);
       } catch (error) {
@@ -125,6 +128,10 @@ export function createWasip3HostInvoker(options: Wasip3HostInvokerOptions = {}):
       }
     },
   };
+}
+
+function kvStoreArgs(kvStoreDir: string | undefined): string[] {
+  return kvStoreDir ? ["--kv-store-dir", kvStoreDir] : [];
 }
 
 function invokePolicyArgs(request: InvokeComponentRequest): string[] {

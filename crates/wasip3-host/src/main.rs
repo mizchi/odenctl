@@ -15,6 +15,7 @@ struct InvokeArgs {
     body: String,
     limits: InvocationLimits,
     policy: HostPolicy,
+    kv_store_dir: Option<PathBuf>,
 }
 
 fn main() -> Result<()> {
@@ -44,17 +45,29 @@ fn main() -> Result<()> {
         }
         "invoke" => {
             let invoke_args = parse_invoke_args(&mut args)?;
-            let response = invoke_component_handle_with_limits_and_policy(
-                &invoke_args.component,
-                HttpRequestInput {
-                    method: invoke_args.method,
-                    uri: invoke_args.uri,
-                    headers: invoke_args.headers,
-                    body: invoke_args.body.into_bytes(),
-                },
-                invoke_args.limits,
-                invoke_args.policy,
-            )
+            let request = HttpRequestInput {
+                method: invoke_args.method,
+                uri: invoke_args.uri,
+                headers: invoke_args.headers,
+                body: invoke_args.body.into_bytes(),
+            };
+            let response = match invoke_args.kv_store_dir {
+                Some(kv_store_dir) => {
+                    wasmplane_wasip3_host::invoke_component_handle_with_persistent_kv(
+                        &invoke_args.component,
+                        request,
+                        invoke_args.limits,
+                        invoke_args.policy,
+                        &kv_store_dir,
+                    )
+                }
+                None => invoke_component_handle_with_limits_and_policy(
+                    &invoke_args.component,
+                    request,
+                    invoke_args.limits,
+                    invoke_args.policy,
+                ),
+            }
             .with_context(|| format!("failed to invoke {}", invoke_args.component.display()))?;
             println!(
                 "{{\"status\":{},\"headers\":{},\"body\":\"{}\"}}",
@@ -79,6 +92,7 @@ fn parse_invoke_args(args: &mut impl Iterator<Item = String>) -> Result<InvokeAr
     let mut body = String::new();
     let mut limits = InvocationLimits::default();
     let mut policy = HostPolicy::deny_all();
+    let mut kv_store_dir = None;
 
     while let Some(flag) = args.next() {
         let Some(value) = args.next() else {
@@ -101,6 +115,7 @@ fn parse_invoke_args(args: &mut impl Iterator<Item = String>) -> Result<InvokeAr
             "--subrequests" => limits.subrequests = Some(parse_u32(&value, "--subrequests")?),
             "--host-calls" => limits.host_calls = Some(parse_u32(&value, "--host-calls")?),
             "--capabilities" => policy = parse_host_policy(&value)?,
+            "--kv-store-dir" => kv_store_dir = Some(PathBuf::from(value)),
             _ => bail!("unexpected argument {flag}"),
         }
     }
@@ -113,6 +128,7 @@ fn parse_invoke_args(args: &mut impl Iterator<Item = String>) -> Result<InvokeAr
         body,
         limits,
         policy,
+        kv_store_dir,
     })
 }
 
@@ -291,7 +307,7 @@ fn print_usage() {
         "  wasmplane-wasip3-host compile --component <component.wasm> --out <component.cwasm>"
     );
     eprintln!(
-        "  wasmplane-wasip3-host invoke --component <component.wasm> --method <METHOD> --uri <URI> [--headers <JSON>] [--body <TEXT>] [--wall-ms <MS>] [--memory-mb <MB>] [--request-bytes <BYTES>] [--response-bytes <BYTES>] [--subrequests <COUNT>] [--host-calls <COUNT>] [--capabilities <JSON>]"
+        "  wasmplane-wasip3-host invoke --component <component.wasm> --method <METHOD> --uri <URI> [--headers <JSON>] [--body <TEXT>] [--wall-ms <MS>] [--memory-mb <MB>] [--request-bytes <BYTES>] [--response-bytes <BYTES>] [--subrequests <COUNT>] [--host-calls <COUNT>] [--capabilities <JSON>] [--kv-store-dir <DIR>]"
     );
 }
 
@@ -327,6 +343,7 @@ mod tests {
             "arbitrarySockets": false,
             "processSpawn": false
         }"#;
+        let kv_store_dir = std::env::temp_dir().join("wasmplane-cli-kv-store");
         let mut args = vec![
             "--component",
             "/tmp/worker.component.wasm",
@@ -352,6 +369,8 @@ mod tests {
             "100",
             "--capabilities",
             capabilities,
+            "--kv-store-dir",
+            kv_store_dir.to_str().expect("utf8 kv store path"),
         ]
         .into_iter()
         .map(String::from);
@@ -388,6 +407,7 @@ mod tests {
             Some("kv_main")
         );
         assert!(parsed.policy.secret_for_binding("API_KEY").is_some());
+        assert_eq!(parsed.kv_store_dir, Some(kv_store_dir));
     }
 
     #[test]

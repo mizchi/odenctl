@@ -9,7 +9,8 @@
   "scripts": {
     "test": "node --experimental-strip-types --test tests/*.test.ts",
     "start": "node --experimental-strip-types src/main.ts",
-    "runtime": "node --experimental-strip-types src/runtime/main.ts"
+    "runtime": "node --experimental-strip-types src/runtime/main.ts",
+    "wasmplane": "node --experimental-strip-types src/cli.ts"
   },
   "devDependencies": {
     "@bytecodealliance/jco": "1.15.4"

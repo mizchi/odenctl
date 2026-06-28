@@ -1,8 +1,9 @@
 use std::collections::HashMap;
+use std::fs;
 use std::io::{Read, Write};
 use std::net::{IpAddr, SocketAddr, TcpStream, ToSocketAddrs};
-use std::path::Path;
-use std::time::Duration;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Result, bail};
 use native_tls::TlsConnector;
@@ -64,6 +65,23 @@ pub struct KvNamespace {
 pub struct Secret {
     id: String,
     value: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct KvValue {
+    bytes: Vec<u8>,
+    expires_at: Option<u64>,
+}
+
+#[derive(Debug)]
+enum KvStore {
+    Memory(HashMap<(String, String), KvValue>),
+    File(FileKvStore),
+}
+
+#[derive(Debug)]
+struct FileKvStore {
+    root: PathBuf,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -228,6 +246,178 @@ impl SecretBindingPolicy {
     }
 }
 
+impl KvStore {
+    fn memory() -> Self {
+        Self::Memory(HashMap::new())
+    }
+
+    fn file(root: impl Into<PathBuf>) -> Self {
+        Self::File(FileKvStore { root: root.into() })
+    }
+
+    fn get(&mut self, namespace: &str, key: &str) -> Result<Option<Vec<u8>>> {
+        match self {
+            KvStore::Memory(items) => {
+                let Some(value) = items.get(&(namespace.to_string(), key.to_string())) else {
+                    return Ok(None);
+                };
+                if value_is_expired(value.expires_at) {
+                    items.remove(&(namespace.to_string(), key.to_string()));
+                    return Ok(None);
+                }
+                Ok(Some(value.bytes.clone()))
+            }
+            KvStore::File(store) => store.get(namespace, key),
+        }
+    }
+
+    fn put(
+        &mut self,
+        namespace: &str,
+        key: &str,
+        value: Vec<u8>,
+        ttl_seconds: Option<u64>,
+    ) -> Result<()> {
+        let expires_at = ttl_seconds.map(|ttl| unix_seconds().saturating_add(ttl));
+        match self {
+            KvStore::Memory(items) => {
+                items.insert(
+                    (namespace.to_string(), key.to_string()),
+                    KvValue {
+                        bytes: value,
+                        expires_at,
+                    },
+                );
+                Ok(())
+            }
+            KvStore::File(store) => store.put(namespace, key, value, expires_at),
+        }
+    }
+
+    fn delete(&mut self, namespace: &str, key: &str) -> Result<()> {
+        match self {
+            KvStore::Memory(items) => {
+                items.remove(&(namespace.to_string(), key.to_string()));
+                Ok(())
+            }
+            KvStore::File(store) => store.delete(namespace, key),
+        }
+    }
+}
+
+impl FileKvStore {
+    fn namespace_dir(&self, namespace: &str) -> PathBuf {
+        self.root.join(hex_encode(namespace.as_bytes()))
+    }
+
+    fn key_path(&self, namespace: &str, key: &str) -> PathBuf {
+        self.namespace_dir(namespace)
+            .join(format!("{}.kv", hex_encode(key.as_bytes())))
+    }
+
+    fn get(&self, namespace: &str, key: &str) -> Result<Option<Vec<u8>>> {
+        let path = self.key_path(namespace, key);
+        let text = match fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error.into()),
+        };
+        let value = parse_kv_file(&text)?;
+        if value_is_expired(value.expires_at) {
+            let _ = fs::remove_file(path);
+            return Ok(None);
+        }
+        Ok(Some(value.bytes))
+    }
+
+    fn put(
+        &self,
+        namespace: &str,
+        key: &str,
+        value: Vec<u8>,
+        expires_at: Option<u64>,
+    ) -> Result<()> {
+        let dir = self.namespace_dir(namespace);
+        fs::create_dir_all(&dir)?;
+        let path = self.key_path(namespace, key);
+        let tmp = path.with_extension(format!("tmp-{}-{}", std::process::id(), unix_seconds()));
+        fs::write(
+            &tmp,
+            format_kv_file(&KvValue {
+                bytes: value,
+                expires_at,
+            }),
+        )?;
+        fs::rename(tmp, path)?;
+        Ok(())
+    }
+
+    fn delete(&self, namespace: &str, key: &str) -> Result<()> {
+        match fs::remove_file(self.key_path(namespace, key)) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error.into()),
+        }
+    }
+}
+
+fn value_is_expired(expires_at: Option<u64>) -> bool {
+    expires_at
+        .map(|expires_at| expires_at <= unix_seconds())
+        .unwrap_or(false)
+}
+
+fn unix_seconds() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+fn format_kv_file(value: &KvValue) -> String {
+    let expires_at = value
+        .expires_at
+        .map(|item| item.to_string())
+        .unwrap_or_default();
+    format!(
+        "expires_at={expires_at}\nvalue={}\n",
+        hex_encode(&value.bytes)
+    )
+}
+
+fn parse_kv_file(text: &str) -> Result<KvValue> {
+    let mut expires_at = None;
+    let mut value = None;
+    for line in text.lines() {
+        if let Some(raw) = line.strip_prefix("expires_at=") {
+            if !raw.is_empty() {
+                expires_at = Some(raw.parse::<u64>()?);
+            }
+        } else if let Some(raw) = line.strip_prefix("value=") {
+            value = Some(hex_decode(raw)?);
+        }
+    }
+    let Some(bytes) = value else {
+        bail!("kv value file is missing value");
+    };
+    Ok(KvValue { bytes, expires_at })
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn hex_decode(value: &str) -> Result<Vec<u8>> {
+    if value.len() % 2 != 0 {
+        bail!("hex value must have an even length");
+    }
+    let mut bytes = Vec::with_capacity(value.len() / 2);
+    for index in (0..value.len()).step_by(2) {
+        bytes.push(u8::from_str_radix(&value[index..index + 2], 16)?);
+    }
+    Ok(bytes)
+}
+
 pub struct WorkerHost {
     table: ResourceTable,
     wasi: WasiCtx,
@@ -236,7 +426,7 @@ pub struct WorkerHost {
     policy: HostPolicy,
     subrequests: u32,
     host_calls: u32,
-    kv: HashMap<(String, String), Vec<u8>>,
+    kv: KvStore,
     logs: Vec<LogEvent>,
 }
 
@@ -259,6 +449,18 @@ impl WorkerHost {
     }
 
     pub fn with_limits_and_policy(limits: InvocationLimits, policy: HostPolicy) -> Self {
+        Self::with_kv_store(limits, policy, KvStore::memory())
+    }
+
+    pub fn with_persistent_kv(
+        limits: InvocationLimits,
+        policy: HostPolicy,
+        root: impl Into<PathBuf>,
+    ) -> Self {
+        Self::with_kv_store(limits, policy, KvStore::file(root))
+    }
+
+    fn with_kv_store(limits: InvocationLimits, policy: HostPolicy, kv: KvStore) -> Self {
         let mut store_limits = StoreLimitsBuilder::new();
         if let Some(memory_mb) = limits.memory_mb {
             let bytes = memory_mb.saturating_mul(1024).saturating_mul(1024);
@@ -273,7 +475,7 @@ impl WorkerHost {
             policy,
             subrequests: 0,
             host_calls: 0,
-            kv: HashMap::new(),
+            kv,
             logs: Vec::new(),
         }
     }
@@ -347,6 +549,40 @@ impl WorkerHost {
             wasmtime::bail!("kv namespace {namespace} is not allowed by worker policy");
         }
         Ok(namespace)
+    }
+
+    fn kv_get(
+        &mut self,
+        ns: &Resource<KvNamespace>,
+        key: String,
+    ) -> wasmtime::Result<Option<Vec<u8>>> {
+        self.check_host_call_allowed()?;
+        let namespace = self.check_kv_allowed(ns)?;
+        self.kv
+            .get(&namespace, &key)
+            .map_err(|error| wasmtime::Error::msg(error.to_string()))
+    }
+
+    fn kv_put(
+        &mut self,
+        ns: &Resource<KvNamespace>,
+        key: String,
+        value: Vec<u8>,
+        ttl_seconds: Option<u64>,
+    ) -> wasmtime::Result<()> {
+        self.check_host_call_allowed()?;
+        let namespace = self.check_kv_allowed(ns)?;
+        self.kv
+            .put(&namespace, &key, value, ttl_seconds)
+            .map_err(|error| wasmtime::Error::msg(error.to_string()))
+    }
+
+    fn kv_delete(&mut self, ns: &Resource<KvNamespace>, key: String) -> wasmtime::Result<()> {
+        self.check_host_call_allowed()?;
+        let namespace = self.check_kv_allowed(ns)?;
+        self.kv
+            .delete(&namespace, &key)
+            .map_err(|error| wasmtime::Error::msg(error.to_string()))
     }
 
     fn namespace_for_binding(
@@ -520,12 +756,7 @@ impl myedge::runtime::kv::HostWithStore for WorkerHost {
         ns: Resource<KvNamespace>,
         key: String,
     ) -> wasmtime::Result<Option<Vec<u8>>> {
-        accessor.with(|mut access| {
-            let host = access.get();
-            host.check_host_call_allowed()?;
-            let namespace = host.check_kv_allowed(&ns)?;
-            Ok(host.kv.get(&(namespace, key)).cloned())
-        })
+        accessor.with(|mut access| access.get().kv_get(&ns, key))
     }
 
     async fn put<T: Send>(
@@ -533,15 +764,9 @@ impl myedge::runtime::kv::HostWithStore for WorkerHost {
         ns: Resource<KvNamespace>,
         key: String,
         value: Vec<u8>,
-        _ttl_seconds: Option<u64>,
+        ttl_seconds: Option<u64>,
     ) -> wasmtime::Result<()> {
-        accessor.with(|mut access| {
-            let host = access.get();
-            host.check_host_call_allowed()?;
-            let namespace = host.check_kv_allowed(&ns)?;
-            host.kv.insert((namespace, key), value);
-            Ok(())
-        })
+        accessor.with(|mut access| access.get().kv_put(&ns, key, value, ttl_seconds))
     }
 
     async fn delete<T: Send>(
@@ -549,13 +774,7 @@ impl myedge::runtime::kv::HostWithStore for WorkerHost {
         ns: Resource<KvNamespace>,
         key: String,
     ) -> wasmtime::Result<()> {
-        accessor.with(|mut access| {
-            let host = access.get();
-            host.check_host_call_allowed()?;
-            let namespace = host.check_kv_allowed(&ns)?;
-            host.kv.remove(&(namespace, key));
-            Ok(())
-        })
+        accessor.with(|mut access| access.get().kv_delete(&ns, key))
     }
 }
 
@@ -1137,12 +1356,39 @@ pub fn invoke_component_handle_with_limits_and_policy(
     limits: InvocationLimits,
     policy: HostPolicy,
 ) -> Result<HttpResponseOutput> {
+    invoke_component_handle_with_host(
+        component_path,
+        request,
+        WorkerHost::with_limits_and_policy(limits, policy),
+    )
+}
+
+pub fn invoke_component_handle_with_persistent_kv(
+    component_path: &Path,
+    request: HttpRequestInput,
+    limits: InvocationLimits,
+    policy: HostPolicy,
+    kv_store_dir: &Path,
+) -> Result<HttpResponseOutput> {
+    invoke_component_handle_with_host(
+        component_path,
+        request,
+        WorkerHost::with_persistent_kv(limits, policy, kv_store_dir),
+    )
+}
+
+fn invoke_component_handle_with_host(
+    component_path: &Path,
+    request: HttpRequestInput,
+    host: WorkerHost,
+) -> Result<HttpResponseOutput> {
+    let limits = host.invocation_limits;
     enforce_request_body_limit(&request, limits)?;
     let engine = wasip3_engine()?;
     let component = Component::from_file(&engine, component_path)?;
     let mut linker = Linker::<WorkerHost>::new(&engine);
     add_worker_imports(&mut linker)?;
-    let mut store = Store::new(&engine, WorkerHost::with_limits_and_policy(limits, policy));
+    let mut store = Store::new(&engine, host);
     store.limiter(|host| &mut host.store_limits);
     #[cfg(target_has_atomic = "64")]
     {
@@ -1367,6 +1613,110 @@ mod tests {
             host.namespace_for_binding("OTHER".to_string())
                 .expect("unknown binding")
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn persistent_kv_store_survives_host_instances_and_deletes_values() {
+        let dir = temp_dir("persistent-kv");
+        let policy = HostPolicy::with_bindings(
+            OutboundHttpPolicy::disabled(),
+            vec![KvBindingPolicy::new("MAIN", "tenant_a/main")],
+            Vec::new(),
+        );
+        let mut writer = WorkerHost::with_persistent_kv(
+            InvocationLimits::default(),
+            policy.clone(),
+            dir.clone(),
+        );
+        let namespace = writer
+            .namespace_for_binding("MAIN".to_string())
+            .expect("binding lookup")
+            .expect("namespace handle");
+
+        writer
+            .kv_put(&namespace, "greeting".to_string(), b"hello".to_vec(), None)
+            .expect("put kv");
+
+        let mut reader = WorkerHost::with_persistent_kv(
+            InvocationLimits::default(),
+            policy.clone(),
+            dir.clone(),
+        );
+        let namespace = reader
+            .namespace_for_binding("MAIN".to_string())
+            .expect("binding lookup")
+            .expect("namespace handle");
+
+        assert_eq!(
+            reader
+                .kv_get(&namespace, "greeting".to_string())
+                .expect("get kv"),
+            Some(b"hello".to_vec())
+        );
+
+        reader
+            .kv_delete(&namespace, "greeting".to_string())
+            .expect("delete kv");
+        let mut after_delete = WorkerHost::with_persistent_kv(
+            InvocationLimits::default(),
+            policy.clone(),
+            dir.clone(),
+        );
+        let namespace = after_delete
+            .namespace_for_binding("MAIN".to_string())
+            .expect("binding lookup")
+            .expect("namespace handle");
+
+        assert_eq!(
+            after_delete
+                .kv_get(&namespace, "greeting".to_string())
+                .expect("get deleted kv"),
+            None
+        );
+    }
+
+    #[test]
+    fn persistent_kv_store_expires_ttl_values() {
+        let dir = temp_dir("persistent-kv-ttl");
+        let policy = HostPolicy::with_bindings(
+            OutboundHttpPolicy::disabled(),
+            vec![KvBindingPolicy::new("MAIN", "tenant_a/main")],
+            Vec::new(),
+        );
+        let mut host = WorkerHost::with_persistent_kv(
+            InvocationLimits::default(),
+            policy.clone(),
+            dir.clone(),
+        );
+        let namespace = host
+            .namespace_for_binding("MAIN".to_string())
+            .expect("binding lookup")
+            .expect("namespace handle");
+
+        host.kv_put(
+            &namespace,
+            "ephemeral".to_string(),
+            b"value".to_vec(),
+            Some(0),
+        )
+        .expect("put ttl kv");
+
+        let mut reader = WorkerHost::with_persistent_kv(
+            InvocationLimits::default(),
+            policy.clone(),
+            dir.clone(),
+        );
+        let namespace = reader
+            .namespace_for_binding("MAIN".to_string())
+            .expect("binding lookup")
+            .expect("namespace handle");
+
+        assert_eq!(
+            reader
+                .kv_get(&namespace, "ephemeral".to_string())
+                .expect("get expired kv"),
+            None
         );
     }
 

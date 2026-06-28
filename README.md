@@ -16,6 +16,7 @@ The MVP follows the design memo in `/Users/mz/Downloads/wasi-edge-worker-platfor
 just test
 pnpm start
 just runtime
+pnpm wasmplane deploy --project-id prj_hello --component ./worker.component.wasm --host hello.example.dev
 just e2e
 ```
 
@@ -36,6 +37,8 @@ The runtime node listens on `http://127.0.0.1:8788` by default. Set `RUNTIME_HOS
 environment variables named `WASMPLANE_SECRET_<secretId>` or `WASMPLANE_SECRET_<NORMALIZED_ID>` by
 default. Set `WASMPLANE_SECRET_DB` to a control-plane SQLite database path to resolve values from
 the local secret registry instead. Route snapshots only carry `secretId`, never the secret value.
+Set `WASMPLANE_KV_STORE_DIR` to choose the host-side persistent KV directory; the default is
+`.wasmplane/kv`.
 
 Runtime-oriented tests expect these CLIs on `PATH`:
 
@@ -59,7 +62,8 @@ namespace allowlists, outbound HTTP allowlists, host API call counters, and subr
 Guest components resolve configured capability bindings through WIT handles: `kv.open-namespace`
 maps a binding name such as `MAIN` to its physical namespace, and `secrets.open-secret` returns a
 secret handle whose `reveal` operation is backed by host-loaded secret values. Secret values are
-redacted from host logs.
+redacted from host logs. KV `get`/`put`/`delete` operations are backed by a host-side persistent
+store when `--kv-store-dir`/`WASMPLANE_KV_STORE_DIR` is configured, including TTL expiry.
 The control plane stores local secret values through `POST /secrets`, but all public API responses
 return only secret metadata. KV namespaces are also registered in the control plane. Deployments can
 only reference registered secrets and KV namespaces owned by the same project.
@@ -92,12 +96,39 @@ Runtime node endpoints:
 
 - `GET /__runtime/healthz`
 - `GET /__runtime/metrics`
+- `GET /__runtime/events`
 - `PUT /__runtime/snapshots/routes`
 - any other path: resolve by `x-forwarded-host` or `host`, prepare the component, then invoke it
   through `wasmplane-wasip3-host`.
 
 `GET /__runtime/metrics` exposes in-memory counters for worker requests, route matches/misses,
-invocations, response status codes, runtime error codes, and loaded route snapshots.
+invocations, active/rejected invocation concurrency, response status codes, runtime error codes,
+and loaded route snapshots. `GET /__runtime/events` returns a bounded in-memory list of structured
+worker request events with request id, host/path, project/deployment, status, duration, and error
+code. Worker responses include `x-wasmplane-request-id`.
+
+The runtime node enforces `RUNTIME_CONCURRENCY` as the maximum concurrent worker invocations. Extra
+worker requests are rejected with `503 overloaded` and counted in metrics.
+
+## CLI Deploy
+
+The CLI deploy flow assumes a prebuilt component and orchestrates the control-plane API:
+
+```sh
+pnpm wasmplane deploy \
+  --control-plane-url http://127.0.0.1:8787 \
+  --project-id prj_hello \
+  --component examples/hello-worker/target/wasm32-wasip1/debug/hello_worker.component.wasm \
+  --host hello.example.dev \
+  --path-prefix / \
+  --kv MAIN=kv_main \
+  --secret API_KEY=sec_api_key \
+  --outbound https://api.example.dev/
+```
+
+The command uploads bytes through `POST /artifacts/local`, creates an immutable deployment, points
+the route, then publishes a route snapshot unless `--no-publish` is passed. Limit overrides use
+`--limit name=value`, for example `--limit wallMs=2500`.
 
 ## API
 

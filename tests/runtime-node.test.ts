@@ -429,7 +429,7 @@ test("runtime node exposes worker request metrics", async () => {
     assert.deepEqual(await initialMetricsResponse.json(), {
       startedAt: fixedNow(),
       requests: { total: 0, matched: 0, missed: 0 },
-      invocations: { total: 0, succeeded: 0, failed: 0 },
+      invocations: { total: 0, succeeded: 0, failed: 0, active: 0, rejected: 0 },
       responses: { byStatus: {} },
       errors: {},
       snapshots: { loaded: 0 },
@@ -460,7 +460,7 @@ test("runtime node exposes worker request metrics", async () => {
     assert.deepEqual(await metricsResponse.json(), {
       startedAt: fixedNow(),
       requests: { total: 2, matched: 1, missed: 1 },
-      invocations: { total: 1, succeeded: 1, failed: 0 },
+      invocations: { total: 1, succeeded: 1, failed: 0, active: 0, rejected: 0 },
       responses: { byStatus: { "201": 1, "404": 1 } },
       errors: { not_found: 1 },
       snapshots: {
@@ -469,6 +469,128 @@ test("runtime node exposes worker request metrics", async () => {
         generatedAt: "2026-06-26T10:01:00.000Z",
       },
     });
+  } finally {
+    await app.close();
+  }
+});
+
+test("runtime node exposes structured worker request events", async () => {
+  const supervisor = createRuntimeSupervisor({
+    snapshot: snapshot([route("dep_events", "hello.example.dev", "/", digest("events"))]),
+    artifactStore: materializedArtifactStore(),
+    backend: compiledBackend(),
+  });
+  let nextMs = 100;
+  const app = createRuntimeNodeApp({
+    supervisor,
+    now: fixedNow,
+    monotonicNowMs() {
+      const value = nextMs;
+      nextMs += 7;
+      return value;
+    },
+    requestIdGenerator() {
+      return "req_structured_1";
+    },
+    invoker: {
+      async invoke() {
+        return { status: 202, headers: [], body: Buffer.from("accepted") };
+      },
+    },
+  });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const hit = await fetch(`${baseUrl}/events`, {
+      headers: { "x-forwarded-host": "hello.example.dev" },
+    });
+    assert.equal(hit.status, 202);
+    assert.equal(hit.headers.get("x-wasmplane-request-id"), "req_structured_1");
+
+    const eventsResponse = await fetch(`${baseUrl}/__runtime/events`);
+    assert.equal(eventsResponse.status, 200);
+    assert.deepEqual(await eventsResponse.json(), {
+      events: [
+        {
+          timestamp: fixedNow(),
+          requestId: "req_structured_1",
+          host: "hello.example.dev",
+          path: "/events",
+          projectId: "prj_hello",
+          deploymentId: "dep_events",
+          status: 202,
+          durationMs: 7,
+        },
+      ],
+    });
+  } finally {
+    await app.close();
+  }
+});
+
+test("runtime node rejects worker invocations over the configured concurrency limit", async () => {
+  const supervisor = createRuntimeSupervisor({
+    snapshot: snapshot([route("dep_limited", "hello.example.dev", "/", digest("limited"))]),
+    artifactStore: materializedArtifactStore(),
+    backend: compiledBackend(),
+  });
+  let releaseInvocation!: () => void;
+  let invocationStarted!: () => void;
+  const started = new Promise<void>((resolve) => {
+    invocationStarted = resolve;
+  });
+  const app = createRuntimeNodeApp({
+    supervisor,
+    maxConcurrentInvocations: 1,
+    now: fixedNow,
+    invoker: {
+      async invoke() {
+        invocationStarted();
+        await new Promise<void>((resolve) => {
+          releaseInvocation = resolve;
+        });
+        return { status: 200, headers: [], body: Buffer.from("ok") };
+      },
+    },
+  });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const first = fetch(`${baseUrl}/`, {
+      headers: { "x-forwarded-host": "hello.example.dev" },
+    });
+    await started;
+    const rejected = await fetch(`${baseUrl}/`, {
+      headers: { "x-forwarded-host": "hello.example.dev" },
+    });
+    assert.equal(rejected.status, 503);
+    const rejectedBody = await rejected.json();
+    assert.equal(rejectedBody.error.code, "overloaded");
+
+    releaseInvocation();
+    const accepted = await first;
+    assert.equal(accepted.status, 200);
+    assert.equal(await accepted.text(), "ok");
+
+    const metrics = await (await fetch(`${baseUrl}/__runtime/metrics`)).json();
+    assert.deepEqual(metrics.invocations, {
+      total: 1,
+      succeeded: 1,
+      failed: 0,
+      active: 0,
+      rejected: 1,
+      maxConcurrent: 1,
+    });
+    assert.deepEqual(metrics.responses.byStatus, { "200": 1, "503": 1 });
+    assert.equal(metrics.errors.overloaded, 1);
   } finally {
     await app.close();
   }

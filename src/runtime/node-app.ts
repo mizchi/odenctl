@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import { randomUUID } from "node:crypto";
 import {
   MVP_RUNTIME_BACKEND,
   MVP_WASI_PROFILE,
@@ -21,6 +22,10 @@ export interface RuntimeNodeAppOptions {
   supervisor: RuntimeNodeSupervisor;
   invoker?: RuntimeInvoker;
   secretStore?: RuntimeSecretStore;
+  maxConcurrentInvocations?: number;
+  requestIdGenerator?: () => string;
+  monotonicNowMs?: () => number;
+  eventBufferSize?: number;
   now?: () => string;
 }
 
@@ -30,12 +35,24 @@ export interface RuntimeNodeSupervisor {
 }
 
 export function createRuntimeNodeApp(options: RuntimeNodeAppOptions) {
-  const metrics = createRuntimeMetrics(options.now ?? (() => new Date().toISOString()));
+  const now = options.now ?? (() => new Date().toISOString());
+  const monotonicNowMs = options.monotonicNowMs ?? (() => Date.now());
+  const requestIdGenerator = options.requestIdGenerator ?? (() => randomUUID());
+  const metrics = createRuntimeMetrics(now);
+  const events = createRuntimeEvents(options.eventBufferSize ?? 100);
   const server = createServer(async (request, response) => {
     let workerRequest = false;
     let routeMatched = false;
     let invocationStarted = false;
     let invocationSettled = false;
+    let requestStartedMs = 0;
+    let requestId: string | undefined;
+    let eventHost: string | undefined;
+    let eventPath: string | undefined;
+    let eventProjectId: string | undefined;
+    let eventDeploymentId: string | undefined;
+    let eventStatus: number | undefined;
+    let eventErrorCode: string | undefined;
     try {
       const url = new URL(request.url ?? "/", "http://runtime.local");
       const method = request.method ?? "GET";
@@ -47,6 +64,11 @@ export function createRuntimeNodeApp(options: RuntimeNodeAppOptions) {
 
       if (method === "GET" && url.pathname === "/__runtime/metrics") {
         writeJson(response, 200, metrics.snapshot());
+        return;
+      }
+
+      if (method === "GET" && url.pathname === "/__runtime/events") {
+        writeJson(response, 200, events.snapshot());
         return;
       }
 
@@ -69,42 +91,58 @@ export function createRuntimeNodeApp(options: RuntimeNodeAppOptions) {
       }
 
       workerRequest = true;
+      requestStartedMs = monotonicNowMs();
+      requestId = requestIdGenerator();
+      eventHost = requestHost(request.headers);
+      eventPath = url.pathname;
       metrics.recordRequest();
       const prepared = await options.supervisor.prepareRoute({
-        host: requestHost(request.headers),
+        host: eventHost,
         path: url.pathname,
       });
       routeMatched = true;
+      eventProjectId = prepared.projectId;
+      eventDeploymentId = prepared.deploymentId;
       metrics.recordRouteMatch();
 
       if (options.invoker) {
         const component = await withResolvedCapabilities(prepared, options.secretStore);
         enforceRuntimeCapabilities(component.capabilities);
-        metrics.recordInvocationStart();
+        if (!metrics.tryStartInvocation(options.maxConcurrentInvocations)) {
+          throw new RuntimeError("overloaded", "runtime node concurrency limit exceeded");
+        }
         invocationStarted = true;
-        const invocation = await withWallTimeout(
-          options.invoker.invoke({
-            deploymentId: component.deploymentId,
-            component,
-            method,
-            uri: requestUri(request.headers, url),
-            headers: requestHeaders(request.headers),
-            body: await readBody(request, component.limits?.requestBytes),
-          }),
-          component.limits?.wallMs,
-        );
-        enforceResponseBytes(component, invocation);
-        invocationSettled = true;
-        metrics.recordInvocationSuccess();
-        metrics.recordResponse(invocation.status);
-        writeInvocationResponse(response, component, invocation);
+        try {
+          const invocation = await withWallTimeout(
+            options.invoker.invoke({
+              deploymentId: component.deploymentId,
+              component,
+              method,
+              uri: requestUri(request.headers, url),
+              headers: requestHeaders(request.headers),
+              body: await readBody(request, component.limits?.requestBytes),
+            }),
+            component.limits?.wallMs,
+          );
+          enforceResponseBytes(component, invocation);
+          invocationSettled = true;
+          metrics.recordInvocationSuccess();
+          metrics.recordResponse(invocation.status);
+          eventStatus = invocation.status;
+          writeInvocationResponse(response, component, invocation, requestId);
+        } finally {
+          metrics.recordInvocationEnd();
+        }
         return;
       }
 
       metrics.recordError("invoke_not_implemented");
       metrics.recordResponse(501);
+      eventStatus = 501;
+      eventErrorCode = "invoke_not_implemented";
       response.writeHead(501, {
         "content-type": "application/json; charset=utf-8",
+        "x-wasmplane-request-id": requestId,
         "x-wasmplane-deployment": prepared.deploymentId,
         "x-wasmplane-precompiled": prepared.precompiledPath,
       });
@@ -120,6 +158,8 @@ export function createRuntimeNodeApp(options: RuntimeNodeAppOptions) {
       );
     } catch (error) {
       const errorResponse = runtimeErrorResponse(error);
+      eventStatus = errorResponse.status;
+      eventErrorCode = errorResponse.code;
       if (workerRequest) {
         if (!routeMatched && errorResponse.code === "not_found") {
           metrics.recordRouteMiss();
@@ -132,7 +172,21 @@ export function createRuntimeNodeApp(options: RuntimeNodeAppOptions) {
       }
       writeJson(response, errorResponse.status, {
         error: { code: errorResponse.code, message: errorResponse.message },
-      });
+      }, requestId ? { "x-wasmplane-request-id": requestId } : undefined);
+    } finally {
+      if (workerRequest && requestId && eventHost && eventPath && eventStatus !== undefined) {
+        events.record({
+          timestamp: now(),
+          requestId,
+          host: eventHost,
+          path: eventPath,
+          projectId: eventProjectId,
+          deploymentId: eventDeploymentId,
+          status: eventStatus,
+          durationMs: Math.max(0, monotonicNowMs() - requestStartedMs),
+          errorCode: eventErrorCode,
+        });
+      }
     }
   });
 
@@ -175,6 +229,9 @@ interface RuntimeMetricsSnapshot {
     total: number;
     succeeded: number;
     failed: number;
+    active: number;
+    rejected: number;
+    maxConcurrent?: number;
   };
   responses: {
     byStatus: Record<string, number>;
@@ -187,11 +244,27 @@ interface RuntimeMetricsSnapshot {
   };
 }
 
+interface RuntimeEvent {
+  timestamp: string;
+  requestId: string;
+  host: string;
+  path: string;
+  projectId?: string;
+  deploymentId?: string;
+  status: number;
+  durationMs: number;
+  errorCode?: string;
+}
+
+interface RuntimeEventsSnapshot {
+  events: RuntimeEvent[];
+}
+
 function createRuntimeMetrics(now: () => string) {
   const metrics: RuntimeMetricsSnapshot = {
     startedAt: now(),
     requests: { total: 0, matched: 0, missed: 0 },
-    invocations: { total: 0, succeeded: 0, failed: 0 },
+    invocations: { total: 0, succeeded: 0, failed: 0, active: 0, rejected: 0 },
     responses: { byStatus: {} },
     errors: {},
     snapshots: { loaded: 0 },
@@ -217,8 +290,20 @@ function createRuntimeMetrics(now: () => string) {
     recordRouteMiss() {
       metrics.requests.missed += 1;
     },
-    recordInvocationStart() {
+    tryStartInvocation(maxConcurrent: number | undefined): boolean {
+      if (maxConcurrent !== undefined) {
+        metrics.invocations.maxConcurrent = maxConcurrent;
+        if (metrics.invocations.active >= maxConcurrent) {
+          metrics.invocations.rejected += 1;
+          return false;
+        }
+      }
       metrics.invocations.total += 1;
+      metrics.invocations.active += 1;
+      return true;
+    },
+    recordInvocationEnd() {
+      metrics.invocations.active = Math.max(0, metrics.invocations.active - 1);
     },
     recordInvocationSuccess() {
       metrics.invocations.succeeded += 1;
@@ -240,6 +325,29 @@ function createRuntimeMetrics(now: () => string) {
       };
     },
   };
+}
+
+function createRuntimeEvents(limit: number) {
+  const events: RuntimeEvent[] = [];
+  const boundedLimit = Math.max(1, limit);
+
+  return {
+    snapshot(): RuntimeEventsSnapshot {
+      return { events: [...events] };
+    },
+    record(event: RuntimeEvent) {
+      events.push(stripUndefined(event));
+      while (events.length > boundedLimit) {
+        events.shift();
+      }
+    },
+  };
+}
+
+function stripUndefined<T extends Record<string, unknown>>(value: T): T {
+  return Object.fromEntries(
+    Object.entries(value).filter(([, item]) => item !== undefined),
+  ) as T;
 }
 
 function increment(record: Record<string, number>, key: string) {
@@ -327,6 +435,9 @@ function runtimeErrorResponse(error: unknown): { status: number; code: string; m
   if (error instanceof RuntimeError && error.code === "validation") {
     return { status: 400, code: error.code, message: error.message };
   }
+  if (error instanceof RuntimeError && error.code === "overloaded") {
+    return { status: 503, code: error.code, message: error.message };
+  }
   if (error instanceof RuntimeError && isRequestBytesLimit(error)) {
     return { status: 413, code: error.code, message: error.message };
   }
@@ -337,9 +448,10 @@ function runtimeErrorResponse(error: unknown): { status: number; code: string; m
   return { status: 500, code: "internal", message };
 }
 
-function writeJson(response: any, status: number, value: unknown) {
+function writeJson(response: any, status: number, value: unknown, headers: Record<string, string> = {}) {
   response.writeHead(status, {
     "content-type": "application/json; charset=utf-8",
+    ...headers,
   });
   response.end(JSON.stringify(value));
 }
@@ -592,11 +704,15 @@ function writeInvocationResponse(
   response: any,
   prepared: CompiledComponent,
   invocation: InvokeComponentResponse,
+  requestId?: string,
 ) {
   const headers: Record<string, string> = {
     "x-wasmplane-deployment": prepared.deploymentId,
     "x-wasmplane-precompiled": prepared.precompiledPath,
   };
+  if (requestId) {
+    headers["x-wasmplane-request-id"] = requestId;
+  }
   for (const header of invocation.headers) {
     if (isSafeResponseHeader(header.name)) {
       headers[header.name] = header.value;

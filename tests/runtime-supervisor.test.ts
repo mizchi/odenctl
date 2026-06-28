@@ -105,6 +105,52 @@ test("runtime supervisor uses the latest loaded route snapshot", () => {
   assert.equal(supervisor.matchRoute({ host: "hello.example.dev", path: "/" })?.deploymentId, "dep_v2");
 });
 
+test("runtime supervisor prunes prepared deployments removed by a new snapshot", async () => {
+  const calls: string[] = [];
+  const supervisor = createRuntimeSupervisor({
+    snapshot: snapshot([
+      route("dep_v1", "hello.example.dev", "/", digest("v1"), "file:///tmp/v1.wasm"),
+    ]),
+    artifactStore: {
+      async materialize(artifact) {
+        return {
+          path: new URL(artifact.location).pathname,
+          digest: artifact.digest,
+          location: artifact.location,
+          verified: true,
+        };
+      },
+    },
+    backend: {
+      async compileComponent(request) {
+        calls.push(request.deploymentId);
+        return {
+          deploymentId: request.deploymentId,
+          backend: "wasmtime",
+          componentPath: request.artifact.path,
+          precompiledPath: `/cache/${request.deploymentId}.cwasm`,
+          cached: false,
+        };
+      },
+    },
+  });
+
+  await supervisor.prepareRoute({ host: "hello.example.dev", path: "/" });
+  supervisor.loadSnapshot(
+    snapshot([
+      route("dep_v2", "hello.example.dev", "/", digest("v2"), "file:///tmp/v2.wasm"),
+    ]),
+  );
+  supervisor.loadSnapshot(
+    snapshot([
+      route("dep_v1", "hello.example.dev", "/", digest("v1"), "file:///tmp/v1.wasm"),
+    ]),
+  );
+  await supervisor.prepareRoute({ host: "hello.example.dev", path: "/" });
+
+  assert.deepEqual(calls, ["dep_v1", "dep_v1"]);
+});
+
 test("runtime supervisor selects weighted rollout targets deterministically", async () => {
   const calls: string[] = [];
   const baseRoute = route("dep_blue", "hello.example.dev", "/", digest("blue"), "file:///tmp/blue.wasm");
@@ -471,6 +517,44 @@ test("wasip3 host invoker delegates HTTP requests to the Rust host invoke comman
       processSpawn: false,
     }),
   ]);
+});
+
+test("wasip3 host invoker passes a persistent KV store directory", async () => {
+  const calls: Array<{ command: string; args: string[] }> = [];
+  const invoker = createWasip3HostInvoker({
+    hostBin: "wasmplane-wasip3-host",
+    kvStoreDir: "/tmp/wasmplane-kv",
+    commandRunner: {
+      async run(command, args) {
+        calls.push({ command, args });
+        return {
+          stdout: JSON.stringify({ status: 200, headers: [], body: "ok" }),
+          stderr: "",
+        };
+      },
+    },
+  });
+
+  await invoker.invoke({
+    deploymentId: "dep_worker",
+    component: {
+      deploymentId: "dep_worker",
+      backend: "wasmtime",
+      componentPath: "/tmp/worker.component.wasm",
+      precompiledPath: "/tmp/worker.component.cwasm",
+      cached: false,
+      projectId: "prj_worker",
+      limits: compileRequest("/tmp/worker.component.wasm", digest("component")).limits,
+      capabilities: compileRequest("/tmp/worker.component.wasm", digest("component")).capabilities,
+    },
+    method: "GET",
+    uri: "http://hello.example.dev/",
+    headers: [],
+    body: Buffer.from(""),
+  });
+
+  assert.equal(calls[0]?.command, "wasmplane-wasip3-host");
+  assert.deepEqual(calls[0]?.args.slice(-2), ["--kv-store-dir", "/tmp/wasmplane-kv"]);
 });
 
 test("wasip3 host invoker reports host command failures as invoke errors", async () => {

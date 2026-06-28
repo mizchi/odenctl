@@ -81,6 +81,12 @@ export function createRuntimeSupervisor(options: RuntimeSupervisorOptions) {
 
   function loadSnapshot(snapshot: RouteSnapshot) {
     routeCache = createRouteCache(snapshot);
+    const activeDeployments = snapshotDeploymentIds(snapshot);
+    for (const deploymentId of prepared.keys()) {
+      if (!activeDeployments.has(deploymentId)) {
+        prepared.delete(deploymentId);
+      }
+    }
   }
 
   return {
@@ -91,6 +97,17 @@ export function createRuntimeSupervisor(options: RuntimeSupervisorOptions) {
     prepareDeployment,
     loadSnapshot,
   };
+}
+
+function snapshotDeploymentIds(snapshot: RouteSnapshot): Set<string> {
+  const deploymentIds = new Set<string>();
+  for (const route of snapshot.routes) {
+    deploymentIds.add(route.deploymentId);
+    for (const target of route.targets ?? []) {
+      deploymentIds.add(target.deploymentId);
+    }
+  }
+  return deploymentIds;
 }
 
 type CompilableRouteTarget = Pick<
