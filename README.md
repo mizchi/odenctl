@@ -17,6 +17,7 @@ just test
 pnpm start
 just runtime
 pnpm wasmplane deploy --project-id prj_hello --component ./worker.component.wasm --host hello.example.dev
+just bench
 just e2e
 ```
 
@@ -59,7 +60,10 @@ Runtime-oriented tests expect these CLIs on `PATH`:
 The runtime supervisor code currently prepares deployments by resolving a route snapshot,
 materializing `file://`, `http://`, or `https://` artifacts, verifying their `sha256` digest,
 validating the component through the Rust `wasmplane-wasip3-host` linker, and precompiling through
-that same host binary. Remote HTTP(S) artifacts are cached under `WASMPLANE_ARTIFACT_CACHE_DIR`.
+that same host binary. Runtime invocation uses the generated `.cwasm` artifact so cold invokes skip
+Cranelift compilation. `.cwasm` files are trusted node-local cache entries tied to the host binary,
+Wasmtime version/configuration, and target machine; they are not portable user artifacts. Remote
+HTTP(S) artifacts are cached under `WASMPLANE_ARTIFACT_CACHE_DIR`.
 Strict `wasm-tools component targets` validation is available as an opt-in backend setting, but it
 is not the default because WASI-adapted Rust components include additional WASI imports that the
 host linker satisfies.
@@ -96,6 +100,50 @@ just guest-invoke
 `wasm32-wasip1` core module into a component. The default adapter comes from the
 `@bytecodealliance/jco` dev dependency, so `just e2e` works on a fresh checkout after `pnpm
 install --frozen-lockfile`. Override `WASI_PREVIEW1_ADAPTER` to use a different adapter.
+
+## Benchmarks
+
+The benchmark harness measures three paths:
+
+- `host`: direct `wasmplane-wasip3-host invoke` throughput for both raw component loading
+  (`host.invoke.component`) and precompiled `.cwasm` loading (`host.invoke.cwasm`), including
+  process startup and instantiation for each invocation.
+- `cold`: runtime supervisor prepare latency, covering artifact materialization and Rust-host
+  precompile on a cold cache, plus warm cache lookup.
+- `http`: throughput against an already running runtime node HTTP endpoint.
+
+Build the example component and run the default host/cold benchmarks:
+
+```sh
+just bench
+```
+
+Run specific benchmark modes:
+
+```sh
+pnpm bench host \
+  --component examples/hello-worker/target/wasm32-wasip1/debug/hello_worker.component.wasm \
+  --host-bin target/debug/wasmplane-wasip3-host \
+  --iterations 100 \
+  --concurrency 1,4,16
+
+pnpm bench cold \
+  --component examples/hello-worker/target/wasm32-wasip1/debug/hello_worker.component.wasm \
+  --host-bin target/debug/wasmplane-wasip3-host \
+  --format json
+
+pnpm bench http \
+  --runtime-url http://127.0.0.1:8788 \
+  --host hello.example.dev \
+  --path / \
+  --iterations 1000 \
+  --concurrency 1,8,32
+```
+
+The output includes per-run throughput, average latency, p50/p95/p99 latency, and errors. Compare
+`host.invoke.component` with `host.invoke.cwasm` to isolate the benefit of skipping Cranelift
+compilation on each host process start. Use `--format json` or `--output bench.json` for
+machine-readable result capture.
 
 CI runs `just test` and `just e2e` on GitHub Actions. The workflow installs Node 24, Rust stable,
 `wasm32-wasip1`, `wasm-tools 1.245.1`, and `wit-bindgen-cli 0.51.0`.

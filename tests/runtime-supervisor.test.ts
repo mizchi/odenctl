@@ -552,8 +552,8 @@ test("wasip3 host invoker delegates HTTP requests to the Rust host invoke comman
   assert.equal(calls[0]?.command, "wasmplane-wasip3-host");
   assert.deepEqual(calls[0]?.args, [
     "invoke",
-    "--component",
-    "/tmp/worker.component.wasm",
+    "--precompiled",
+    "/tmp/worker.component.cwasm",
     "--method",
     "POST",
     "--uri",

@@ -4,11 +4,29 @@ use anyhow::{Context, Result, bail};
 use serde_json::Value;
 use wasmplane_wasip3_host::{
     HostPolicy, HttpRequestInput, InvocationLimits, KvBindingPolicy, OutboundHttpPolicy,
-    SecretBindingPolicy, invoke_component_handle_with_limits_and_policy, precompile_component,
+    SecretBindingPolicy, invoke_component_handle_with_limits_and_policy,
+    invoke_component_handle_with_persistent_kv,
+    invoke_precompiled_component_handle_with_limits_and_policy,
+    invoke_precompiled_component_handle_with_persistent_kv, precompile_component,
 };
 
+#[derive(Debug, PartialEq, Eq)]
+enum InvokeSource {
+    Component(PathBuf),
+    Precompiled(PathBuf),
+}
+
+impl InvokeSource {
+    fn path(&self) -> &PathBuf {
+        match self {
+            Self::Component(path) | Self::Precompiled(path) => path,
+        }
+    }
+}
+
+#[derive(Debug)]
 struct InvokeArgs {
-    component: PathBuf,
+    source: InvokeSource,
     method: String,
     uri: String,
     headers: Vec<(String, String)>,
@@ -51,24 +69,44 @@ fn main() -> Result<()> {
                 headers: invoke_args.headers,
                 body: invoke_args.body.into_bytes(),
             };
-            let response = match invoke_args.kv_store_dir {
-                Some(kv_store_dir) => {
-                    wasmplane_wasip3_host::invoke_component_handle_with_persistent_kv(
-                        &invoke_args.component,
+            let source_label = invoke_args.source.path().display().to_string();
+            let response = match (invoke_args.source, invoke_args.kv_store_dir) {
+                (InvokeSource::Component(component), Some(kv_store_dir)) => {
+                    invoke_component_handle_with_persistent_kv(
+                        &component,
                         request,
                         invoke_args.limits,
                         invoke_args.policy,
                         &kv_store_dir,
                     )
                 }
-                None => invoke_component_handle_with_limits_and_policy(
-                    &invoke_args.component,
-                    request,
-                    invoke_args.limits,
-                    invoke_args.policy,
-                ),
+                (InvokeSource::Component(component), None) => {
+                    invoke_component_handle_with_limits_and_policy(
+                        &component,
+                        request,
+                        invoke_args.limits,
+                        invoke_args.policy,
+                    )
+                }
+                (InvokeSource::Precompiled(precompiled), Some(kv_store_dir)) => {
+                    invoke_precompiled_component_handle_with_persistent_kv(
+                        &precompiled,
+                        request,
+                        invoke_args.limits,
+                        invoke_args.policy,
+                        &kv_store_dir,
+                    )
+                }
+                (InvokeSource::Precompiled(precompiled), None) => {
+                    invoke_precompiled_component_handle_with_limits_and_policy(
+                        &precompiled,
+                        request,
+                        invoke_args.limits,
+                        invoke_args.policy,
+                    )
+                }
             }
-            .with_context(|| format!("failed to invoke {}", invoke_args.component.display()))?;
+            .with_context(|| format!("failed to invoke {source_label}"))?;
             println!(
                 "{{\"status\":{},\"headers\":{},\"body\":\"{}\"}}",
                 response.status,
@@ -86,6 +124,7 @@ fn main() -> Result<()> {
 
 fn parse_invoke_args(args: &mut impl Iterator<Item = String>) -> Result<InvokeArgs> {
     let mut component = None;
+    let mut precompiled = None;
     let mut method = None;
     let mut uri = None;
     let mut headers = Vec::new();
@@ -100,6 +139,7 @@ fn parse_invoke_args(args: &mut impl Iterator<Item = String>) -> Result<InvokeAr
         };
         match flag.as_str() {
             "--component" => component = Some(PathBuf::from(value)),
+            "--precompiled" => precompiled = Some(PathBuf::from(value)),
             "--method" => method = Some(value),
             "--uri" => uri = Some(value),
             "--headers" => headers = parse_headers_arg(&value)?,
@@ -120,8 +160,15 @@ fn parse_invoke_args(args: &mut impl Iterator<Item = String>) -> Result<InvokeAr
         }
     }
 
+    let source = match (component, precompiled) {
+        (Some(component), None) => InvokeSource::Component(component),
+        (None, Some(precompiled)) => InvokeSource::Precompiled(precompiled),
+        (Some(_), Some(_)) => bail!("expected exactly one of --component or --precompiled"),
+        (None, None) => bail!("expected --component <path> or --precompiled <path>"),
+    };
+
     Ok(InvokeArgs {
-        component: component.context("expected --component <path>")?,
+        source,
         method: method.context("expected --method <value>")?,
         uri: uri.context("expected --uri <value>")?,
         headers,
@@ -307,7 +354,7 @@ fn print_usage() {
         "  wasmplane-wasip3-host compile --component <component.wasm> --out <component.cwasm>"
     );
     eprintln!(
-        "  wasmplane-wasip3-host invoke --component <component.wasm> --method <METHOD> --uri <URI> [--headers <JSON>] [--body <TEXT>] [--wall-ms <MS>] [--memory-mb <MB>] [--request-bytes <BYTES>] [--response-bytes <BYTES>] [--subrequests <COUNT>] [--host-calls <COUNT>] [--capabilities <JSON>] [--kv-store-dir <DIR>]"
+        "  wasmplane-wasip3-host invoke (--component <component.wasm> | --precompiled <component.cwasm>) --method <METHOD> --uri <URI> [--headers <JSON>] [--body <TEXT>] [--wall-ms <MS>] [--memory-mb <MB>] [--request-bytes <BYTES>] [--response-bytes <BYTES>] [--subrequests <COUNT>] [--host-calls <COUNT>] [--capabilities <JSON>] [--kv-store-dir <DIR>]"
     );
 }
 
@@ -378,8 +425,8 @@ mod tests {
         let parsed = parse_invoke_args(&mut args).expect("invoke args");
 
         assert_eq!(
-            parsed.component,
-            PathBuf::from("/tmp/worker.component.wasm")
+            parsed.source,
+            InvokeSource::Component(PathBuf::from("/tmp/worker.component.wasm"))
         );
         assert_eq!(parsed.method, "POST");
         assert_eq!(parsed.uri, "https://worker.example.dev/");
@@ -408,6 +455,49 @@ mod tests {
         );
         assert!(parsed.policy.secret_for_binding("API_KEY").is_some());
         assert_eq!(parsed.kv_store_dir, Some(kv_store_dir));
+    }
+
+    #[test]
+    fn parse_invoke_args_accepts_precompiled_component() {
+        let mut args = vec![
+            "--precompiled",
+            "/tmp/worker.component.cwasm",
+            "--method",
+            "GET",
+            "--uri",
+            "https://worker.example.dev/",
+        ]
+        .into_iter()
+        .map(String::from);
+
+        let parsed = parse_invoke_args(&mut args).expect("invoke args");
+
+        assert_eq!(
+            parsed.source,
+            InvokeSource::Precompiled(PathBuf::from("/tmp/worker.component.cwasm"))
+        );
+        assert_eq!(parsed.method, "GET");
+        assert_eq!(parsed.uri, "https://worker.example.dev/");
+    }
+
+    #[test]
+    fn parse_invoke_args_rejects_ambiguous_component_source() {
+        let mut args = vec![
+            "--component",
+            "/tmp/worker.component.wasm",
+            "--precompiled",
+            "/tmp/worker.component.cwasm",
+            "--method",
+            "GET",
+            "--uri",
+            "https://worker.example.dev/",
+        ]
+        .into_iter()
+        .map(String::from);
+
+        let error = parse_invoke_args(&mut args).expect_err("ambiguous source should fail");
+
+        assert!(format!("{error:?}").contains("expected exactly one"));
     }
 
     #[test]

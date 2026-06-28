@@ -1357,7 +1357,7 @@ pub fn invoke_component_handle_with_limits_and_policy(
     policy: HostPolicy,
 ) -> Result<HttpResponseOutput> {
     invoke_component_handle_with_host(
-        component_path,
+        ComponentSource::Component(component_path),
         request,
         WorkerHost::with_limits_and_policy(limits, policy),
     )
@@ -1371,21 +1371,62 @@ pub fn invoke_component_handle_with_persistent_kv(
     kv_store_dir: &Path,
 ) -> Result<HttpResponseOutput> {
     invoke_component_handle_with_host(
-        component_path,
+        ComponentSource::Component(component_path),
         request,
         WorkerHost::with_persistent_kv(limits, policy, kv_store_dir),
     )
 }
 
+pub fn invoke_precompiled_component_handle_with_limits_and_policy(
+    precompiled_path: &Path,
+    request: HttpRequestInput,
+    limits: InvocationLimits,
+    policy: HostPolicy,
+) -> Result<HttpResponseOutput> {
+    invoke_component_handle_with_host(
+        ComponentSource::Precompiled(precompiled_path),
+        request,
+        WorkerHost::with_limits_and_policy(limits, policy),
+    )
+}
+
+pub fn invoke_precompiled_component_handle_with_persistent_kv(
+    precompiled_path: &Path,
+    request: HttpRequestInput,
+    limits: InvocationLimits,
+    policy: HostPolicy,
+    kv_store_dir: &Path,
+) -> Result<HttpResponseOutput> {
+    invoke_component_handle_with_host(
+        ComponentSource::Precompiled(precompiled_path),
+        request,
+        WorkerHost::with_persistent_kv(limits, policy, kv_store_dir),
+    )
+}
+
+enum ComponentSource<'a> {
+    Component(&'a Path),
+    Precompiled(&'a Path),
+}
+
 fn invoke_component_handle_with_host(
-    component_path: &Path,
+    component_source: ComponentSource<'_>,
     request: HttpRequestInput,
     host: WorkerHost,
 ) -> Result<HttpResponseOutput> {
     let limits = host.invocation_limits;
     enforce_request_body_limit(&request, limits)?;
     let engine = wasip3_engine()?;
-    let component = Component::from_file(&engine, component_path)?;
+    let component = match component_source {
+        ComponentSource::Component(component_path) => {
+            Component::from_file(&engine, component_path)?
+        }
+        ComponentSource::Precompiled(precompiled_path) => {
+            // Safety: wasmplane only writes these serialized artifacts from the same host binary
+            // and treats them as trusted node-local cache entries, not portable user artifacts.
+            unsafe { Component::deserialize_file(&engine, precompiled_path)? }
+        }
+    };
     let mut linker = Linker::<WorkerHost>::new(&engine);
     add_worker_imports(&mut linker)?;
     let mut store = Store::new(&engine, host);
@@ -1527,6 +1568,29 @@ mod tests {
             },
         )
         .expect_err("dummy component should trap in its generated handle body");
+
+        assert!(format!("{error:?}").contains("wasm trap"));
+    }
+
+    #[test]
+    fn invoke_precompiled_component_handle_reaches_guest_export() {
+        let dir = temp_dir("call-precompiled-worker");
+        let component_path = build_async_worker_component(&dir);
+        let precompiled_path = dir.join("worker.component.cwasm");
+        precompile_component(&component_path, &precompiled_path).expect("precompile component");
+
+        let error = invoke_precompiled_component_handle_with_limits_and_policy(
+            &precompiled_path,
+            HttpRequestInput {
+                method: "GET".to_string(),
+                uri: "https://hello.example.dev/".to_string(),
+                headers: Vec::new(),
+                body: b"hello".to_vec(),
+            },
+            InvocationLimits::default(),
+            HostPolicy::deny_all(),
+        )
+        .expect_err("dummy precompiled component should trap in its generated handle body");
 
         assert!(format!("{error:?}").contains("wasm trap"));
     }

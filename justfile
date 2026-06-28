@@ -33,6 +33,9 @@ guest-build: deps guest-bindings
 guest-invoke: rust-build guest-build
     target/debug/wasmplane-wasip3-host invoke --component "{{ guest_component }}" --method GET --uri http://hello.example.dev/ --body ''
 
+bench: rust-build guest-build
+    pnpm bench all --component "{{ guest_component }}" --host-bin target/debug/wasmplane-wasip3-host --iterations 30 --warmup 3 --concurrency 1,2,4
+
 dev:
     pnpm start
 

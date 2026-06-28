@@ -105,8 +105,8 @@ export function createWasip3HostInvoker(options: Wasip3HostInvokerOptions = {}):
         const result = await commandRunner.run(hostBin, [
           ...hostArgsPrefix,
           "invoke",
-          "--component",
-          request.component.componentPath,
+          "--precompiled",
+          request.component.precompiledPath,
           "--method",
           request.method,
           "--uri",
