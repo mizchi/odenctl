@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import { MVP_WASI_PROFILE } from "../src/control-plane/contracts.ts";
+import { createAsyncControlPlane } from "../src/control-plane/async-service.ts";
 import { createControlPlane } from "../src/control-plane/service.ts";
 import { createMemoryRepository, createSqliteRepository } from "../src/control-plane/repository.ts";
 
@@ -92,6 +93,53 @@ test("creates immutable wasmtime deployments with denied-by-default host capabil
         capabilities: { outboundHttp: { enabled: false, allow: [] }, kv: [], secrets: [] },
       }),
     /already exists/,
+  );
+});
+
+test("async control plane preserves deployment validation", async () => {
+  const control = createAsyncControlPlane({
+    repository: asyncRepository(createMemoryRepository()),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+  });
+
+  const project = await control.createProject({ id: "prj_async", name: "async" });
+  await control.createArtifact({
+    id: "art_async",
+    projectId: project.id,
+    digest: digest("async"),
+    location: "oci://registry.example.com/mizchi/async:v1",
+    sizeBytes: 42,
+  });
+
+  await assert.rejects(
+    () =>
+      control.createDeployment({
+        id: "dep_missing_secret",
+        projectId: project.id,
+        artifactId: "art_async",
+        world: "myedge:runtime/worker@0.1.0",
+        runtime: {
+          backend: "wasmtime",
+          version: "wasmtime-43",
+          wasi: "wasip3",
+        },
+        limits: {
+          cpuMs: 50,
+          memoryMb: 64,
+          wallMs: 1000,
+          requestBytes: 1048576,
+          subrequests: 20,
+          hostCalls: 100,
+          responseBytes: 1048576,
+        },
+        capabilities: {
+          outboundHttp: { enabled: false, allow: [] },
+          kv: [],
+          secrets: [{ binding: "API_KEY", secretId: "sec_missing" }],
+        },
+      }),
+    /secret sec_missing/,
   );
 });
 
@@ -294,6 +342,7 @@ test("route pointers can roll forward and back without mutating deployments", ()
   });
 
   const snapshot = control.createRouteSnapshot();
+  assert.match(snapshot.id ?? "", /^snap_[a-f0-9]{16}$/);
   assert.equal(snapshot.routes.length, 1);
   assert.equal(snapshot.routes[0]?.host, "hello.example.dev");
   assert.equal(snapshot.routes[0]?.deploymentId, "dep_v1");
@@ -378,6 +427,29 @@ test("tracks runtime node heartbeat and excludes inactive nodes from publish tar
   );
 });
 
+test("excludes runtime nodes with stale heartbeat timestamps", () => {
+  let currentNow = "2026-06-26T10:00:00.000Z";
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    runtimeNodeActiveTtlMs: 60_000,
+    now: () => currentNow,
+  });
+
+  control.registerRuntimeNode({ id: "rt_fresh", url: "http://127.0.0.1:8788" });
+  control.registerRuntimeNode({ id: "rt_stale", url: "http://127.0.0.1:8789" });
+  control.recordRuntimeNodeHeartbeat({ id: "rt_fresh" });
+  control.recordRuntimeNodeHeartbeat({ id: "rt_stale" });
+
+  currentNow = "2026-06-26T10:01:01.000Z";
+  control.recordRuntimeNodeHeartbeat({ id: "rt_fresh" });
+
+  assert.deepEqual(
+    control.listActiveRuntimeNodes().map((node) => node.id),
+    ["rt_fresh"],
+  );
+});
+
 test("records route snapshot publication history", () => {
   const control = createControlPlane({
     repository: createMemoryRepository(),
@@ -386,6 +458,7 @@ test("records route snapshot publication history", () => {
   });
 
   const publication = control.recordRouteSnapshotPublication({
+    snapshotId: "snap_test",
     snapshotGeneratedAt: "2026-06-26T09:59:00.000Z",
     routes: 2,
     ok: false,
@@ -396,6 +469,7 @@ test("records route snapshot publication history", () => {
   });
 
   assert.equal(publication.id, "pub_1");
+  assert.equal(publication.snapshotId, "snap_test");
   assert.equal(publication.createdAt, fixedNow());
   assert.deepEqual(control.listRouteSnapshotPublications(), [publication]);
 });
@@ -428,6 +502,40 @@ test("route snapshots can carry weighted rollout targets", () => {
       { deploymentId: "dep_v2", weight: 10, digest: digest("v2") },
     ],
   );
+});
+
+test("route canary controller starts canary and rolls back to stable deployment", () => {
+  const control = createSeededControlPlane();
+  const stable = control.createDeployment(seedDeployment("dep_stable", "art_v1"));
+  const candidate = control.createDeployment(seedDeployment("dep_candidate", "art_v2"));
+  control.pointRoute({
+    projectId: stable.projectId,
+    host: "hello.example.dev",
+    pathPrefix: "/",
+    deploymentId: stable.id,
+  });
+
+  const canary = control.startRouteCanary({
+    projectId: stable.projectId,
+    host: "hello.example.dev",
+    pathPrefix: "/",
+    deploymentId: candidate.id,
+    weight: 5,
+  });
+
+  assert.deepEqual(canary.targets, [
+    { deploymentId: stable.id, weight: 95 },
+    { deploymentId: candidate.id, weight: 5 },
+  ]);
+
+  const rollback = control.rollbackRoute({
+    projectId: stable.projectId,
+    host: "hello.example.dev",
+    pathPrefix: "/",
+  });
+
+  assert.deepEqual(rollback.targets, [{ deploymentId: stable.id, weight: 100 }]);
+  assert.equal(control.createRouteSnapshot().routes[0]?.deploymentId, stable.id);
 });
 
 test("sqlite repository records schema migrations and upgrades existing databases", async () => {
@@ -485,12 +593,18 @@ test("sqlite repository records schema migrations and upgrades existing database
     "202606260004_route_snapshot_publications",
     "202606270001_secret_registry",
     "202606270002_kv_namespace_registry",
+    "202606300002_route_snapshot_id",
   ]);
   assert.ok(routeColumns.includes("targets_json"));
   assert.ok(runtimeNodeColumns.includes("status"));
   assert.ok(secretColumns.includes("value"));
   assert.ok(kvNamespaceColumns.includes("project_id"));
   assert.equal(db.prepare("select count(*) as count from route_snapshot_publications").get().count, 1);
+  const publicationColumns = db
+    .prepare("pragma table_info(route_snapshot_publications)")
+    .all()
+    .map((row: any) => row.name);
+  assert.ok(publicationColumns.includes("snapshot_id"));
   db.close();
 });
 
@@ -516,6 +630,18 @@ function createSeededControlPlane() {
     sizeBytes: 2,
   });
   return control;
+}
+
+function asyncRepository(repository: ReturnType<typeof createMemoryRepository>) {
+  return new Proxy(repository, {
+    get(target, property, receiver) {
+      const value = Reflect.get(target, property, receiver);
+      if (typeof value !== "function") {
+        return value;
+      }
+      return (...args: any[]) => Promise.resolve(value.apply(target, args));
+    },
+  }) as any;
 }
 
 function seedDeployment(id: string, artifactId = "art_v1") {

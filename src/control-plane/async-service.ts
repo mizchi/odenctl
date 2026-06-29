@@ -38,11 +38,41 @@ import {
   normalizeWorld,
   optionalId,
 } from "./contracts.ts";
-import type { ControlPlaneRepository } from "./repository.ts";
 import { ControlPlaneError } from "./errors.ts";
 
-export interface ControlPlaneOptions {
-  repository: ControlPlaneRepository;
+export interface AsyncControlPlaneRepository {
+  createProject(project: Project): Promise<Project>;
+  getProject(id: string): Promise<Project | undefined>;
+  createArtifact(artifact: Artifact): Promise<Artifact>;
+  getArtifact(id: string): Promise<Artifact | undefined>;
+  getArtifactByProjectDigest(projectId: string, digest: string): Promise<Artifact | undefined>;
+  createSecret(secret: Secret, value: string): Promise<Secret>;
+  getSecret(id: string): Promise<Secret | undefined>;
+  getSecretValue(id: string): Promise<string | undefined>;
+  listProjectSecrets(projectId: string): Promise<Secret[]>;
+  updateSecretValue(id: string, value: string, updatedAt: string): Promise<Secret>;
+  deleteSecret(id: string): Promise<void>;
+  createKvNamespace(namespace: KvNamespace): Promise<KvNamespace>;
+  getKvNamespace(id: string): Promise<KvNamespace | undefined>;
+  listProjectKvNamespaces(projectId: string): Promise<KvNamespace[]>;
+  deleteKvNamespace(id: string): Promise<void>;
+  createDeployment(deployment: Deployment): Promise<Deployment>;
+  getDeployment(id: string): Promise<Deployment | undefined>;
+  upsertRoute(route: RoutePointer): Promise<RoutePointer>;
+  getRoute(projectId: string, host: string, pathPrefix: string): Promise<RoutePointer | undefined>;
+  listRoutes(): Promise<RoutePointer[]>;
+  createRuntimeNode(node: RuntimeNode): Promise<RuntimeNode>;
+  getRuntimeNode(id: string): Promise<RuntimeNode | undefined>;
+  updateRuntimeNodeHeartbeat(node: RuntimeNode): Promise<RuntimeNode>;
+  listRuntimeNodes(): Promise<RuntimeNode[]>;
+  createRouteSnapshotPublication(
+    publication: RouteSnapshotPublication,
+  ): Promise<RouteSnapshotPublication>;
+  listRouteSnapshotPublications(): Promise<RouteSnapshotPublication[]>;
+}
+
+export interface AsyncControlPlaneOptions {
+  repository: AsyncControlPlaneRepository;
   idGenerator?: (prefix: string) => string;
   now?: () => string;
   runtimeNodeActiveTtlMs?: number;
@@ -162,13 +192,13 @@ export interface RecordRouteSnapshotPublicationInput {
   targets: RouteSnapshotPublicationTarget[];
 }
 
-export function createControlPlane(options: ControlPlaneOptions) {
+export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
   const repository = options.repository;
   const idGenerator = options.idGenerator ?? defaultIdGenerator;
   const now = options.now ?? (() => new Date().toISOString());
   const runtimeNodeActiveTtlMs = options.runtimeNodeActiveTtlMs;
 
-  function createProject(input: CreateProjectInput): Project {
+  async function createProject(input: CreateProjectInput): Promise<Project> {
     const project: Project = {
       id: optionalId(input.id, "project id") ?? idGenerator("prj"),
       name: normalizeProjectName(input.name),
@@ -177,8 +207,8 @@ export function createControlPlane(options: ControlPlaneOptions) {
     return repository.createProject(project);
   }
 
-  function createArtifact(input: CreateArtifactInput): Artifact {
-    requireProject(repository, input.projectId);
+  async function createArtifact(input: CreateArtifactInput): Promise<Artifact> {
+    await requireProject(repository, input.projectId);
     const artifact: Artifact = {
       id: optionalId(input.id, "artifact id") ?? idGenerator("art"),
       projectId: input.projectId,
@@ -190,13 +220,15 @@ export function createControlPlane(options: ControlPlaneOptions) {
     return repository.createArtifact(artifact);
   }
 
-  function getProjectArtifactByDigest(input: GetProjectArtifactByDigestInput): Artifact | undefined {
-    requireProject(repository, input.projectId);
+  async function getProjectArtifactByDigest(
+    input: GetProjectArtifactByDigestInput,
+  ): Promise<Artifact | undefined> {
+    await requireProject(repository, input.projectId);
     return repository.getArtifactByProjectDigest(input.projectId, normalizeDigest(input.digest));
   }
 
-  function createSecret(input: CreateSecretInput): Secret {
-    requireProject(repository, input.projectId);
+  async function createSecret(input: CreateSecretInput): Promise<Secret> {
+    await requireProject(repository, input.projectId);
     const secret: Secret = {
       id: optionalId(input.id, "secret id") ?? idGenerator("sec"),
       projectId: input.projectId,
@@ -207,27 +239,27 @@ export function createControlPlane(options: ControlPlaneOptions) {
     return repository.createSecret(secret, normalizeSecretValue(input.value));
   }
 
-  function getSecret(input: GetSecretInput): Secret {
+  async function getSecret(input: GetSecretInput): Promise<Secret> {
     return requireSecret(repository, input.id);
   }
 
-  function listProjectSecrets(input: ListProjectSecretsInput): Secret[] {
-    requireProject(repository, input.projectId);
+  async function listProjectSecrets(input: ListProjectSecretsInput): Promise<Secret[]> {
+    await requireProject(repository, input.projectId);
     return repository.listProjectSecrets(input.projectId);
   }
 
-  function updateSecretValue(input: UpdateSecretValueInput): Secret {
-    requireSecret(repository, input.id);
+  async function updateSecretValue(input: UpdateSecretValueInput): Promise<Secret> {
+    await requireSecret(repository, input.id);
     return repository.updateSecretValue(input.id, normalizeSecretValue(input.value), now());
   }
 
-  function deleteSecret(input: DeleteSecretInput): void {
-    requireSecret(repository, input.id);
-    repository.deleteSecret(input.id);
+  async function deleteSecret(input: DeleteSecretInput): Promise<void> {
+    await requireSecret(repository, input.id);
+    await repository.deleteSecret(input.id);
   }
 
-  function createKvNamespace(input: CreateKvNamespaceInput): KvNamespace {
-    requireProject(repository, input.projectId);
+  async function createKvNamespace(input: CreateKvNamespaceInput): Promise<KvNamespace> {
+    await requireProject(repository, input.projectId);
     const namespace: KvNamespace = {
       id: optionalId(input.id, "kv namespace id") ?? idGenerator("kv"),
       projectId: input.projectId,
@@ -238,29 +270,31 @@ export function createControlPlane(options: ControlPlaneOptions) {
     return repository.createKvNamespace(namespace);
   }
 
-  function getKvNamespace(input: GetKvNamespaceInput): KvNamespace {
+  async function getKvNamespace(input: GetKvNamespaceInput): Promise<KvNamespace> {
     return requireKvNamespace(repository, input.id);
   }
 
-  function listProjectKvNamespaces(input: ListProjectKvNamespacesInput): KvNamespace[] {
-    requireProject(repository, input.projectId);
+  async function listProjectKvNamespaces(
+    input: ListProjectKvNamespacesInput,
+  ): Promise<KvNamespace[]> {
+    await requireProject(repository, input.projectId);
     return repository.listProjectKvNamespaces(input.projectId);
   }
 
-  function deleteKvNamespace(input: DeleteKvNamespaceInput): void {
-    requireKvNamespace(repository, input.id);
-    repository.deleteKvNamespace(input.id);
+  async function deleteKvNamespace(input: DeleteKvNamespaceInput): Promise<void> {
+    await requireKvNamespace(repository, input.id);
+    await repository.deleteKvNamespace(input.id);
   }
 
-  function createDeployment(input: CreateDeploymentInput): Deployment {
-    requireProject(repository, input.projectId);
-    const artifact = requireArtifact(repository, input.artifactId);
+  async function createDeployment(input: CreateDeploymentInput): Promise<Deployment> {
+    await requireProject(repository, input.projectId);
+    const artifact = await requireArtifact(repository, input.artifactId);
     if (artifact.projectId !== input.projectId) {
       throw new ControlPlaneError("validation", "deployment artifact must belong to the same project");
     }
     const capabilities = normalizeCapabilities(input.capabilities);
-    requireDeploymentKvNamespaces(repository, input.projectId, capabilities);
-    requireDeploymentSecrets(repository, input.projectId, capabilities);
+    await requireDeploymentKvNamespaces(repository, input.projectId, capabilities);
+    await requireDeploymentSecrets(repository, input.projectId, capabilities);
 
     const deployment: Deployment = {
       id: optionalId(input.id, "deployment id") ?? idGenerator("dep"),
@@ -275,11 +309,11 @@ export function createControlPlane(options: ControlPlaneOptions) {
     return repository.createDeployment(deployment);
   }
 
-  function pointRoute(input: PointRouteInput): RoutePointer {
-    requireProject(repository, input.projectId);
+  async function pointRoute(input: PointRouteInput): Promise<RoutePointer> {
+    await requireProject(repository, input.projectId);
     const targets = normalizeRouteTargets(input.targets, input.deploymentId);
     for (const target of targets) {
-      const deployment = requireDeployment(repository, target.deploymentId);
+      const deployment = await requireDeployment(repository, target.deploymentId);
       if (deployment.projectId !== input.projectId) {
         throw new ControlPlaneError("validation", "route deployment must belong to the same project");
       }
@@ -297,12 +331,12 @@ export function createControlPlane(options: ControlPlaneOptions) {
     return repository.upsertRoute(route);
   }
 
-  function startRouteCanary(input: StartRouteCanaryInput): RoutePointer {
-    requireProject(repository, input.projectId);
+  async function startRouteCanary(input: StartRouteCanaryInput): Promise<RoutePointer> {
+    await requireProject(repository, input.projectId);
     const host = normalizeHost(input.host);
     const pathPrefix = normalizePathPrefix(input.pathPrefix);
-    const existing = requireRoute(repository, input.projectId, host, pathPrefix);
-    const candidate = requireDeployment(repository, input.deploymentId);
+    const existing = await requireRoute(repository, input.projectId, host, pathPrefix);
+    const candidate = await requireDeployment(repository, input.deploymentId);
     if (candidate.projectId !== input.projectId) {
       throw new ControlPlaneError("validation", "canary deployment must belong to the same project");
     }
@@ -322,13 +356,13 @@ export function createControlPlane(options: ControlPlaneOptions) {
     });
   }
 
-  function rollbackRoute(input: RollbackRouteInput): RoutePointer {
-    requireProject(repository, input.projectId);
+  async function rollbackRoute(input: RollbackRouteInput): Promise<RoutePointer> {
+    await requireProject(repository, input.projectId);
     const host = normalizeHost(input.host);
     const pathPrefix = normalizePathPrefix(input.pathPrefix);
-    const existing = requireRoute(repository, input.projectId, host, pathPrefix);
+    const existing = await requireRoute(repository, input.projectId, host, pathPrefix);
     const deploymentId = input.deploymentId ?? existing.targets[0]?.deploymentId ?? existing.deploymentId;
-    const deployment = requireDeployment(repository, deploymentId);
+    const deployment = await requireDeployment(repository, deploymentId);
     if (deployment.projectId !== input.projectId) {
       throw new ControlPlaneError("validation", "rollback deployment must belong to the same project");
     }
@@ -340,27 +374,29 @@ export function createControlPlane(options: ControlPlaneOptions) {
     });
   }
 
-  function createRouteSnapshot(): RouteSnapshot {
-    const routes = repository.listRoutes().map((route) => {
-      const targets = route.targets.map((target) => routeSnapshotTarget(target));
-      const primary = targets[0];
-      return {
-        host: route.host,
-        pathPrefix: route.pathPrefix,
-        projectId: route.projectId,
-        deploymentId: primary.deploymentId,
-        targets,
-        world: primary.world,
-        runtime: primary.runtime,
-        limits: primary.limits,
-        capabilities: primary.capabilities,
-        artifact: {
-          id: primary.artifact.id,
-          digest: primary.artifact.digest,
-          location: primary.artifact.location,
-        },
-      };
-    });
+  async function createRouteSnapshot(): Promise<RouteSnapshot> {
+    const routes = await Promise.all(
+      (await repository.listRoutes()).map(async (route) => {
+        const targets = await Promise.all(route.targets.map((target) => routeSnapshotTarget(target)));
+        const primary = targets[0];
+        return {
+          host: route.host,
+          pathPrefix: route.pathPrefix,
+          projectId: route.projectId,
+          deploymentId: primary.deploymentId,
+          targets,
+          world: primary.world,
+          runtime: primary.runtime,
+          limits: primary.limits,
+          capabilities: primary.capabilities,
+          artifact: {
+            id: primary.artifact.id,
+            digest: primary.artifact.digest,
+            location: primary.artifact.location,
+          },
+        };
+      }),
+    );
 
     const generatedAt = now();
     return {
@@ -371,7 +407,7 @@ export function createControlPlane(options: ControlPlaneOptions) {
     };
   }
 
-  function registerRuntimeNode(input: RegisterRuntimeNodeInput): RuntimeNode {
+  async function registerRuntimeNode(input: RegisterRuntimeNodeInput): Promise<RuntimeNode> {
     const node: RuntimeNode = {
       id: optionalId(input.id, "runtime node id") ?? idGenerator("rt"),
       url: normalizeRuntimeNodeUrl(input.url),
@@ -381,8 +417,10 @@ export function createControlPlane(options: ControlPlaneOptions) {
     return repository.createRuntimeNode(node);
   }
 
-  function recordRuntimeNodeHeartbeat(input: RecordRuntimeNodeHeartbeatInput): RuntimeNode {
-    const existing = repository.getRuntimeNode(input.id);
+  async function recordRuntimeNodeHeartbeat(
+    input: RecordRuntimeNodeHeartbeatInput,
+  ): Promise<RuntimeNode> {
+    const existing = await repository.getRuntimeNode(input.id);
     if (!existing) {
       throw new ControlPlaneError("not_found", `runtime node ${input.id} was not found`);
     }
@@ -396,17 +434,19 @@ export function createControlPlane(options: ControlPlaneOptions) {
     return repository.updateRuntimeNodeHeartbeat(node);
   }
 
-  function listRuntimeNodes(): RuntimeNode[] {
+  async function listRuntimeNodes(): Promise<RuntimeNode[]> {
     return repository.listRuntimeNodes();
   }
 
-  function listActiveRuntimeNodes(): RuntimeNode[] {
-    return repository.listRuntimeNodes().filter((node) => isActiveRuntimeNode(node, now(), runtimeNodeActiveTtlMs));
+  async function listActiveRuntimeNodes(): Promise<RuntimeNode[]> {
+    return (await repository.listRuntimeNodes()).filter((node) =>
+      isActiveRuntimeNode(node, now(), runtimeNodeActiveTtlMs),
+    );
   }
 
-  function recordRouteSnapshotPublication(
+  async function recordRouteSnapshotPublication(
     input: RecordRouteSnapshotPublicationInput,
-  ): RouteSnapshotPublication {
+  ): Promise<RouteSnapshotPublication> {
     return repository.createRouteSnapshotPublication({
       id: idGenerator("pub"),
       snapshotId: input.snapshotId,
@@ -418,7 +458,7 @@ export function createControlPlane(options: ControlPlaneOptions) {
     });
   }
 
-  function listRouteSnapshotPublications(): RouteSnapshotPublication[] {
+  async function listRouteSnapshotPublications(): Promise<RouteSnapshotPublication[]> {
     return repository.listRouteSnapshotPublications();
   }
 
@@ -448,9 +488,9 @@ export function createControlPlane(options: ControlPlaneOptions) {
     listRouteSnapshotPublications,
   };
 
-  function routeSnapshotTarget(target: RouteTarget) {
-    const deployment = requireDeployment(repository, target.deploymentId);
-    const artifact = requireArtifact(repository, deployment.artifactId);
+  async function routeSnapshotTarget(target: RouteTarget) {
+    const deployment = await requireDeployment(repository, target.deploymentId);
+    const artifact = await requireArtifact(repository, deployment.artifactId);
     return {
       deploymentId: deployment.id,
       weight: target.weight,
@@ -481,45 +521,48 @@ function isActiveRuntimeNode(
   return Date.parse(nowValue) - Date.parse(node.lastSeenAt) <= activeTtlMs;
 }
 
-function requireProject(repository: ControlPlaneRepository, id: string): Project {
-  const project = repository.getProject(id);
+async function requireProject(repository: AsyncControlPlaneRepository, id: string): Promise<Project> {
+  const project = await repository.getProject(id);
   if (!project) {
     throw new ControlPlaneError("not_found", `project ${id} was not found`);
   }
   return project;
 }
 
-function requireArtifact(repository: ControlPlaneRepository, id: string): Artifact {
-  const artifact = repository.getArtifact(id);
+async function requireArtifact(repository: AsyncControlPlaneRepository, id: string): Promise<Artifact> {
+  const artifact = await repository.getArtifact(id);
   if (!artifact) {
     throw new ControlPlaneError("not_found", `artifact ${id} was not found`);
   }
   return artifact;
 }
 
-function requireSecret(repository: ControlPlaneRepository, id: string): Secret {
-  const secret = repository.getSecret(id);
+async function requireSecret(repository: AsyncControlPlaneRepository, id: string): Promise<Secret> {
+  const secret = await repository.getSecret(id);
   if (!secret) {
     throw new ControlPlaneError("not_found", `secret ${id} was not found`);
   }
   return secret;
 }
 
-function requireKvNamespace(repository: ControlPlaneRepository, id: string): KvNamespace {
-  const namespace = repository.getKvNamespace(id);
+async function requireKvNamespace(
+  repository: AsyncControlPlaneRepository,
+  id: string,
+): Promise<KvNamespace> {
+  const namespace = await repository.getKvNamespace(id);
   if (!namespace) {
     throw new ControlPlaneError("not_found", `kv namespace ${id} was not found`);
   }
   return namespace;
 }
 
-function requireDeploymentKvNamespaces(
-  repository: ControlPlaneRepository,
+async function requireDeploymentKvNamespaces(
+  repository: AsyncControlPlaneRepository,
   projectId: string,
   capabilities: CapabilityPolicy,
 ) {
   for (const binding of capabilities.kv) {
-    const namespace = repository.getKvNamespace(binding.namespaceId);
+    const namespace = await repository.getKvNamespace(binding.namespaceId);
     if (!namespace) {
       throw new ControlPlaneError("validation", `kv namespace ${binding.namespaceId} was not found`);
     }
@@ -532,13 +575,13 @@ function requireDeploymentKvNamespaces(
   }
 }
 
-function requireDeploymentSecrets(
-  repository: ControlPlaneRepository,
+async function requireDeploymentSecrets(
+  repository: AsyncControlPlaneRepository,
   projectId: string,
   capabilities: CapabilityPolicy,
 ) {
   for (const binding of capabilities.secrets) {
-    const secret = repository.getSecret(binding.secretId);
+    const secret = await repository.getSecret(binding.secretId);
     if (!secret) {
       throw new ControlPlaneError("validation", `secret ${binding.secretId} was not found`);
     }
@@ -551,21 +594,24 @@ function requireDeploymentSecrets(
   }
 }
 
-function requireDeployment(repository: ControlPlaneRepository, id: string): Deployment {
-  const deployment = repository.getDeployment(id);
+async function requireDeployment(
+  repository: AsyncControlPlaneRepository,
+  id: string,
+): Promise<Deployment> {
+  const deployment = await repository.getDeployment(id);
   if (!deployment) {
     throw new ControlPlaneError("not_found", `deployment ${id} was not found`);
   }
   return deployment;
 }
 
-function requireRoute(
-  repository: ControlPlaneRepository,
+async function requireRoute(
+  repository: AsyncControlPlaneRepository,
   projectId: string,
   host: string,
   pathPrefix: string,
-): RoutePointer {
-  const route = repository.getRoute(projectId, host, pathPrefix);
+): Promise<RoutePointer> {
+  const route = await repository.getRoute(projectId, host, pathPrefix);
   if (!route) {
     throw new ControlPlaneError("not_found", `route ${host}${pathPrefix} was not found`);
   }

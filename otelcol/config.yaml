@@ -1,0 +1,47 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: "[::]:4317"
+      http:
+        endpoint: "[::]:4318"
+
+processors:
+  batch:
+    timeout: 1s
+
+connectors:
+  spanmetrics:
+    namespace: wasmplane
+    histogram:
+      explicit:
+        buckets: [10ms, 25ms, 50ms, 100ms, 250ms, 500ms, 1s, 2.5s, 5s]
+    dimensions:
+      - name: http.method
+      - name: http.status_code
+      - name: wasmplane.project_id
+      - name: wasmplane.deployment_id
+
+exporters:
+  debug:
+    verbosity: detailed
+  prometheus:
+    endpoint: "[::]:9464"
+
+extensions:
+  health_check:
+    endpoint: "[::]:13133"
+  zpages:
+    endpoint: "[::]:55679"
+
+service:
+  extensions: [health_check, zpages]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [debug, spanmetrics]
+    metrics:
+      receivers: [spanmetrics]
+      processors: [batch]
+      exporters: [prometheus]

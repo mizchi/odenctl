@@ -98,6 +98,56 @@ test("runtime node accepts route snapshots and invokes matched deployments", asy
   }
 });
 
+test("runtime node can warm snapshot deployments before acknowledging publish", async () => {
+  const preparedDeployments: string[] = [];
+  const supervisor = createRuntimeSupervisor({
+    snapshot: snapshot([]),
+    artifactStore: materializedArtifactStore(),
+    backend: {
+      async compileComponent(request) {
+        preparedDeployments.push(request.deploymentId);
+        return {
+          deploymentId: request.deploymentId,
+          backend: "wasmtime",
+          componentPath: request.artifact.path,
+          precompiledPath: `/cache/${request.deploymentId}.cwasm`,
+          cached: false,
+        };
+      },
+    },
+  });
+  const app = createRuntimeNodeApp({ supervisor, warmupOnSnapshot: true });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const update = await fetch(`${baseUrl}/__runtime/snapshots/routes`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(
+        snapshot([
+          route("dep_root", "hello.example.dev", "/", digest("root")),
+          route("dep_api", "hello.example.dev", "/api", digest("api")),
+        ]),
+      ),
+    });
+    const body = await update.json();
+    assert.equal(update.status, 200);
+    assert.deepEqual(body, {
+      ok: true,
+      warmed: true,
+      routes: 2,
+      generatedAt: "2026-06-26T10:00:00.000Z",
+    });
+    assert.deepEqual(new Set(preparedDeployments), new Set(["dep_root", "dep_api"]));
+  } finally {
+    await app.close();
+  }
+});
+
 test("runtime node requires management bearer token for runtime endpoints when configured", async () => {
   const loadedSnapshots: RouteSnapshot[] = [];
   const app = createRuntimeNodeApp({
@@ -564,6 +614,94 @@ test("runtime node exposes worker request metrics", async () => {
   }
 });
 
+test("runtime node includes host daemon stats in metrics when configured", async () => {
+  const supervisor = createRuntimeSupervisor({
+    snapshot: snapshot([route("dep_metrics", "hello.example.dev", "/", digest("metrics"))]),
+    artifactStore: materializedArtifactStore(),
+    backend: compiledBackend(),
+  });
+  const fetched: string[] = [];
+  const app = createRuntimeNodeApp({
+    supervisor,
+    now: fixedNow,
+    hostDaemonMetrics: {
+      url: "http://127.0.0.1:8790",
+      fetch: async (url) => {
+        fetched.push(url);
+        return new Response(JSON.stringify({
+          ok: true,
+          preparedComponents: 3,
+          activeInvocations: 1,
+          maxConcurrentInvocations: 64,
+          totalInvocations: 10,
+          failedInvocations: 2,
+          rejectedInvocations: 1,
+          avgInvokeMs: 0.42,
+        }), { status: 200 });
+      },
+    },
+  });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const metricsResponse = await fetch(`${baseUrl}/__runtime/metrics`);
+    assert.equal(metricsResponse.status, 200);
+    assert.equal(fetched[0], "http://127.0.0.1:8790/stats");
+    const metrics = await metricsResponse.json();
+    assert.deepEqual(metrics.hostDaemon, {
+      ok: true,
+      preparedComponents: 3,
+      activeInvocations: 1,
+      maxConcurrentInvocations: 64,
+      totalInvocations: 10,
+      failedInvocations: 2,
+      rejectedInvocations: 1,
+      avgInvokeMs: 0.42,
+    });
+  } finally {
+    await app.close();
+  }
+});
+
+test("runtime node keeps metrics available when host daemon stats fail", async () => {
+  const supervisor = createRuntimeSupervisor({
+    snapshot: snapshot([route("dep_metrics", "hello.example.dev", "/", digest("metrics"))]),
+    artifactStore: materializedArtifactStore(),
+    backend: compiledBackend(),
+  });
+  const app = createRuntimeNodeApp({
+    supervisor,
+    now: fixedNow,
+    hostDaemonMetrics: {
+      url: "http://127.0.0.1:8790",
+      fetch: async () => {
+        throw new Error("daemon unavailable");
+      },
+    },
+  });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const metricsResponse = await fetch(`${baseUrl}/__runtime/metrics`);
+    assert.equal(metricsResponse.status, 200);
+    const metrics = await metricsResponse.json();
+    assert.deepEqual(metrics.hostDaemon, {
+      ok: false,
+      error: "daemon unavailable",
+    });
+  } finally {
+    await app.close();
+  }
+});
+
 test("runtime node exposes structured worker request events", async () => {
   const supervisor = createRuntimeSupervisor({
     snapshot: snapshot([route("dep_events", "hello.example.dev", "/", digest("events"))]),
@@ -797,6 +935,70 @@ test("runtime repository secret store resolves values by secret id", async () =>
 
   assert.equal(await store.getSecret("sec_api_key"), "super-secret");
   assert.equal(await store.getSecret("sec_missing"), undefined);
+});
+
+test("runtime node records worker request telemetry", async () => {
+  const telemetryCalls: any[] = [];
+  let tick = 1000;
+  const app = createRuntimeNodeApp({
+    requestIdGenerator: () => "req_otel",
+    monotonicNowMs: () => {
+      tick += 25;
+      return tick;
+    },
+    telemetry: {
+      async recordWorkerRequest(input) {
+        telemetryCalls.push(input);
+      },
+    },
+    supervisor: createRuntimeSupervisor({
+      snapshot: snapshot([route("dep_otel", "hello.example.dev", "/", digest("otel"))]),
+      artifactStore: materializedArtifactStore(),
+      backend: compiledBackend(),
+    }),
+    invoker: {
+      async invoke() {
+        return {
+          status: 201,
+          headers: [{ name: "content-type", value: "text/plain" }],
+          body: Buffer.from("created"),
+        };
+      },
+    },
+  });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const response = await fetch(`${baseUrl}/`, {
+      headers: {
+        "x-forwarded-host": "hello.example.dev",
+        traceparent: "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01",
+      },
+    });
+    assert.equal(response.status, 201);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.deepEqual(telemetryCalls, [
+      {
+        requestId: "req_otel",
+        method: "GET",
+        host: "hello.example.dev",
+        path: "/",
+        projectId: "prj_hello",
+        deploymentId: "dep_otel",
+        status: 201,
+        durationMs: 25,
+        errorCode: undefined,
+        traceparent: "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01",
+      },
+    ]);
+  } finally {
+    await app.close();
+  }
 });
 
 function snapshot(routes: RouteSnapshot["routes"]): RouteSnapshot {

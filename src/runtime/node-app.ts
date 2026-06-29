@@ -9,6 +9,7 @@ import {
 import { RuntimeError } from "./errors.ts";
 import { enforceRuntimeCapabilities } from "./policy.ts";
 import { resolveRuntimeCapabilities } from "./secrets.ts";
+import type { RuntimeTelemetry } from "./otel.ts";
 import type {
   CompiledComponent,
   InvokeComponentResponse,
@@ -27,11 +28,20 @@ export interface RuntimeNodeAppOptions {
   requestIdGenerator?: () => string;
   monotonicNowMs?: () => number;
   eventBufferSize?: number;
+  telemetry?: RuntimeTelemetry;
+  warmupOnSnapshot?: boolean;
+  hostDaemonMetrics?: RuntimeHostDaemonMetricsOptions;
   now?: () => string;
+}
+
+export interface RuntimeHostDaemonMetricsOptions {
+  url: string;
+  fetch?: typeof fetch;
 }
 
 export interface RuntimeNodeSupervisor {
   loadSnapshot(snapshot: RouteSnapshot): void;
+  warmupSnapshot?(snapshot: RouteSnapshot): Promise<unknown>;
   prepareRoute(input: RouteMatchInput): Promise<CompiledComponent>;
 }
 
@@ -54,6 +64,8 @@ export function createRuntimeNodeApp(options: RuntimeNodeAppOptions) {
     let eventDeploymentId: string | undefined;
     let eventStatus: number | undefined;
     let eventErrorCode: string | undefined;
+    let eventMethod: string | undefined;
+    let eventTraceparent: string | undefined;
     try {
       const url = new URL(request.url ?? "/", "http://runtime.local");
       const method = request.method ?? "GET";
@@ -71,7 +83,12 @@ export function createRuntimeNodeApp(options: RuntimeNodeAppOptions) {
       }
 
       if (method === "GET" && url.pathname === "/__runtime/metrics") {
-        writeJson(response, 200, metrics.snapshot());
+        const snapshot = metrics.snapshot();
+        const hostDaemon = await readHostDaemonMetrics(options.hostDaemonMetrics);
+        if (hostDaemon) {
+          snapshot.hostDaemon = hostDaemon;
+        }
+        writeJson(response, 200, snapshot);
         return;
       }
 
@@ -83,10 +100,20 @@ export function createRuntimeNodeApp(options: RuntimeNodeAppOptions) {
       if (method === "PUT" && url.pathname === "/__runtime/snapshots/routes") {
         const snapshot = await readJson<RouteSnapshot>(request);
         assertRouteSnapshot(snapshot);
-        options.supervisor.loadSnapshot(snapshot);
+        const warmup = options.warmupOnSnapshot === true;
+        if (warmup) {
+          if (!options.supervisor.warmupSnapshot) {
+            throw new RuntimeError("validation", "runtime supervisor does not support snapshot warmup");
+          }
+          await options.supervisor.warmupSnapshot(snapshot);
+        } else {
+          options.supervisor.loadSnapshot(snapshot);
+        }
         metrics.recordSnapshot(snapshot);
         writeJson(response, 200, {
           ok: true,
+          snapshotId: snapshot.id,
+          warmed: warmup,
           routes: snapshot.routes.length,
           generatedAt: snapshot.generatedAt,
         });
@@ -99,6 +126,8 @@ export function createRuntimeNodeApp(options: RuntimeNodeAppOptions) {
       }
 
       workerRequest = true;
+      eventMethod = method;
+      eventTraceparent = firstHeader(request.headers.traceparent);
       requestStartedMs = monotonicNowMs();
       requestId = requestIdGenerator();
       eventHost = requestHost(request.headers);
@@ -183,6 +212,7 @@ export function createRuntimeNodeApp(options: RuntimeNodeAppOptions) {
       }, requestId ? { "x-wasmplane-request-id": requestId } : undefined);
     } finally {
       if (workerRequest && requestId && eventHost && eventPath && eventStatus !== undefined) {
+        const durationMs = Math.max(0, monotonicNowMs() - requestStartedMs);
         events.record({
           timestamp: now(),
           requestId,
@@ -191,9 +221,23 @@ export function createRuntimeNodeApp(options: RuntimeNodeAppOptions) {
           projectId: eventProjectId,
           deploymentId: eventDeploymentId,
           status: eventStatus,
-          durationMs: Math.max(0, monotonicNowMs() - requestStartedMs),
+          durationMs,
           errorCode: eventErrorCode,
         });
+        if (options.telemetry && eventMethod) {
+          void options.telemetry.recordWorkerRequest({
+            requestId,
+            method: eventMethod,
+            host: eventHost,
+            path: eventPath,
+            projectId: eventProjectId,
+            deploymentId: eventDeploymentId,
+            status: eventStatus,
+            durationMs,
+            errorCode: eventErrorCode,
+            traceparent: eventTraceparent,
+          }).catch(() => undefined);
+        }
       }
     }
   });
@@ -260,6 +304,7 @@ interface RuntimeMetricsSnapshot {
     routes?: number;
     generatedAt?: string;
   };
+  hostDaemon?: unknown;
 }
 
 interface RuntimeEvent {
@@ -370,6 +415,33 @@ function stripUndefined<T extends Record<string, unknown>>(value: T): T {
 
 function increment(record: Record<string, number>, key: string) {
   record[key] = (record[key] ?? 0) + 1;
+}
+
+async function readHostDaemonMetrics(
+  options: RuntimeHostDaemonMetricsOptions | undefined,
+): Promise<unknown | undefined> {
+  if (!options) {
+    return undefined;
+  }
+  const fetchImpl = options.fetch ?? fetch;
+  const url = `${options.url.replace(/\/+$/, "")}/stats`;
+  try {
+    const response = await fetchImpl(url);
+    const text = await response.text();
+    if (!response.ok) {
+      return {
+        ok: false,
+        status: response.status,
+        error: text,
+      };
+    }
+    return JSON.parse(text);
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
 }
 
 function enforceResponseBytes(prepared: CompiledComponent, invocation: InvokeComponentResponse) {
@@ -516,6 +588,9 @@ function assertRouteSnapshot(value: unknown): asserts value is RouteSnapshot {
   const snapshot = objectRecord(value, "route snapshot");
   if (snapshot.schemaVersion !== 1 || !Array.isArray(snapshot.routes)) {
     throw new RuntimeError("validation", "route snapshot must have schemaVersion 1 and routes");
+  }
+  if (snapshot.id !== undefined) {
+    stringValue(snapshot.id, "route snapshot.id");
   }
   stringValue(snapshot.generatedAt, "route snapshot.generatedAt");
   snapshot.routes.forEach((route, index) => assertRouteSnapshotEntry(route, `routes[${index}]`));

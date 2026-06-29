@@ -17,6 +17,7 @@ export interface RuntimeSupervisorOptions {
   snapshot: RouteSnapshot;
   artifactStore: ArtifactStore;
   backend: RuntimeBackend;
+  warmupConcurrency?: number;
 }
 
 export function createRouteCache(snapshot: RouteSnapshot): RouteCache {
@@ -89,6 +90,15 @@ export function createRuntimeSupervisor(options: RuntimeSupervisorOptions) {
     }
   }
 
+  async function warmupSnapshot(snapshot: RouteSnapshot): Promise<CompiledComponent[]> {
+    loadSnapshot(snapshot);
+    return mapBounded(
+      snapshotCompilableTargets(snapshot),
+      boundedConcurrency(options.warmupConcurrency),
+      prepareDeployment,
+    );
+  }
+
   return {
     matchRoute(input: RouteMatchInput): RouteSnapshotEntry | undefined {
       return routeCache.match(input);
@@ -96,7 +106,36 @@ export function createRuntimeSupervisor(options: RuntimeSupervisorOptions) {
     prepareRoute,
     prepareDeployment,
     loadSnapshot,
+    warmupSnapshot,
   };
+}
+
+async function mapBounded<T, R>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (true) {
+      const index = next;
+      next += 1;
+      if (index >= items.length) {
+        return;
+      }
+      results[index] = await worker(items[index]);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
+function boundedConcurrency(value: number | undefined): number {
+  if (value === undefined || !Number.isFinite(value)) {
+    return Number.MAX_SAFE_INTEGER;
+  }
+  return Math.max(1, Math.floor(value));
 }
 
 function snapshotDeploymentIds(snapshot: RouteSnapshot): Set<string> {
@@ -114,6 +153,25 @@ type CompilableRouteTarget = Pick<
   RouteSnapshotEntry,
   "deploymentId" | "projectId" | "world" | "runtime" | "limits" | "capabilities" | "artifact"
 >;
+
+function snapshotCompilableTargets(snapshot: RouteSnapshot): CompilableRouteTarget[] {
+  const targets = new Map<string, CompilableRouteTarget>();
+  for (const route of snapshot.routes) {
+    targets.set(route.deploymentId, route);
+    for (const target of route.targets ?? []) {
+      targets.set(target.deploymentId, {
+        projectId: route.projectId,
+        deploymentId: target.deploymentId,
+        world: target.world,
+        runtime: target.runtime,
+        limits: target.limits,
+        capabilities: target.capabilities,
+        artifact: target.artifact,
+      });
+    }
+  }
+  return [...targets.values()];
+}
 
 function routePrecedence(left: RouteSnapshotEntry, right: RouteSnapshotEntry): number {
   const host = left.host.localeCompare(right.host);

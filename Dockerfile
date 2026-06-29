@@ -14,7 +14,10 @@ RUN apt-get update \
 
 WORKDIR /app
 COPY package.json pnpm-lock.yaml ./
+RUN corepack enable \
+  && pnpm install --prod --frozen-lockfile
 COPY src ./src
+COPY db ./db
 COPY wit ./wit
 COPY --from=rust-build /src/target/release/wasmplane-wasip3-host /usr/local/bin/wasmplane-wasip3-host
 

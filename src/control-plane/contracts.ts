@@ -124,6 +124,7 @@ export interface RuntimeNode {
 
 export interface RouteSnapshotPublication {
   id: string;
+  snapshotId?: string;
   snapshotGeneratedAt: string;
   routes: number;
   ok: boolean;
@@ -142,6 +143,7 @@ export interface RouteSnapshotPublicationTarget {
 }
 
 export interface RouteSnapshot {
+  id?: string;
   schemaVersion: 1;
   generatedAt: string;
   routes: RouteSnapshotEntry[];

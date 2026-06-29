@@ -1,0 +1,54 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { createSnapshotPublishJob } from "../src/control-plane/snapshot-publish-job.ts";
+
+test("snapshot publish job skips overlapping ticks", async () => {
+  let publishes = 0;
+  let releasePublish: (() => void) | undefined;
+  const job = createSnapshotPublishJob({
+    intervalMs: 1000,
+    async publish() {
+      publishes += 1;
+      await new Promise<void>((resolve) => {
+        releasePublish = resolve;
+      });
+    },
+  });
+
+  const first = job.tick();
+  const second = await job.tick();
+  assert.equal(second, false);
+  assert.equal(publishes, 1);
+
+  releasePublish?.();
+  assert.equal(await first, true);
+  const third = job.tick();
+  releasePublish?.();
+  assert.equal(await third, true);
+  assert.equal(publishes, 2);
+});
+
+test("snapshot publish job start and stop use the configured timer hooks", () => {
+  const scheduled: Array<() => void> = [];
+  const cleared: unknown[] = [];
+  const job = createSnapshotPublishJob({
+    intervalMs: 1000,
+    async publish() {},
+    setIntervalFn(callback) {
+      scheduled.push(callback);
+      return "timer-id";
+    },
+    clearIntervalFn(timer) {
+      cleared.push(timer);
+    },
+  });
+
+  job.start();
+  job.start();
+  assert.equal(scheduled.length, 1);
+  assert.equal(job.running(), true);
+
+  job.stop();
+  assert.deepEqual(cleared, ["timer-id"]);
+  assert.equal(job.running(), false);
+});

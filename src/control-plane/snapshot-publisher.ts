@@ -9,6 +9,7 @@ export interface RuntimeNodeTarget {
 export interface RouteSnapshotPublishReport {
   ok: boolean;
   snapshot: {
+    id?: string;
     routes: number;
     generatedAt: string;
   };
@@ -22,6 +23,7 @@ export interface RouteSnapshotPublishTargetResult {
   status?: number;
   routes?: number;
   generatedAt?: string;
+  snapshotId?: string;
   error?: string;
 }
 
@@ -50,6 +52,7 @@ export async function publishRouteSnapshot(
   return {
     ok: results.every((result) => result.ok),
     snapshot: {
+      id: snapshot.id,
       routes: snapshot.routes.length,
       generatedAt: snapshot.generatedAt,
     },
@@ -95,6 +98,7 @@ async function publishToRuntimeNode(
       status: response.status,
       routes: numberOrDefault(ack.routes, snapshot.routes.length),
       generatedAt: stringOrDefault(ack.generatedAt, snapshot.generatedAt),
+      snapshotId: stringOrUndefined(ack.snapshotId, snapshot.id),
     });
   } catch (error) {
     return withTarget(target, {
@@ -136,5 +140,9 @@ function numberOrDefault(value: unknown, fallback: number): number {
 }
 
 function stringOrDefault(value: unknown, fallback: string): string {
+  return typeof value === "string" ? value : fallback;
+}
+
+function stringOrUndefined(value: unknown, fallback: string | undefined): string | undefined {
   return typeof value === "string" ? value : fallback;
 }

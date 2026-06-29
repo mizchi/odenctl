@@ -1,49 +1,65 @@
 import { createServer } from "node:http";
-import { readFile, unlink } from "node:fs/promises";
+import { mkdtemp, rm, unlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type {
   RouteSnapshot,
   RouteSnapshotPublication,
   RuntimeNode,
 } from "../control-plane/contracts.ts";
+import type { AuditSink } from "../control-plane/audit.ts";
+import { type ApiScope, type ApiToken, tokenAllows } from "../control-plane/authz.ts";
 import type { LocalArtifactValidator } from "../control-plane/artifact-validation.ts";
 import { ControlPlaneError, isControlPlaneError } from "../control-plane/errors.ts";
-import { ingestLocalArtifact, localArtifactPath } from "../control-plane/local-artifacts.ts";
+import {
+  type ControlPlaneArtifactStore,
+  createFileControlPlaneArtifactStore,
+  decodeLocalArtifactBytes,
+} from "../control-plane/artifact-store.ts";
 import {
   type FetchLike,
   publishRouteSnapshot,
   type RuntimeNodeTarget,
 } from "../control-plane/snapshot-publisher.ts";
 
+type MaybePromise<T> = T | Promise<T>;
+
 export interface HttpAppOptions {
   controlPlane: {
-    createProject(input: any): unknown;
-    createArtifact(input: any): unknown;
-    getProjectArtifactByDigest(input: any): any | undefined;
-    createSecret(input: any): unknown;
-    getSecret(input: any): unknown;
-    listProjectSecrets(input: any): unknown;
-    updateSecretValue(input: any): unknown;
-    deleteSecret(input: any): void;
-    createKvNamespace(input: any): unknown;
-    getKvNamespace(input: any): unknown;
-    listProjectKvNamespaces(input: any): unknown;
-    deleteKvNamespace(input: any): void;
-    createDeployment(input: any): unknown;
-    pointRoute(input: any): unknown;
-    createRouteSnapshot(): RouteSnapshot;
-    registerRuntimeNode(input: any): RuntimeNode;
-    recordRuntimeNodeHeartbeat(input: any): RuntimeNode;
-    listRuntimeNodes(): RuntimeNode[];
-    listActiveRuntimeNodes(): RuntimeNode[];
-    recordRouteSnapshotPublication(input: any): RouteSnapshotPublication;
-    listRouteSnapshotPublications(): RouteSnapshotPublication[];
+    createProject(input: any): MaybePromise<unknown>;
+    createArtifact(input: any): MaybePromise<unknown>;
+    getProjectArtifactByDigest(input: any): MaybePromise<any | undefined>;
+    createSecret(input: any): MaybePromise<unknown>;
+    getSecret(input: any): MaybePromise<unknown>;
+    listProjectSecrets(input: any): MaybePromise<unknown>;
+    updateSecretValue(input: any): MaybePromise<unknown>;
+    deleteSecret(input: any): MaybePromise<void>;
+    createKvNamespace(input: any): MaybePromise<unknown>;
+    getKvNamespace(input: any): MaybePromise<unknown>;
+    listProjectKvNamespaces(input: any): MaybePromise<unknown>;
+    deleteKvNamespace(input: any): MaybePromise<void>;
+    createDeployment(input: any): MaybePromise<unknown>;
+    pointRoute(input: any): MaybePromise<unknown>;
+    startRouteCanary(input: any): MaybePromise<unknown>;
+    rollbackRoute(input: any): MaybePromise<unknown>;
+    createRouteSnapshot(): MaybePromise<RouteSnapshot>;
+    registerRuntimeNode(input: any): MaybePromise<RuntimeNode>;
+    recordRuntimeNodeHeartbeat(input: any): MaybePromise<RuntimeNode>;
+    listRuntimeNodes(): MaybePromise<RuntimeNode[]>;
+    listActiveRuntimeNodes(): MaybePromise<RuntimeNode[]>;
+    recordRouteSnapshotPublication(input: any): MaybePromise<RouteSnapshotPublication>;
+    listRouteSnapshotPublications(): MaybePromise<RouteSnapshotPublication[]>;
   };
   runtimeNodes?: RuntimeNodeTarget[];
   runtimeNodeToken?: string;
+  artifactStore?: ControlPlaneArtifactStore;
   artifactStoreDir?: string;
   artifactPublicBaseUrl?: string;
   artifactValidator?: LocalArtifactValidator;
   apiToken?: string;
+  apiTokens?: ApiToken[];
+  auditSink?: AuditSink;
+  now?: () => string;
   fetch?: FetchLike;
 }
 
@@ -59,75 +75,68 @@ export function createHttpApp(options: HttpAppOptions) {
       }
       const localArtifact = localArtifactMatch(method, url.pathname);
       if (localArtifact) {
-        if (!options.artifactStoreDir) {
+        const store = readableArtifactStore(options);
+        if (!store) {
           throw new ControlPlaneError("validation", "local artifact store is not configured");
         }
-        await writeLocalArtifact(response, options.artifactStoreDir, localArtifact.digestHex);
+        await writeLocalArtifact(response, store, localArtifact.digestHex);
         return;
       }
-      if (!authorizeRequest(options, request.headers)) {
-        writeJson(response, 401, {
-          error: { code: "unauthorized", message: "missing or invalid bearer token" },
-        });
+      const requiredScope = requiredScopeFor(method, url.pathname);
+      const authorization = authorizeRequest(options, request.headers, requiredScope);
+      if (!authorization.ok) {
+        writeJson(
+          response,
+          authorization.status,
+          { error: { code: authorization.code, message: authorization.message } },
+        );
         return;
       }
+      installAuditHook(options, request, response, authorization.token, requiredScope, url.pathname);
       if (method === "POST" && url.pathname === "/projects") {
-        writeJson(response, 201, options.controlPlane.createProject(await readJson(request)));
+        writeJson(response, 201, await options.controlPlane.createProject(await readJson(request)));
         return;
       }
       if (method === "POST" && url.pathname === "/artifacts") {
-        writeJson(response, 201, options.controlPlane.createArtifact(await readJson(request)));
+        writeJson(response, 201, await options.controlPlane.createArtifact(await readJson(request)));
         return;
       }
       if (method === "POST" && url.pathname === "/artifacts/local") {
-        if (!options.artifactStoreDir) {
+        const store = artifactStoreForRequest(options);
+        if (!store) {
           throw new ControlPlaneError("validation", "local artifact store is not configured");
         }
         const input = objectRecord(await readJson(request));
-        const ingested = await ingestLocalArtifact({
-          storeDir: options.artifactStoreDir,
-          bytesBase64: input.bytesBase64,
-          publicBaseUrl: localArtifactPublicBaseUrl(options, request.headers),
-        });
-        const existing = options.controlPlane.getProjectArtifactByDigest({
+        const decoded = decodeLocalArtifactBytes(input.bytesBase64);
+        const existing = await options.controlPlane.getProjectArtifactByDigest({
           projectId: input.projectId,
-          digest: ingested.digest,
+          digest: decoded.digest,
         });
         if (existing) {
           writeJson(response, 200, existing);
           return;
         }
-        if (options.artifactValidator) {
-          try {
-            await options.artifactValidator.validate({
-              path: ingested.path,
-              digest: ingested.digest,
-              location: ingested.location,
-            });
-          } catch (error) {
-            await unlink(ingested.path).catch(() => undefined);
-            if (isControlPlaneError(error)) {
-              throw error;
-            }
-            const message = error instanceof Error ? error.message : String(error);
-            throw new ControlPlaneError("validation", message);
-          }
-        }
+        const stored = await putValidatedArtifact({
+          store,
+          validator: options.artifactValidator,
+          decoded,
+          publicBaseUrl: localArtifactPublicBaseUrl(options, request.headers),
+        });
         writeJson(
           response,
           201,
-          options.controlPlane.createArtifact({
+          await options.controlPlane.createArtifact({
             id: input.id,
             projectId: input.projectId,
-            digest: ingested.digest,
-            location: ingested.location,
-            sizeBytes: ingested.sizeBytes,
+            digest: stored.digest,
+            location: stored.location,
+            sizeBytes: stored.sizeBytes,
           }),
         );
         return;
       }
       if (method === "POST" && url.pathname === "/secrets") {
-        writeJson(response, 201, options.controlPlane.createSecret(await readJson(request)));
+        writeJson(response, 201, await options.controlPlane.createSecret(await readJson(request)));
         return;
       }
       const projectSecrets = projectSecretsMatch(method, url.pathname);
@@ -135,20 +144,20 @@ export function createHttpApp(options: HttpAppOptions) {
         writeJson(
           response,
           200,
-          options.controlPlane.listProjectSecrets({ projectId: projectSecrets.projectId }),
+          await options.controlPlane.listProjectSecrets({ projectId: projectSecrets.projectId }),
         );
         return;
       }
       const secret = secretMatch(method, url.pathname);
       if (secret && method === "GET") {
-        writeJson(response, 200, options.controlPlane.getSecret({ id: secret.id }));
+        writeJson(response, 200, await options.controlPlane.getSecret({ id: secret.id }));
         return;
       }
       if (secret && method === "PUT") {
         writeJson(
           response,
           200,
-          options.controlPlane.updateSecretValue({
+          await options.controlPlane.updateSecretValue({
             ...(await readJson(request)),
             id: secret.id,
           }),
@@ -156,12 +165,12 @@ export function createHttpApp(options: HttpAppOptions) {
         return;
       }
       if (secret && method === "DELETE") {
-        options.controlPlane.deleteSecret({ id: secret.id });
+        await options.controlPlane.deleteSecret({ id: secret.id });
         response.writeHead(204).end();
         return;
       }
       if (method === "POST" && url.pathname === "/kv-namespaces") {
-        writeJson(response, 201, options.controlPlane.createKvNamespace(await readJson(request)));
+        writeJson(response, 201, await options.controlPlane.createKvNamespace(await readJson(request)));
         return;
       }
       const projectKvNamespaces = projectKvNamespacesMatch(method, url.pathname);
@@ -169,7 +178,7 @@ export function createHttpApp(options: HttpAppOptions) {
         writeJson(
           response,
           200,
-          options.controlPlane.listProjectKvNamespaces({
+          await options.controlPlane.listProjectKvNamespaces({
             projectId: projectKvNamespaces.projectId,
           }),
         );
@@ -177,24 +186,32 @@ export function createHttpApp(options: HttpAppOptions) {
       }
       const kvNamespace = kvNamespaceMatch(method, url.pathname);
       if (kvNamespace && method === "GET") {
-        writeJson(response, 200, options.controlPlane.getKvNamespace({ id: kvNamespace.id }));
+        writeJson(response, 200, await options.controlPlane.getKvNamespace({ id: kvNamespace.id }));
         return;
       }
       if (kvNamespace && method === "DELETE") {
-        options.controlPlane.deleteKvNamespace({ id: kvNamespace.id });
+        await options.controlPlane.deleteKvNamespace({ id: kvNamespace.id });
         response.writeHead(204).end();
         return;
       }
       if (method === "POST" && url.pathname === "/deployments") {
-        writeJson(response, 201, options.controlPlane.createDeployment(await readJson(request)));
+        writeJson(response, 201, await options.controlPlane.createDeployment(await readJson(request)));
         return;
       }
       if (method === "PUT" && url.pathname === "/routes") {
-        writeJson(response, 200, options.controlPlane.pointRoute(await readJson(request)));
+        writeJson(response, 200, await options.controlPlane.pointRoute(await readJson(request)));
+        return;
+      }
+      if (method === "POST" && url.pathname === "/routes/canary") {
+        writeJson(response, 200, await options.controlPlane.startRouteCanary(await readJson(request)));
+        return;
+      }
+      if (method === "POST" && url.pathname === "/routes/rollback") {
+        writeJson(response, 200, await options.controlPlane.rollbackRoute(await readJson(request)));
         return;
       }
       if (method === "POST" && url.pathname === "/runtime-nodes") {
-        writeJson(response, 201, options.controlPlane.registerRuntimeNode(await readJson(request)));
+        writeJson(response, 201, await options.controlPlane.registerRuntimeNode(await readJson(request)));
         return;
       }
       const runtimeNodeHeartbeat = runtimeNodeHeartbeatMatch(method, url.pathname);
@@ -202,7 +219,7 @@ export function createHttpApp(options: HttpAppOptions) {
         writeJson(
           response,
           200,
-          options.controlPlane.recordRuntimeNodeHeartbeat({
+          await options.controlPlane.recordRuntimeNodeHeartbeat({
             ...(await readJson(request)),
             id: runtimeNodeHeartbeat.id,
           }),
@@ -210,28 +227,19 @@ export function createHttpApp(options: HttpAppOptions) {
         return;
       }
       if (method === "GET" && url.pathname === "/runtime-nodes") {
-        writeJson(response, 200, options.controlPlane.listRuntimeNodes());
+        writeJson(response, 200, await options.controlPlane.listRuntimeNodes());
         return;
       }
       if (method === "GET" && url.pathname === "/snapshots/routes") {
-        writeJson(response, 200, options.controlPlane.createRouteSnapshot());
+        writeJson(response, 200, await options.controlPlane.createRouteSnapshot());
         return;
       }
       if (method === "POST" && url.pathname === "/snapshots/routes/publish") {
-        const runtimeNodes = publishTargets(options);
-        if (runtimeNodes.length === 0) {
-          throw new ControlPlaneError("validation", "no runtime nodes are configured");
-        }
-        const snapshot = options.controlPlane.createRouteSnapshot();
-        writeJson(
-          response,
-          200,
-          await publishAndRecordRouteSnapshot(options, snapshot, runtimeNodes),
-        );
+        writeJson(response, 200, await publishCurrentRouteSnapshot(options));
         return;
       }
       if (method === "GET" && url.pathname === "/snapshots/routes/publishes") {
-        writeJson(response, 200, options.controlPlane.listRouteSnapshotPublications());
+        writeJson(response, 200, await options.controlPlane.listRouteSnapshotPublications());
         return;
       }
 
@@ -274,24 +282,98 @@ export function createHttpApp(options: HttpAppOptions) {
   };
 }
 
+export async function publishCurrentRouteSnapshot(options: HttpAppOptions) {
+  const runtimeNodes = await publishTargets(options);
+  if (runtimeNodes.length === 0) {
+    throw new ControlPlaneError("validation", "no runtime nodes are configured");
+  }
+  const snapshot = await options.controlPlane.createRouteSnapshot();
+  return publishAndRecordRouteSnapshot(options, snapshot, runtimeNodes);
+}
+
+type AuthorizationResult =
+  | { ok: true; token?: ApiToken }
+  | { ok: false; status: 401 | 403; code: "unauthorized" | "forbidden"; message: string };
+
 function authorizeRequest(
   options: HttpAppOptions,
   headers: Record<string, string | string[] | undefined>,
-): boolean {
-  if (!options.apiToken) {
-    return true;
+  requiredScope: ApiScope,
+): AuthorizationResult {
+  const tokens = configuredApiTokens(options);
+  if (tokens.length === 0) {
+    return { ok: true };
   }
-  return firstHeader(headers.authorization) === `Bearer ${options.apiToken}`;
+  const authorization = firstHeader(headers.authorization);
+  const bearer = authorization?.startsWith("Bearer ") ? authorization.slice("Bearer ".length) : undefined;
+  const token = bearer ? tokens.find((candidate) => candidate.token === bearer) : undefined;
+  if (!token) {
+    return {
+      ok: false,
+      status: 401,
+      code: "unauthorized",
+      message: "missing or invalid bearer token",
+    };
+  }
+  if (!tokenAllows(token, requiredScope)) {
+    return {
+      ok: false,
+      status: 403,
+      code: "forbidden",
+      message: `bearer token is missing ${requiredScope} scope`,
+    };
+  }
+  return { ok: true, token };
+}
+
+function configuredApiTokens(options: HttpAppOptions): ApiToken[] {
+  return [
+    ...(options.apiToken ? [{ token: options.apiToken, scopes: ["*" as const], principal: "legacy" }] : []),
+    ...(options.apiTokens ?? []),
+  ];
+}
+
+function requiredScopeFor(method: string, pathname: string): ApiScope {
+  if (method === "POST" && pathname === "/snapshots/routes/publish") {
+    return "publish";
+  }
+  if (method === "GET") {
+    return "read";
+  }
+  return "write";
+}
+
+function installAuditHook(
+  options: HttpAppOptions,
+  request: { method?: string },
+  response: any,
+  token: ApiToken | undefined,
+  scope: ApiScope,
+  pathname: string,
+) {
+  if (!options.auditSink || !token || request.method === "GET") {
+    return;
+  }
+  response.once("finish", () => {
+    void options.auditSink?.record({
+      timestamp: (options.now ?? (() => new Date().toISOString()))(),
+      principal: token.principal,
+      scope,
+      method: request.method ?? "GET",
+      path: pathname,
+      status: response.statusCode,
+    });
+  });
 }
 
 function firstHeader(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
-function publishTargets(options: HttpAppOptions): RuntimeNodeTarget[] {
+async function publishTargets(options: HttpAppOptions): Promise<RuntimeNodeTarget[]> {
   const targets = [
     ...(options.runtimeNodes ?? []),
-    ...options.controlPlane.listActiveRuntimeNodes(),
+    ...(await options.controlPlane.listActiveRuntimeNodes()),
   ];
   const seen = new Set<string>();
   return targets.filter((target) => {
@@ -312,7 +394,8 @@ async function publishAndRecordRouteSnapshot(
   runtimeNodes: RuntimeNodeTarget[],
 ) {
   const report = await publishRouteSnapshot(snapshot, runtimeNodes, options.fetch ?? fetch);
-  const publication = options.controlPlane.recordRouteSnapshotPublication({
+  const publication = await options.controlPlane.recordRouteSnapshotPublication({
+    snapshotId: snapshot.id,
     snapshotGeneratedAt: report.snapshot.generatedAt,
     routes: report.snapshot.routes,
     ok: report.ok,
@@ -416,9 +499,13 @@ function writeJson(response: any, status: number, value: unknown) {
   response.end(JSON.stringify(value));
 }
 
-async function writeLocalArtifact(response: any, storeDir: string, digestHex: string) {
+async function writeLocalArtifact(
+  response: any,
+  store: ControlPlaneArtifactStore & { readArtifact(digestHex: string): Promise<Buffer> },
+  digestHex: string,
+) {
   try {
-    const bytes = await readFile(localArtifactPath(storeDir, digestHex));
+    const bytes = await store.readArtifact(digestHex);
     response.writeHead(200, {
       "cache-control": "public, max-age=31536000, immutable",
       "content-type": "application/wasm",
@@ -431,6 +518,81 @@ async function writeLocalArtifact(response: any, storeDir: string, digestHex: st
     }
     throw error;
   }
+}
+
+async function putValidatedArtifact(input: {
+  store: ControlPlaneArtifactStore;
+  validator?: LocalArtifactValidator;
+  decoded: ReturnType<typeof decodeLocalArtifactBytes>;
+  publicBaseUrl?: string;
+}) {
+  if (input.store.kind === "file") {
+    const stored = await input.store.putArtifact({
+      ...input.decoded,
+      publicBaseUrl: input.publicBaseUrl,
+    });
+    if (input.validator && stored.path) {
+      try {
+        await input.validator.validate({
+          path: stored.path,
+          digest: stored.digest,
+          location: stored.location,
+        });
+      } catch (error) {
+        await unlink(stored.path).catch(() => undefined);
+        throw artifactValidationError(error);
+      }
+    }
+    return stored;
+  }
+
+  if (input.validator) {
+    const staged = await stageArtifactForValidation(input.decoded);
+    try {
+      await input.validator.validate({
+        path: staged.path,
+        digest: input.decoded.digest,
+        location: staged.fileUrl,
+      });
+    } catch (error) {
+      throw artifactValidationError(error);
+    } finally {
+      await rm(staged.dir, { force: true, recursive: true }).catch(() => undefined);
+    }
+  }
+  return input.store.putArtifact(input.decoded);
+}
+
+async function stageArtifactForValidation(decoded: ReturnType<typeof decodeLocalArtifactBytes>) {
+  const dir = await mkdtemp(join(tmpdir(), "wasmplane-artifact-validation-"));
+  const path = join(dir, `${decoded.digestHex}.wasm`);
+  await writeFile(path, decoded.bytes);
+  return { dir, path, fileUrl: `file://${path}` };
+}
+
+function artifactValidationError(error: unknown): ControlPlaneError {
+  if (isControlPlaneError(error)) {
+    return error;
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  return new ControlPlaneError("validation", message);
+}
+
+function artifactStoreForRequest(options: HttpAppOptions): ControlPlaneArtifactStore | undefined {
+  if (options.artifactStore) {
+    return options.artifactStore;
+  }
+  if (!options.artifactStoreDir) {
+    return undefined;
+  }
+  return createFileControlPlaneArtifactStore({ storeDir: options.artifactStoreDir });
+}
+
+function readableArtifactStore(
+  options: HttpAppOptions,
+): (ControlPlaneArtifactStore & { readArtifact(digestHex: string): Promise<Buffer> }) | undefined {
+  const store = artifactStoreForRequest(options);
+  return store?.readArtifact ? store as any : undefined;
 }
 
 function localArtifactPublicBaseUrl(

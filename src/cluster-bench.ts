@@ -18,7 +18,11 @@ import { publishRouteSnapshot } from "./control-plane/snapshot-publisher.ts";
 import { createRuntimeArtifactStore } from "./runtime/artifacts.ts";
 import { createRuntimeNodeApp } from "./runtime/node-app.ts";
 import { createRuntimeSupervisor } from "./runtime/supervisor.ts";
-import { createWasip3HostBackend, createWasip3HostInvoker } from "./runtime/wasip3-host.ts";
+import {
+  createWasip3HostBackend,
+  createWasip3HostDaemonInvoker,
+  createWasip3HostInvoker,
+} from "./runtime/wasip3-host.ts";
 import type { BenchmarkResult, BenchFormat } from "./bench.ts";
 import { runLoadBenchmark } from "./bench.ts";
 
@@ -37,6 +41,19 @@ export interface ClusterBenchOptions {
   output?: string;
   timeoutMs: number;
   maxConcurrentInvocations?: number;
+  hostDaemonUrl?: string;
+  pooling?: ClusterBenchPoolingOptions;
+}
+
+export interface ClusterBenchPoolingOptions {
+  totalComponentInstances?: number;
+  memoryMb?: number;
+  totalCoreInstances?: number;
+  totalMemories?: number;
+  totalTables?: number;
+  tableElements?: number;
+  componentInstanceMb?: number;
+  coreInstanceMb?: number;
 }
 
 export interface ClusterBenchmarkReport {
@@ -303,11 +320,87 @@ export function parseClusterBenchArgs(args: string[]): ClusterBenchOptions {
         options.maxConcurrentInvocations = positiveInteger(requiredValue(flag, value), flag);
         index += 1;
         break;
+      case "--host-daemon-url":
+        options.hostDaemonUrl = requiredValue(flag, value);
+        index += 1;
+        break;
+      case "--pooling-total-component-instances":
+        options.pooling = {
+          ...options.pooling,
+          totalComponentInstances: positiveInteger(requiredValue(flag, value), flag),
+        };
+        index += 1;
+        break;
+      case "--pooling-memory-mb":
+        options.pooling = {
+          ...options.pooling,
+          memoryMb: positiveInteger(requiredValue(flag, value), flag),
+        };
+        index += 1;
+        break;
+      case "--pooling-total-core-instances":
+        options.pooling = {
+          ...options.pooling,
+          totalCoreInstances: positiveInteger(requiredValue(flag, value), flag),
+        };
+        index += 1;
+        break;
+      case "--pooling-total-memories":
+        options.pooling = {
+          ...options.pooling,
+          totalMemories: positiveInteger(requiredValue(flag, value), flag),
+        };
+        index += 1;
+        break;
+      case "--pooling-total-tables":
+        options.pooling = {
+          ...options.pooling,
+          totalTables: positiveInteger(requiredValue(flag, value), flag),
+        };
+        index += 1;
+        break;
+      case "--pooling-table-elements":
+        options.pooling = {
+          ...options.pooling,
+          tableElements: positiveInteger(requiredValue(flag, value), flag),
+        };
+        index += 1;
+        break;
+      case "--pooling-component-instance-mb":
+        options.pooling = {
+          ...options.pooling,
+          componentInstanceMb: positiveInteger(requiredValue(flag, value), flag),
+        };
+        index += 1;
+        break;
+      case "--pooling-core-instance-mb":
+        options.pooling = {
+          ...options.pooling,
+          coreInstanceMb: positiveInteger(requiredValue(flag, value), flag),
+        };
+        index += 1;
+        break;
       default:
         throw new Error(`unknown cluster benchmark argument ${flag}`);
     }
   }
+  if (!options.hostDaemonUrl && clusterHostPoolingArgs(options).length > 0) {
+    throw new Error("--pooling-* cluster benchmark args require --host-daemon-url");
+  }
   return options;
+}
+
+export function clusterHostPoolingArgs(options: ClusterBenchOptions): string[] {
+  const args: string[] = [];
+  appendOptionalNumberArg(args, "--pooling-total-component-instances", options.pooling?.totalComponentInstances);
+  appendOptionalNumberArg(args, "--pooling-memory-mb", options.pooling?.memoryMb);
+  appendOptionalNumberArg(args, "--pooling-total-core-instances", options.pooling?.totalCoreInstances);
+  appendOptionalNumberArg(args, "--pooling-total-memories", options.pooling?.totalMemories);
+  appendOptionalNumberArg(args, "--pooling-total-tables", options.pooling?.totalTables);
+  appendOptionalNumberArg(args, "--pooling-table-elements", options.pooling?.tableElements);
+  appendOptionalNumberArg(args, "--pooling-component-instance-mb", options.pooling?.componentInstanceMb);
+  appendOptionalNumberArg(args, "--pooling-core-instance-mb", options.pooling?.coreInstanceMb);
+  return args;
 }
 
 export function formatClusterBenchmarkMarkdown(report: ClusterBenchmarkReport): string {
@@ -353,13 +446,24 @@ async function startRuntimeCluster(
       const cacheDir = await mkdtemp(join(tmpdir(), `wasmplane-cluster-${id}-cwasm-`));
       const artifactCacheDir = await mkdtemp(join(tmpdir(), `wasmplane-cluster-${id}-artifacts-`));
       const kvStoreDir = await mkdtemp(join(tmpdir(), `wasmplane-cluster-${id}-kv-`));
+      const poolingArgs = clusterHostPoolingArgs(options);
+      const cacheVariant = options.hostDaemonUrl && poolingArgs.length > 0
+        ? clusterEngineCacheVariant(poolingArgs)
+        : undefined;
       const app = createRuntimeNodeApp({
         supervisor: createRuntimeSupervisor({
           snapshot: emptySnapshot(),
           artifactStore: createRuntimeArtifactStore({ cacheDir: artifactCacheDir }),
-          backend: createWasip3HostBackend({ cacheDir, hostBin: options.hostBin }),
+          backend: createWasip3HostBackend({
+            cacheDir,
+            hostBin: options.hostBin,
+            compileArgs: options.hostDaemonUrl ? poolingArgs : undefined,
+            cacheVariant,
+          }),
         }),
-        invoker: createWasip3HostInvoker({ hostBin: options.hostBin, kvStoreDir }),
+        invoker: options.hostDaemonUrl
+          ? createWasip3HostDaemonInvoker({ url: options.hostDaemonUrl })
+          : createWasip3HostInvoker({ hostBin: options.hostBin, kvStoreDir }),
         maxConcurrentInvocations: options.maxConcurrentInvocations,
         eventBufferSize: 1000,
       });
@@ -578,6 +682,17 @@ function parseFormat(value: string): BenchFormat {
     return value;
   }
   throw new Error("--format must be json or markdown");
+}
+
+function appendOptionalNumberArg(args: string[], flag: string, value: number | undefined) {
+  if (value !== undefined) {
+    args.push(flag, String(value));
+  }
+}
+
+export function clusterEngineCacheVariant(args: string[]): string {
+  const digest = createHash("sha256").update(args.join("\0")).digest("hex").slice(0, 16);
+  return `engine-${digest}`;
 }
 
 function normalizePath(value: string): string {

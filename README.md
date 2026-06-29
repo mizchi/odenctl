@@ -22,17 +22,48 @@ just e2e
 ```
 
 The control plane listens on `http://127.0.0.1:8787` by default and stores state in
-`wasmplane.sqlite`. Set `WASMPLANE_DB`, `HOST`, or `PORT` to override this. Set
+`wasmplane.sqlite`. Set `WASMPLANE_DB`, `HOST`, or `PORT` to override this. For production, set
+`DATABASE_URL` or `WASMPLANE_DATABASE_URL` to use the async Postgres repository instead of SQLite.
+`WASMPLANE_POSTGRES_SSL=1` forces TLS, while `sslmode=require` in the URL also enables TLS.
+Run `just pg-migrate` before first boot when applying schema outside the app startup path, and use
+`just pg-backup backups/wasmplane.dump` / `just pg-restore backups/wasmplane.dump` for custom-format
+`pg_dump` backups. Set
 `WASMPLANE_RUNTIME_NODES` to a comma-separated list of static runtime node base URLs, or register
 runtime nodes through `POST /runtime-nodes`, when using `POST /snapshots/routes/publish`.
 Set `WASMPLANE_API_TOKEN` to require `Authorization: Bearer <token>` on all control-plane API
-endpoints except `GET /healthz`.
+endpoints except `GET /healthz`; this legacy token has all scopes. For scoped tokens, set
+`WASMPLANE_API_TOKENS` as semicolon-separated `token=scope,scope` entries, for example
+`reader=read;publisher=publish,read;writer=write,read`. Supported scopes are `read`, `write`,
+`publish`, and `*`. Set `WASMPLANE_AUDIT_LOG=/data/audit.jsonl` to append authenticated mutation
+audit events as JSONL.
 Set `WASMPLANE_RUNTIME_TOKEN` on the control plane to sign route snapshot publishes sent to runtime
 nodes.
+Set `WASMPLANE_SNAPSHOT_PUBLISH_INTERVAL_MS` to run a background publish job that periodically
+generates the current route snapshot and publishes it to configured/registered active runtime
+nodes. Each generated route snapshot includes a content-derived `snap_<hash>` id, and publish
+history records that id for retry and audit correlation.
 Local artifact ingestion stores bytes in `.wasmplane/artifacts` by default; set
 `WASMPLANE_ARTIFACT_DIR` to override it. Local artifact ingestion validates components through
 `wasmplane-wasip3-host` by default; set `WASMPLANE_VALIDATE_LOCAL_ARTIFACTS=0` to disable that
 for development.
+For production artifact storage, configure an S3-compatible bucket:
+
+```sh
+export WASMPLANE_ARTIFACT_STORE=s3
+export WASMPLANE_ARTIFACT_BUCKET=wasmplane-artifacts
+export WASMPLANE_ARTIFACT_PREFIX=workers
+export WASMPLANE_ARTIFACT_REGION=auto
+export WASMPLANE_ARTIFACT_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
+export WASMPLANE_ARTIFACT_ACCESS_KEY_ID=...
+export WASMPLANE_ARTIFACT_SECRET_ACCESS_KEY=...
+export WASMPLANE_ARTIFACT_PUBLIC_BASE_URL=https://cdn.example.com/artifacts
+```
+
+If `WASMPLANE_ARTIFACT_PUBLIC_BASE_URL` is omitted for S3/R2, artifact locations are recorded as
+`s3://<bucket>/<key>`. Runtime nodes materialize `file://`, `http://`, `https://`, and private
+`s3://` artifacts. Private S3/R2 runtime fetches use SigV4 GET with the same
+`WASMPLANE_ARTIFACT_*` or `AWS_*` credentials; if `WASMPLANE_ARTIFACT_BUCKET` is set, runtime
+nodes reject `s3://` artifacts from other buckets.
 
 The runtime node listens on `http://127.0.0.1:8788` by default. Set `RUNTIME_HOST`,
 `RUNTIME_PORT`, `WASMPLANE_CACHE_DIR`, or `WASMPLANE_ARTIFACT_CACHE_DIR` to override this.
@@ -43,13 +74,43 @@ send heartbeat updates.
 environment variables named `WASMPLANE_SECRET_<secretId>` or `WASMPLANE_SECRET_<NORMALIZED_ID>` by
 default. Set `WASMPLANE_SECRET_DB` to a control-plane SQLite database path to resolve values from
 the local secret registry instead. Route snapshots only carry `secretId`, never the secret value.
+Set `RUNTIME_SNAPSHOT_WARMUP=1` to make route snapshot ACKs wait until every deployment target in
+the snapshot has been materialized and precompiled into the node-local `.cwasm` cache. Use
+`RUNTIME_SNAPSHOT_WARMUP_CONCURRENCY` to bound concurrent materialize/precompile work during
+snapshot warmup; the runtime default is 4.
 Set `WASMPLANE_KV_STORE_DIR` to choose the host-side persistent KV directory; the default is
 `.wasmplane/kv`.
+Set `WASMPLANE_WASIP3_HOST_DAEMON=1` to make the Node runtime start a local embedded Rust
+Wasmtime daemon and invoke warmed `.cwasm` components over `POST /invoke` instead of spawning
+`wasmplane-wasip3-host invoke` for every worker request. The daemon keeps a shared Wasmtime
+`Engine` and LRU-bounded prepared component cache inside one process. Use
+`WASMPLANE_WASIP3_HOST_MAX_PREPARED_COMPONENTS` to cap prepared components; the default is 256.
+Use `WASMPLANE_WASIP3_HOST_MAX_CONCURRENT_INVOCATIONS` to cap in-flight host invocations before
+Wasmtime instantiation; the default is 128. The daemon also exposes `GET /stats` for compact JSON
+pressure counters and `GET /metrics` for Prometheus-format host metrics.
+When the runtime is configured with `WASMPLANE_WASIP3_HOST_DAEMON=1` or
+`WASMPLANE_WASIP3_HOST_DAEMON_URL`, `GET /__runtime/metrics` includes the daemon `/stats` payload
+under `hostDaemon`.
+Set `WASMPLANE_WASIP3_POOLING_TOTAL_COMPONENT_INSTANCES` to enable Wasmtime's pooling allocator
+for high-density instance allocation. `WASMPLANE_WASIP3_POOLING_MEMORY_MB` caps each pooled linear
+memory slot, while `WASMPLANE_WASIP3_POOLING_TOTAL_CORE_INSTANCES`,
+`WASMPLANE_WASIP3_POOLING_TOTAL_MEMORIES`, and `WASMPLANE_WASIP3_POOLING_TOTAL_TABLES` tune pool
+capacity. Use `WASMPLANE_WASIP3_HOST_DAEMON_PORT` to change the local port, or set
+`WASMPLANE_WASIP3_HOST_DAEMON_URL` to point at an already running host daemon. For local testing:
+
+```sh
+just host-daemon
+WASMPLANE_WASIP3_HOST_DAEMON_URL=http://127.0.0.1:8790 just runtime
+```
+
 Set `WASMPLANE_CONTROL_PLANE_TOKEN` or `CONTROL_PLANE_TOKEN` on the runtime node when the control
 plane requires bearer-token authentication for registration and heartbeat updates.
 Set `WASMPLANE_RUNTIME_TOKEN` on the runtime node to require `Authorization: Bearer <token>` for
 runtime management endpoints such as `PUT /__runtime/snapshots/routes`; `GET /__runtime/healthz`
 remains unauthenticated.
+Set `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` or `OTEL_EXPORTER_OTLP_ENDPOINT` to emit OTLP/HTTP JSON
+trace spans for worker requests. `OTEL_SERVICE_NAME` defaults to `wasmplane-runtime`, and
+`OTEL_EXPORTER_OTLP_HEADERS` accepts comma-separated `key=value` headers for collector auth.
 
 Runtime-oriented tests expect these CLIs on `PATH`:
 
@@ -63,18 +124,21 @@ The Fly setup uses one shared Docker image and two Fly apps:
 
 - control app: `node --experimental-strip-types src/main.ts`
 - runtime app: `node --experimental-strip-types src/runtime/main.ts`
+- collector app: `otel/opentelemetry-collector-contrib` with `otelcol/config.yaml`
 
 Pick globally unique app names before running the commands:
 
 ```sh
 export FLY_CONTROL_APP=mz-wasmplane-control
 export FLY_RUNTIME_APP=mz-wasmplane-runtime
+export FLY_COLLECTOR_APP=mz-wasmplane-otel-collector
 export FLY_REGION=nrt
 export WASMPLANE_CONTROL_PLANE_TOKEN="$(openssl rand -hex 24)"
 export WASMPLANE_RUNTIME_TOKEN="$(openssl rand -hex 24)"
 
 fly apps create "$FLY_CONTROL_APP"
 fly apps create "$FLY_RUNTIME_APP"
+fly apps create "$FLY_COLLECTOR_APP"
 just fly-create-volumes
 
 fly secrets set -a "$FLY_CONTROL_APP" \
@@ -83,10 +147,12 @@ fly secrets set -a "$FLY_CONTROL_APP" \
 
 fly secrets set -a "$FLY_RUNTIME_APP" \
   CONTROL_PLANE_URL="https://$FLY_CONTROL_APP.fly.dev" \
-  RUNTIME_PUBLIC_URL="https://$FLY_RUNTIME_APP.fly.dev" \
+  RUNTIME_PUBLIC_URL="auto" \
+  OTEL_EXPORTER_OTLP_ENDPOINT="http://$FLY_COLLECTOR_APP.internal:4318" \
   WASMPLANE_CONTROL_PLANE_TOKEN="$WASMPLANE_CONTROL_PLANE_TOKEN" \
   WASMPLANE_RUNTIME_TOKEN="$WASMPLANE_RUNTIME_TOKEN"
 
+just fly-deploy-collector
 just fly-deploy-control
 just fly-deploy-runtime
 ```
@@ -97,20 +163,57 @@ Check the deployed services:
 curl -H "authorization: Bearer $WASMPLANE_CONTROL_PLANE_TOKEN" \
   "https://$FLY_CONTROL_APP.fly.dev/runtime-nodes"
 curl "https://$FLY_RUNTIME_APP.fly.dev/__runtime/healthz"
+curl "https://$FLY_COLLECTOR_APP.fly.dev/"
 ```
 
 The control app stores SQLite state and uploaded local artifacts on `/data`. For Fly, local uploads
 are recorded as `https://<control-app>/artifacts/local/<digest>.wasm`, so the separate runtime app can
 materialize them over HTTP. The runtime app stores `.cwasm`, artifact, and KV cache under `/data`.
 For multiple runtime Machines, create one `wasmplane_runtime_data` volume per Machine region.
+To move the control plane state to managed Postgres, create a Postgres database and set
+`DATABASE_URL` on the control app. To remove the control app volume dependency, also set the
+S3/R2 artifact store variables above so local uploads are persisted outside `/data`.
+
+On Fly, leave `RUNTIME_PUBLIC_URL=auto`. Each runtime Machine registers as
+`rt_<FLY_MACHINE_ID>` and advertises `http://<FLY_MACHINE_ID>.vm.<FLY_APP_NAME>.internal:<port>`
+to the control plane, so route snapshots can be published directly to every Machine over Fly's
+private network. The public `https://<runtime-app>.fly.dev` URL is still used for worker traffic.
+The control plane ignores active runtime nodes whose heartbeat is older than
+`WASMPLANE_RUNTIME_NODE_ACTIVE_TTL_MS`, defaulting to 90 seconds.
+
+The collector receives OTLP/gRPC on `4317` and OTLP/HTTP on `4318` over Fly private networking,
+then exports traces to the `debug` exporter and derives Prometheus RED metrics through the
+`spanmetrics` connector on `:9464/metrics`. Use `just fly-logs-collector` to inspect collected
+spans. `otelcol/alerts.yaml` contains starter Prometheus alert rules for runtime error rate and
+p95 latency. The debug exporter is for verification; replace or extend `otelcol/config.yaml` with a
+real trace backend exporter for production retention.
+
+Short scale test:
+
+```sh
+fly scale count 2 -a "$FLY_RUNTIME_APP" -r "$FLY_REGION" --with-new-volumes --yes
+sleep 30
+curl -X POST "https://$FLY_CONTROL_APP.fly.dev/snapshots/routes/publish" \
+  -H "authorization: Bearer $WASMPLANE_CONTROL_PLANE_TOKEN" \
+  -H "content-type: application/json" \
+  -d '{}'
+pnpm bench http \
+  --runtime-url "https://$FLY_RUNTIME_APP.fly.dev" \
+  --host hello.example.dev \
+  --iterations 120 \
+  --warmup 5 \
+  --concurrency 1,8,32,64
+fly scale count 1 -a "$FLY_RUNTIME_APP" -r "$FLY_REGION" --yes
+fly volumes list -a "$FLY_RUNTIME_APP"
+```
 
 The runtime supervisor code currently prepares deployments by resolving a route snapshot,
-materializing `file://`, `http://`, or `https://` artifacts, verifying their `sha256` digest,
-validating the component through the Rust `wasmplane-wasip3-host` linker, and precompiling through
-that same host binary. Runtime invocation uses the generated `.cwasm` artifact so cold invokes skip
-Cranelift compilation. `.cwasm` files are trusted node-local cache entries tied to the host binary,
-Wasmtime version/configuration, and target machine; they are not portable user artifacts. Remote
-HTTP(S) artifacts are cached under `WASMPLANE_ARTIFACT_CACHE_DIR`.
+materializing `file://`, `http://`, `https://`, or private `s3://` artifacts, verifying their
+`sha256` digest, validating the component through the Rust `wasmplane-wasip3-host` linker, and
+precompiling through that same host binary. Runtime invocation uses the generated `.cwasm` artifact
+so cold invokes skip Cranelift compilation. `.cwasm` files are trusted node-local cache entries
+tied to the host binary, Wasmtime version/configuration, and target machine; they are not portable
+user artifacts. Remote HTTP(S) and S3 artifacts are cached under `WASMPLANE_ARTIFACT_CACHE_DIR`.
 Strict `wasm-tools component targets` validation is available as an opt-in backend setting, but it
 is not the default because WASI-adapted Rust components include additional WASI imports that the
 host linker satisfies.
@@ -192,6 +295,29 @@ The output includes per-run throughput, average latency, p50/p95/p99 latency, an
 compilation on each host process start. Use `--format json` or `--output bench.json` for
 machine-readable result capture.
 
+## Cost Estimate
+
+Run the built-in estimator for the current single-region production shape:
+
+```sh
+pnpm cost
+```
+
+The default estimate assumes:
+
+- Fly region: `nrt`
+- control plane: 1 x `shared-cpu-1x` / 1GB
+- runtime: 1 x `performance-1x` / 2GB
+- collector: 1 x `shared-cpu-1x` / 512MB
+- Fly Managed Postgres Basic + 10GB provisioned storage
+- Cloudflare R2 standard storage within the 10GB / 1M Class A / 10M Class B free tier
+- 2GB Fly volumes and 50GB Fly public egress from Asia Pacific
+
+With those assumptions the estimator reports about `$95.27/month`. Scaling the runtime to 4 Machines
+and using 100GB R2 storage, 5M Class A ops, 20M Class B ops, and 100GB Fly public egress reports
+about `$241.84/month`. Prices are intentionally data constants in `src/cost-estimator.ts` so they
+can be updated when provider pricing changes.
+
 Cluster emulation starts multiple in-process runtime nodes, publishes route snapshots to every node,
 switches from a blue deployment to a green deployment, waits until each node returns the new
 `x-wasmplane-deployment`, and then runs aggregate HTTP throughput against the warmed green
@@ -199,6 +325,9 @@ deployment:
 
 ```sh
 just cluster-bench
+
+# In another terminal, run `just host-daemon` first.
+just cluster-bench-daemon
 
 pnpm cluster-bench \
   --component examples/hello-worker/target/wasm32-wasip1/debug/hello_worker.component.wasm \
@@ -213,6 +342,10 @@ pnpm cluster-bench \
 post-publish visibility latency. The visibility latency includes the first green request on each
 node, so it includes lazy materialization and `.cwasm` precompile for that deployment. The
 `cluster.http.cwasm` rows report aggregate worker HTTP throughput across the emulated runtime nodes.
+Pass `--host-daemon-url` to use the embedded Wasmtime daemon instead of spawning the host CLI for
+every request. When the daemon uses Wasmtime pooling, pass the same `--pooling-*` flags to
+`pnpm cluster-bench` so benchmark-generated `.cwasm` files are compiled with the same Engine
+settings.
 
 CI runs `just test` and `just e2e` on GitHub Actions. The workflow installs Node 24, Rust stable,
 `wasm32-wasip1`, `wasm-tools 1.245.1`, and `wit-bindgen-cli 0.51.0`.
@@ -259,6 +392,9 @@ The command uploads bytes through `POST /artifacts/local`, creates an immutable 
 the route, then publishes a route snapshot unless `--no-publish` is passed. Limit overrides use
 `--limit name=value`, for example `--limit wallMs=2500`. The CLI also reads
 `WASMPLANE_CONTROL_PLANE_TOKEN` when `--token` is omitted.
+Canary rollout can be driven through the control-plane API by first pointing a route at the stable
+deployment, then calling `POST /routes/canary` with a candidate deployment and weight. Rollback uses
+`POST /routes/rollback` and returns the route to the stable target with 100% weight.
 
 ## API
 
@@ -284,6 +420,8 @@ Available endpoints:
 - `DELETE /kv-namespaces/:id`
 - `POST /deployments`
 - `PUT /routes`
+- `POST /routes/canary`
+- `POST /routes/rollback`
 - `POST /runtime-nodes`
 - `POST /runtime-nodes/:id/heartbeat`
 - `GET /runtime-nodes`

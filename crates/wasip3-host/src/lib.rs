@@ -1,14 +1,19 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::io::{Read, Write};
 use std::net::{IpAddr, SocketAddr, TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Result, bail};
 use native_tls::TlsConnector;
 use wasmtime::component::{Component, HasData, Linker, Resource, ResourceTable, bindgen};
-use wasmtime::{Config, Engine, Store, StoreLimits, StoreLimitsBuilder};
+use wasmtime::{
+    Config, Engine, InstanceAllocationStrategy, PoolingAllocationConfig, Store, StoreLimits,
+    StoreLimitsBuilder,
+};
 use wasmtime_wasi::{WasiCtx, WasiCtxView, WasiView};
 
 bindgen!({
@@ -25,6 +30,7 @@ bindgen!({
 });
 
 pub const WASI_PROFILE: &str = "wasip3";
+const EPOCH_TICK_MS: u64 = 10;
 
 pub struct CompileReport {
     pub wasi_profile: &'static str,
@@ -46,6 +52,66 @@ pub struct HttpResponseOutput {
     pub status: u16,
     pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
+}
+
+pub struct Wasip3Runtime {
+    engine: Engine,
+    prepared: Mutex<PreparedComponentCache>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Wasip3RuntimeOptions {
+    pub max_prepared_components: usize,
+    pub pooling: Option<Wasip3PoolingConfig>,
+}
+
+impl Default for Wasip3RuntimeOptions {
+    fn default() -> Self {
+        Self {
+            max_prepared_components: 256,
+            pooling: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Wasip3PoolingConfig {
+    pub total_component_instances: u32,
+    pub total_core_instances: u32,
+    pub total_memories: u32,
+    pub total_tables: u32,
+    pub max_memory_size: usize,
+    pub table_elements: usize,
+    pub max_component_instance_size: usize,
+    pub max_core_instance_size: usize,
+}
+
+impl Wasip3PoolingConfig {
+    pub fn for_component_slots(slots: u32, memory_mb: u64) -> Self {
+        let memory_bytes = memory_mb.saturating_mul(1024).saturating_mul(1024);
+        Self {
+            total_component_instances: slots,
+            total_core_instances: slots.saturating_mul(4).max(slots),
+            total_memories: slots,
+            total_tables: slots.saturating_mul(2).max(slots),
+            max_memory_size: usize::try_from(memory_bytes).unwrap_or(usize::MAX),
+            table_elements: 20_000,
+            max_component_instance_size: 1 << 20,
+            max_core_instance_size: 1 << 20,
+        }
+    }
+}
+
+struct PreparedComponentCache {
+    max: usize,
+    entries: HashMap<PreparedComponentKey, WorkerPre<WorkerHost>>,
+    lru: VecDeque<PreparedComponentKey>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum PreparedComponentKey {
+    Component(PathBuf),
+    Precompiled(PathBuf),
 }
 
 pub struct IncomingBody {
@@ -1316,17 +1382,274 @@ fn outbound_text_response(status: u16, message: &str) -> myedge::runtime::outbou
 }
 
 pub fn wasip3_engine() -> Result<Engine> {
+    wasip3_engine_with_pooling(None)
+}
+
+pub fn wasip3_engine_with_pooling(pooling: Option<&Wasip3PoolingConfig>) -> Result<Engine> {
     let mut config = Config::new();
     config.wasm_component_model(true);
     config.wasm_component_model_async(true);
     config.wasm_component_model_async_stackful(true);
     config.concurrency_support(true);
     config.epoch_interruption(true);
+    if let Some(pooling) = pooling {
+        config.memory_init_cow(true);
+        config.memory_reservation(pooling.max_memory_size as u64);
+        let mut pool = PoolingAllocationConfig::new();
+        pool.total_component_instances(pooling.total_component_instances);
+        pool.total_core_instances(pooling.total_core_instances);
+        pool.total_memories(pooling.total_memories);
+        pool.total_tables(pooling.total_tables);
+        pool.max_memory_size(pooling.max_memory_size);
+        pool.table_elements(pooling.table_elements);
+        pool.max_component_instance_size(pooling.max_component_instance_size);
+        pool.max_core_instance_size(pooling.max_core_instance_size);
+        config.allocation_strategy(InstanceAllocationStrategy::Pooling(pool));
+    }
     Ok(Engine::new(&config)?)
 }
 
+impl Wasip3Runtime {
+    pub fn new() -> Result<Self> {
+        Self::with_options(Wasip3RuntimeOptions::default())
+    }
+
+    pub fn with_options(options: Wasip3RuntimeOptions) -> Result<Self> {
+        let engine = wasip3_engine_with_pooling(options.pooling.as_ref())?;
+        start_epoch_ticker(engine.clone());
+        Ok(Self {
+            engine,
+            prepared: Mutex::new(PreparedComponentCache::new(options.max_prepared_components)),
+        })
+    }
+
+    pub fn invoke_component_handle_with_limits_and_policy(
+        &self,
+        component_path: &Path,
+        request: HttpRequestInput,
+        limits: InvocationLimits,
+        policy: HostPolicy,
+    ) -> Result<HttpResponseOutput> {
+        self.invoke_component_handle_with_host(
+            PreparedComponentKey::Component(component_path.to_path_buf()),
+            request,
+            WorkerHost::with_limits_and_policy(limits, policy),
+        )
+    }
+
+    pub fn invoke_component_handle_with_persistent_kv(
+        &self,
+        component_path: &Path,
+        request: HttpRequestInput,
+        limits: InvocationLimits,
+        policy: HostPolicy,
+        kv_store_dir: &Path,
+    ) -> Result<HttpResponseOutput> {
+        self.invoke_component_handle_with_host(
+            PreparedComponentKey::Component(component_path.to_path_buf()),
+            request,
+            WorkerHost::with_persistent_kv(limits, policy, kv_store_dir),
+        )
+    }
+
+    pub fn invoke_precompiled_component_handle_with_limits_and_policy(
+        &self,
+        precompiled_path: &Path,
+        request: HttpRequestInput,
+        limits: InvocationLimits,
+        policy: HostPolicy,
+    ) -> Result<HttpResponseOutput> {
+        self.invoke_component_handle_with_host(
+            PreparedComponentKey::Precompiled(precompiled_path.to_path_buf()),
+            request,
+            WorkerHost::with_limits_and_policy(limits, policy),
+        )
+    }
+
+    pub fn invoke_precompiled_component_handle_with_persistent_kv(
+        &self,
+        precompiled_path: &Path,
+        request: HttpRequestInput,
+        limits: InvocationLimits,
+        policy: HostPolicy,
+        kv_store_dir: &Path,
+    ) -> Result<HttpResponseOutput> {
+        self.invoke_component_handle_with_host(
+            PreparedComponentKey::Precompiled(precompiled_path.to_path_buf()),
+            request,
+            WorkerHost::with_persistent_kv(limits, policy, kv_store_dir),
+        )
+    }
+
+    pub fn prepared_component_count(&self) -> usize {
+        self.prepared
+            .lock()
+            .expect("prepared component cache poisoned")
+            .len()
+    }
+
+    fn invoke_component_handle_with_host(
+        &self,
+        component_key: PreparedComponentKey,
+        request: HttpRequestInput,
+        host: WorkerHost,
+    ) -> Result<HttpResponseOutput> {
+        let limits = host.invocation_limits;
+        enforce_request_body_limit(&request, limits)?;
+        let worker_pre = self.prepare_worker(component_key)?;
+        let mut store = Store::new(&self.engine, host);
+        store.limiter(|host| &mut host.store_limits);
+        configure_ticker_epoch_deadline(&mut store, limits);
+        let worker = futures::executor::block_on(worker_pre.instantiate_async(&mut store))?;
+
+        let response = futures::executor::block_on(async {
+            store
+                .run_concurrent(async |accessor| -> wasmtime::Result<_> {
+                    let body = accessor.with(|mut access| {
+                        access.get().table.push(IncomingBody {
+                            bytes: request.body,
+                            offset: 0,
+                        })
+                    })?;
+                    let request = Request {
+                        head: myedge::runtime::types::RequestHead {
+                            method: request.method,
+                            uri: request.uri,
+                            headers: request
+                                .headers
+                                .into_iter()
+                                .map(|(name, value)| myedge::runtime::types::Header { name, value })
+                                .collect(),
+                        },
+                        body,
+                    };
+                    worker.call_handle(accessor, request).await
+                })
+                .await?
+        })?;
+
+        let response_body = store.data().outgoing_body_bytes(&response.body)?;
+        Ok(HttpResponseOutput {
+            status: response.head.status,
+            headers: response
+                .head
+                .headers
+                .into_iter()
+                .map(|header| (header.name, header.value))
+                .collect(),
+            body: response_body,
+        })
+    }
+
+    fn prepare_worker(&self, component_key: PreparedComponentKey) -> Result<WorkerPre<WorkerHost>> {
+        {
+            let mut cache = self
+                .prepared
+                .lock()
+                .expect("prepared component cache poisoned");
+            if let Some(prepared) = cache.get(&component_key) {
+                return Ok(prepared);
+            }
+        }
+
+        let component = match &component_key {
+            PreparedComponentKey::Component(component_path) => {
+                Component::from_file(&self.engine, component_path)?
+            }
+            PreparedComponentKey::Precompiled(precompiled_path) => {
+                // Safety: wasmplane only writes these serialized artifacts from the same host binary
+                // and treats them as trusted node-local cache entries, not portable user artifacts.
+                unsafe { Component::deserialize_file(&self.engine, precompiled_path)? }
+            }
+        };
+        let mut linker = Linker::<WorkerHost>::new(&self.engine);
+        add_worker_imports(&mut linker)?;
+        let prepared = WorkerPre::new(linker.instantiate_pre(&component)?)?;
+
+        let mut cache = self
+            .prepared
+            .lock()
+            .expect("prepared component cache poisoned");
+        Ok(cache.insert(component_key, prepared))
+    }
+}
+
+impl PreparedComponentCache {
+    fn new(max: usize) -> Self {
+        Self {
+            max: max.max(1),
+            entries: HashMap::new(),
+            lru: VecDeque::new(),
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    fn get(&mut self, key: &PreparedComponentKey) -> Option<WorkerPre<WorkerHost>> {
+        let prepared = self.entries.get(key).cloned()?;
+        self.touch(key);
+        Some(prepared)
+    }
+
+    fn insert(
+        &mut self,
+        key: PreparedComponentKey,
+        prepared: WorkerPre<WorkerHost>,
+    ) -> WorkerPre<WorkerHost> {
+        self.entries.insert(key.clone(), prepared.clone());
+        self.touch(&key);
+        while self.entries.len() > self.max {
+            let Some(evicted) = self.lru.pop_front() else {
+                break;
+            };
+            self.entries.remove(&evicted);
+        }
+        prepared
+    }
+
+    fn touch(&mut self, key: &PreparedComponentKey) {
+        self.lru.retain(|existing| existing != key);
+        self.lru.push_back(key.clone());
+    }
+}
+
+#[cfg(target_has_atomic = "64")]
+fn start_epoch_ticker(engine: Engine) {
+    thread::spawn(move || {
+        loop {
+            thread::sleep(Duration::from_millis(EPOCH_TICK_MS));
+            engine.increment_epoch();
+        }
+    });
+}
+
+#[cfg(not(target_has_atomic = "64"))]
+fn start_epoch_ticker(_engine: Engine) {}
+
+fn configure_ticker_epoch_deadline(store: &mut Store<WorkerHost>, limits: InvocationLimits) {
+    #[cfg(target_has_atomic = "64")]
+    {
+        store.epoch_deadline_trap();
+        let ticks = limits
+            .wall_ms
+            .map(|wall_ms| wall_ms.div_ceil(EPOCH_TICK_MS).max(1))
+            .unwrap_or(u64::MAX / 2);
+        store.set_epoch_deadline(ticks);
+    }
+}
+
 pub fn precompile_component(component_path: &Path, output_path: &Path) -> Result<CompileReport> {
-    let engine = wasip3_engine()?;
+    precompile_component_with_pooling(component_path, output_path, None)
+}
+
+pub fn precompile_component_with_pooling(
+    component_path: &Path,
+    output_path: &Path,
+    pooling: Option<&Wasip3PoolingConfig>,
+) -> Result<CompileReport> {
+    let engine = wasip3_engine_with_pooling(pooling)?;
     let component = Component::from_file(&engine, component_path)?;
     let bytes = component.serialize()?;
     std::fs::write(output_path, &bytes)?;
@@ -1513,6 +1836,63 @@ mod tests {
     }
 
     #[test]
+    fn engine_accepts_pooling_allocator_config() {
+        let pooling = Wasip3PoolingConfig::for_component_slots(4, 64);
+        let engine = wasip3_engine_with_pooling(Some(&pooling)).expect("pooling engine");
+
+        Component::new(&engine, "(component)").expect("empty component compiles");
+    }
+
+    #[test]
+    fn runtime_limits_prepared_component_cache_with_lru_eviction() {
+        let dir = temp_dir("runtime-cache-lru");
+        let component_path = build_async_worker_component(&dir);
+        let second_component_path = dir.join("worker-copy.component.wasm");
+        std::fs::copy(&component_path, &second_component_path).expect("copy component");
+        let runtime = Wasip3Runtime::with_options(Wasip3RuntimeOptions {
+            max_prepared_components: 1,
+            pooling: None,
+        })
+        .expect("runtime");
+
+        let _ = runtime.invoke_component_handle_with_limits_and_policy(
+            &component_path,
+            hello_request(),
+            InvocationLimits::default(),
+            HostPolicy::deny_all(),
+        );
+        assert_eq!(runtime.prepared_component_count(), 1);
+
+        let _ = runtime.invoke_component_handle_with_limits_and_policy(
+            &second_component_path,
+            hello_request(),
+            InvocationLimits::default(),
+            HostPolicy::deny_all(),
+        );
+        assert_eq!(runtime.prepared_component_count(), 1);
+    }
+
+    #[test]
+    fn runtime_instantiates_components_with_pooling_allocator() {
+        let dir = temp_dir("runtime-pooling");
+        let component_path = build_async_worker_component(&dir);
+        let runtime = Wasip3Runtime::with_options(Wasip3RuntimeOptions {
+            max_prepared_components: 4,
+            pooling: Some(Wasip3PoolingConfig::for_component_slots(4, 64)),
+        })
+        .expect("runtime");
+
+        let _ = runtime.invoke_component_handle_with_limits_and_policy(
+            &component_path,
+            hello_request(),
+            InvocationLimits::default(),
+            HostPolicy::deny_all(),
+        );
+
+        assert_eq!(runtime.prepared_component_count(), 1);
+    }
+
+    #[test]
     fn precompile_component_serializes_component_artifact() {
         let dir = std::env::temp_dir().join(format!("wasmplane-host-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("tmp dir");
@@ -1551,6 +1931,15 @@ mod tests {
 
         futures::executor::block_on(Worker::instantiate_async(&mut store, &component, &linker))
             .expect("instantiate");
+    }
+
+    fn hello_request() -> HttpRequestInput {
+        HttpRequestInput {
+            method: "GET".to_string(),
+            uri: "https://hello.example.dev/".to_string(),
+            headers: Vec::new(),
+            body: Vec::new(),
+        }
     }
 
     #[test]

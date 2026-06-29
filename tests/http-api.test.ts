@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import type { RouteSnapshot } from "../src/control-plane/contracts.ts";
+import { createJsonlAuditSink } from "../src/control-plane/audit.ts";
 import { createMemoryRepository } from "../src/control-plane/repository.ts";
 import { createControlPlane } from "../src/control-plane/service.ts";
 import { createHttpApp } from "../src/http/app.ts";
@@ -75,6 +76,38 @@ test("HTTP API creates deployment and exposes compact route snapshot", async () 
   }
 });
 
+test("HTTP API awaits async control-plane methods", async () => {
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+  });
+  const app = createHttpApp({
+    controlPlane: {
+      ...control,
+      async createProject(input: any) {
+        return control.createProject(input);
+      },
+    },
+  });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const project = await postJson(baseUrl, "/projects", { name: "async-control" });
+    assert.deepEqual(project, {
+      id: "prj_1",
+      name: "async-control",
+      createdAt: fixedNow(),
+    });
+  } finally {
+    await app.close();
+  }
+});
+
 test("HTTP API requires bearer token when API auth is configured", async () => {
   const control = createControlPlane({
     repository: createMemoryRepository(),
@@ -124,6 +157,97 @@ test("HTTP API requires bearer token when API auth is configured", async () => {
       assert.fail(await ok.text());
     }
     assert.equal((await ok.json()).name, "hello");
+  } finally {
+    await app.close();
+  }
+});
+
+test("HTTP API enforces scoped bearer tokens", async () => {
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+  });
+  const app = createHttpApp({
+    controlPlane: control,
+    apiTokens: [
+      { token: "read-token", scopes: ["read"], principal: "reader" },
+      { token: "write-token", scopes: ["write"], principal: "writer" },
+    ],
+  });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const denied = await fetch(`${baseUrl}/projects`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer read-token",
+      },
+      body: JSON.stringify({ name: "hello" }),
+    });
+    assert.equal(denied.status, 403);
+
+    const created = await fetch(`${baseUrl}/projects`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer write-token",
+      },
+      body: JSON.stringify({ name: "hello" }),
+    });
+    assert.equal(created.status, 201, await created.text());
+  } finally {
+    await app.close();
+  }
+});
+
+test("HTTP API writes audit events for authenticated mutations", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "wasmplane-audit-"));
+  const auditPath = join(dir, "audit.jsonl");
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+  });
+  const app = createHttpApp({
+    controlPlane: control,
+    apiTokens: [{ token: "write-token", scopes: ["write"], principal: "writer" }],
+    auditSink: createJsonlAuditSink({ path: auditPath }),
+    now: fixedNow,
+  });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const response = await fetch(`${baseUrl}/projects`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer write-token",
+      },
+      body: JSON.stringify({ name: "hello" }),
+    });
+    assert.equal(response.status, 201, await response.text());
+    await eventually(async () => {
+      const lines = (await readFile(auditPath, "utf8")).trim().split("\n");
+      assert.equal(lines.length, 1);
+      assert.deepEqual(JSON.parse(lines[0]), {
+        timestamp: fixedNow(),
+        principal: "writer",
+        scope: "write",
+        method: "POST",
+        path: "/projects",
+        status: 201,
+      });
+    });
   } finally {
     await app.close();
   }
@@ -345,6 +469,95 @@ test("HTTP API rejects deployments that reference unknown KV namespaces", async 
   }
 });
 
+test("HTTP API starts canary and rolls back routes", async () => {
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+  });
+  const app = createHttpApp({ controlPlane: control });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const project = await postJson(baseUrl, "/projects", { name: "hello" });
+    const stableArtifact = await postJson(baseUrl, "/artifacts", {
+      projectId: project.id,
+      digest: digest("stable"),
+      location: "oci://registry.example.com/mizchi/hello:stable",
+      sizeBytes: 42,
+    });
+    const candidateArtifact = await postJson(baseUrl, "/artifacts", {
+      projectId: project.id,
+      digest: digest("candidate"),
+      location: "oci://registry.example.com/mizchi/hello:candidate",
+      sizeBytes: 43,
+    });
+    const stable = await postJson(baseUrl, "/deployments", {
+      projectId: project.id,
+      artifactId: stableArtifact.id,
+      world: "myedge:runtime/worker@0.1.0",
+      runtime: { backend: "wasmtime", version: "wasmtime-43", wasi: "wasip3" },
+      limits: {
+        cpuMs: 50,
+        memoryMb: 64,
+        wallMs: 1000,
+        requestBytes: 1048576,
+        subrequests: 20,
+        hostCalls: 100,
+        responseBytes: 1048576,
+      },
+      capabilities: { outboundHttp: { enabled: false, allow: [] }, kv: [], secrets: [] },
+    });
+    const candidate = await postJson(baseUrl, "/deployments", {
+      projectId: project.id,
+      artifactId: candidateArtifact.id,
+      world: "myedge:runtime/worker@0.1.0",
+      runtime: { backend: "wasmtime", version: "wasmtime-43", wasi: "wasip3" },
+      limits: {
+        cpuMs: 50,
+        memoryMb: 64,
+        wallMs: 1000,
+        requestBytes: 1048576,
+        subrequests: 20,
+        hostCalls: 100,
+        responseBytes: 1048576,
+      },
+      capabilities: { outboundHttp: { enabled: false, allow: [] }, kv: [], secrets: [] },
+    });
+    await putJson(baseUrl, "/routes", {
+      projectId: project.id,
+      host: "hello.example.dev",
+      pathPrefix: "/",
+      deploymentId: stable.id,
+    });
+
+    const canary = await postJsonOk(baseUrl, "/routes/canary", {
+      projectId: project.id,
+      host: "hello.example.dev",
+      pathPrefix: "/",
+      deploymentId: candidate.id,
+      weight: 10,
+    });
+    assert.deepEqual(canary.targets, [
+      { deploymentId: stable.id, weight: 90 },
+      { deploymentId: candidate.id, weight: 10 },
+    ]);
+
+    const rollback = await postJsonOk(baseUrl, "/routes/rollback", {
+      projectId: project.id,
+      host: "hello.example.dev",
+      pathPrefix: "/",
+    });
+    assert.deepEqual(rollback.targets, [{ deploymentId: stable.id, weight: 100 }]);
+  } finally {
+    await app.close();
+  }
+});
+
 test("HTTP API publishes route snapshot to configured runtime nodes", async () => {
   const receivedSnapshots: RouteSnapshot[] = [];
   const runtime = await listenRuntimeSnapshotSink(receivedSnapshots);
@@ -409,6 +622,7 @@ test("HTTP API publishes route snapshot to configured runtime nodes", async () =
     const publish = await response.json();
 
     assert.equal(publish.ok, true);
+    assert.match(publish.snapshot.id, /^snap_[a-f0-9]{16}$/);
     assert.equal(publish.snapshot.routes, 1);
     assert.equal(publish.snapshot.generatedAt, fixedNow());
     assert.equal(publish.targets.length, 1);
@@ -419,9 +633,11 @@ test("HTTP API publishes route snapshot to configured runtime nodes", async () =
       status: 200,
       routes: 1,
       generatedAt: fixedNow(),
+      snapshotId: publish.snapshot.id,
     });
 
     assert.equal(receivedSnapshots.length, 1);
+    assert.equal(receivedSnapshots[0]?.id, publish.snapshot.id);
     assert.equal(receivedSnapshots[0]?.routes[0]?.host, "hello.example.dev");
     assert.equal(receivedSnapshots[0]?.routes[0]?.deploymentId, deployment.id);
   } finally {
@@ -558,6 +774,7 @@ test("HTTP API registers runtime nodes and publishes snapshots through the regis
       status: 200,
       routes: 1,
       generatedAt: fixedNow(),
+      snapshotId: publish.snapshot.id,
     });
     assert.equal(receivedSnapshots.length, 1);
   } finally {
@@ -843,6 +1060,7 @@ test("HTTP API exposes route snapshot publication history", async () => {
     assert.equal(publish.publicationId, "pub_5");
     assert.equal(history.length, 1);
     assert.equal(history[0].id, publish.publicationId);
+    assert.equal(history[0].snapshotId, publish.snapshot.id);
     assert.equal(history[0].ok, true);
     assert.equal(history[0].routes, 1);
     assert.equal(history[0].targets[0].id, "rt_local");
@@ -859,6 +1077,18 @@ async function postJson(baseUrl: string, path: string, body: unknown) {
     body: JSON.stringify(body),
   });
   if (response.status !== 201) {
+    assert.fail(await response.text());
+  }
+  return await response.json();
+}
+
+async function postJsonOk(baseUrl: string, path: string, body: unknown) {
+  const response = await fetch(`${baseUrl}${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (response.status !== 200) {
     assert.fail(await response.text());
   }
   return await response.json();
@@ -976,6 +1206,21 @@ async function readJson<T>(request: any): Promise<T> {
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   }
   return JSON.parse(Buffer.concat(chunks).toString("utf8")) as T;
+}
+
+async function eventually(assertion: () => Promise<void>, timeoutMs = 1000): Promise<void> {
+  const started = Date.now();
+  let lastError: unknown;
+  while (Date.now() - started < timeoutMs) {
+    try {
+      await assertion();
+      return;
+    } catch (error) {
+      lastError = error;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
+  throw lastError;
 }
 
 function digest(seed: string): string {

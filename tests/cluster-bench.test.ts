@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   buildClusterRouteSnapshot,
+  clusterEngineCacheVariant,
+  clusterHostPoolingArgs,
   formatClusterBenchmarkMarkdown,
   parseClusterBenchArgs,
 } from "../src/cluster-bench.ts";
@@ -31,6 +33,69 @@ test("cluster benchmark CLI args parse node counts and concurrency list", () => 
   assert.equal(options.warmup, 3);
   assert.deepEqual(options.concurrency, [1, 8, 32]);
   assert.equal(options.format, "json");
+});
+
+test("cluster benchmark CLI args parse daemon host mode and pooling args", () => {
+  const options = parseClusterBenchArgs([
+    "--component",
+    "worker.component.wasm",
+    "--host-daemon-url",
+    "http://127.0.0.1:8790",
+    "--pooling-total-component-instances",
+    "64",
+    "--pooling-memory-mb",
+    "64",
+    "--pooling-total-core-instances",
+    "256",
+    "--pooling-total-memories",
+    "64",
+    "--pooling-total-tables",
+    "128",
+  ]);
+
+  assert.equal(options.hostDaemonUrl, "http://127.0.0.1:8790");
+  assert.deepEqual(clusterHostPoolingArgs(options), [
+    "--pooling-total-component-instances",
+    "64",
+    "--pooling-memory-mb",
+    "64",
+    "--pooling-total-core-instances",
+    "256",
+    "--pooling-total-memories",
+    "64",
+    "--pooling-total-tables",
+    "128",
+  ]);
+});
+
+test("cluster benchmark daemon cache variant stays short and path safe", () => {
+  const args = clusterHostPoolingArgs(parseClusterBenchArgs([
+    "--component",
+    "worker.component.wasm",
+    "--host-daemon-url",
+    "http://127.0.0.1:8790",
+    "--pooling-total-component-instances",
+    "64",
+    "--pooling-memory-mb",
+    "64",
+    "--pooling-total-core-instances",
+    "256",
+    "--pooling-total-memories",
+    "64",
+    "--pooling-total-tables",
+    "128",
+    "--pooling-table-elements",
+    "4096",
+    "--pooling-component-instance-mb",
+    "2",
+    "--pooling-core-instance-mb",
+    "3",
+  ]));
+
+  const variant = clusterEngineCacheVariant(args);
+
+  assert.match(variant, /^engine-[a-f0-9]{16}$/);
+  assert.equal(variant.length, "engine-".length + 16);
 });
 
 test("cluster route snapshot keeps primary deployment aligned with first target", () => {

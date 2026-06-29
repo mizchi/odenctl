@@ -30,6 +30,7 @@ export interface ControlPlaneRepository {
   createDeployment(deployment: Deployment): Deployment;
   getDeployment(id: string): Deployment | undefined;
   upsertRoute(route: RoutePointer): RoutePointer;
+  getRoute(projectId: string, host: string, pathPrefix: string): RoutePointer | undefined;
   listRoutes(): RoutePointer[];
   createRuntimeNode(node: RuntimeNode): RuntimeNode;
   getRuntimeNode(id: string): RuntimeNode | undefined;
@@ -285,6 +286,13 @@ class SqliteControlPlaneRepository implements ControlPlaneRepository {
     }
   }
 
+  getRoute(projectId: string, host: string, pathPrefix: string): RoutePointer | undefined {
+    const row = this.db
+      .prepare("select * from routes where project_id = ? and host = ? and path_prefix = ?")
+      .get(projectId, host, pathPrefix);
+    return row ? routeFromRow(row) : undefined;
+  }
+
   listRoutes(): RoutePointer[] {
     const rows = this.db
       .prepare("select * from routes order by host asc, length(path_prefix) desc, path_prefix asc")
@@ -362,15 +370,17 @@ class SqliteControlPlaneRepository implements ControlPlaneRepository {
         .prepare(
           `insert into route_snapshot_publications (
             id,
+            snapshot_id,
             snapshot_generated_at,
             routes,
             ok,
             targets_json,
             created_at
-          ) values (?, ?, ?, ?, ?, ?)`,
+          ) values (?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           publication.id,
+          publication.snapshotId ?? null,
           publication.snapshotGeneratedAt,
           publication.routes,
           publication.ok ? 1 : 0,
@@ -498,6 +508,7 @@ function runtimeNodeFromRow(row: any): RuntimeNode {
 function routeSnapshotPublicationFromRow(row: any): RouteSnapshotPublication {
   return {
     id: row.id,
+    ...(row.snapshot_id ? { snapshotId: row.snapshot_id } : {}),
     snapshotGeneratedAt: row.snapshot_generated_at,
     routes: row.routes,
     ok: row.ok === 1,
@@ -602,6 +613,7 @@ create table if not exists runtime_nodes (
 
 create table if not exists route_snapshot_publications (
   id text primary key,
+  snapshot_id text,
   snapshot_generated_at text not null,
   routes integer not null,
   ok integer not null,
@@ -643,6 +655,7 @@ const migrations: SchemaMigration[] = [
       db.exec(`
         create table if not exists route_snapshot_publications (
           id text primary key,
+          snapshot_id text,
           snapshot_generated_at text not null,
           routes integer not null,
           ok integer not null,
@@ -683,6 +696,12 @@ const migrations: SchemaMigration[] = [
           foreign key (project_id) references projects(id)
         )
       `);
+    },
+  },
+  {
+    id: "202606300002_route_snapshot_id",
+    apply(db) {
+      ensureColumn(db, "route_snapshot_publications", "snapshot_id", "text");
     },
   },
 ];

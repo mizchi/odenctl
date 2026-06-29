@@ -5,6 +5,7 @@ guest_wasm := "examples/hello-worker/target/wasm32-wasip1/debug/hello_worker.was
 guest_component := "examples/hello-worker/target/wasm32-wasip1/debug/hello_worker.component.wasm"
 fly_control_app := env_var_or_default("FLY_CONTROL_APP", "wasmplane-control")
 fly_runtime_app := env_var_or_default("FLY_RUNTIME_APP", "wasmplane-runtime")
+fly_collector_app := env_var_or_default("FLY_COLLECTOR_APP", "wasmplane-otel-collector")
 fly_region := env_var_or_default("FLY_REGION", "nrt")
 
 test:
@@ -42,6 +43,23 @@ bench: rust-build guest-build
 cluster-bench: rust-build guest-build
     pnpm cluster-bench --component "{{ guest_component }}" --host-bin target/debug/wasmplane-wasip3-host --nodes 1,2,4 --iterations 30 --warmup 2 --concurrency 1,4,16
 
+cluster-bench-daemon: rust-build guest-build
+    pnpm cluster-bench --component "{{ guest_component }}" --host-bin target/debug/wasmplane-wasip3-host --host-daemon-url http://127.0.0.1:8790 --pooling-total-component-instances 64 --pooling-total-core-instances 256 --pooling-total-memories 64 --pooling-total-tables 128 --pooling-memory-mb 64 --nodes 1,2,4 --iterations 30 --warmup 2 --concurrency 1,4,16
+
+pg-migrate:
+    test -n "$DATABASE_URL"
+    psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/postgres/001_init.sql
+    psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "insert into schema_migrations (id, applied_at) values ('202606300001_postgres_init', now()::text) on conflict (id) do nothing"
+
+pg-backup output="backups/wasmplane.dump":
+    test -n "$DATABASE_URL"
+    mkdir -p "$(dirname "{{ output }}")"
+    pg_dump "$DATABASE_URL" --format=custom --file "{{ output }}"
+
+pg-restore input:
+    test -n "$DATABASE_URL"
+    pg_restore --clean --if-exists --no-owner --dbname "$DATABASE_URL" "{{ input }}"
+
 fly-create-volumes:
     fly volumes create wasmplane_control_data -a "{{ fly_control_app }}" -r "{{ fly_region }}" -s 1 --yes
     fly volumes create wasmplane_runtime_data -a "{{ fly_runtime_app }}" -r "{{ fly_region }}" -s 1 --yes
@@ -52,12 +70,22 @@ fly-deploy-control:
 fly-deploy-runtime:
     fly deploy -c fly.runtime.toml -a "{{ fly_runtime_app }}"
 
+fly-deploy-collector:
+    fly deploy -c fly.collector.toml -a "{{ fly_collector_app }}"
+
+fly-logs-collector:
+    fly logs -a "{{ fly_collector_app }}"
+
 fly-status:
     fly status -a "{{ fly_control_app }}"
     fly status -a "{{ fly_runtime_app }}"
+    fly status -a "{{ fly_collector_app }}"
 
 dev:
     pnpm start
 
 runtime: rust-build
     pnpm runtime
+
+host-daemon: rust-build
+    target/debug/wasmplane-wasip3-host serve --host 127.0.0.1 --port 8790 --kv-store-dir .wasmplane/kv --max-prepared-components 512 --max-concurrent-invocations 64 --pooling-total-component-instances 64 --pooling-total-core-instances 256 --pooling-total-memories 64 --pooling-total-tables 128 --pooling-memory-mb 64

@@ -21,6 +21,8 @@ export interface Wasip3HostBackendOptions {
   cacheDir: string;
   hostBin?: string;
   hostArgsPrefix?: string[];
+  compileArgs?: string[];
+  cacheVariant?: string;
   wasmToolsBin?: string;
   witPath?: string;
   world?: typeof MVP_WORKER_WORLD;
@@ -35,9 +37,16 @@ export interface Wasip3HostInvokerOptions {
   commandRunner?: CommandRunner;
 }
 
+export interface Wasip3HostDaemonInvokerOptions {
+  url: string;
+  fetch?: typeof fetch;
+}
+
 export function createWasip3HostBackend(options: Wasip3HostBackendOptions): RuntimeBackend {
   const hostBin = options.hostBin ?? "wasmplane-wasip3-host";
   const hostArgsPrefix = options.hostArgsPrefix ?? [];
+  const compileArgs = options.compileArgs ?? [];
+  const cacheVariant = options.cacheVariant ? `-${safePathFragment(options.cacheVariant)}` : "";
   const wasmToolsBin = options.wasmToolsBin ?? "wasm-tools";
   const witPath = options.witPath ?? join(process.cwd(), "wit/myedge-runtime.wit");
   const world = options.world ?? MVP_WORKER_WORLD;
@@ -51,7 +60,7 @@ export function createWasip3HostBackend(options: Wasip3HostBackendOptions): Runt
 
       const precompiledPath = join(
         options.cacheDir,
-        `${safePathFragment(request.deploymentId)}-${digestFragment(request.artifact.digest)}.cwasm`,
+        `${safePathFragment(request.deploymentId)}-${digestFragment(request.artifact.digest)}${cacheVariant}.cwasm`,
       );
       if (await exists(precompiledPath)) {
         return compiledResult(request, precompiledPath, true);
@@ -75,6 +84,7 @@ export function createWasip3HostBackend(options: Wasip3HostBackendOptions): Runt
             request.artifact.path,
             "--out",
             tmpPath,
+            ...compileArgs,
           ],
           { timeoutMs: Math.max(1000, request.limits.wallMs * 2) },
         );
@@ -130,6 +140,50 @@ export function createWasip3HostInvoker(options: Wasip3HostInvokerOptions = {}):
   };
 }
 
+export function createWasip3HostDaemonInvoker(options: Wasip3HostDaemonInvokerOptions): RuntimeInvoker {
+  const baseUrl = options.url.replace(/\/+$/, "");
+  const fetchImpl = options.fetch ?? fetch;
+  return {
+    async invoke(request: InvokeComponentRequest): Promise<InvokeComponentResponse> {
+      try {
+        const response = await fetchImpl(`${baseUrl}/invoke`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            precompiled: request.component.precompiledPath,
+            method: request.method,
+            uri: request.uri,
+            headers: request.headers,
+            body: Buffer.from(request.body).toString("utf8"),
+            limits: request.component.limits
+              ? {
+                wallMs: request.component.limits.wallMs,
+                memoryMb: request.component.limits.memoryMb,
+                requestBytes: request.component.limits.requestBytes,
+                responseBytes: request.component.limits.responseBytes,
+                subrequests: request.component.limits.subrequests,
+                hostCalls: request.component.limits.hostCalls,
+              }
+              : undefined,
+            capabilities: request.component.capabilities,
+          }),
+        });
+        const text = await response.text();
+        if (!response.ok) {
+          throw new RuntimeError("invoke", daemonErrorMessage(text, response.status));
+        }
+        return parseInvokeResponse(text);
+      } catch (error) {
+        if (error instanceof RuntimeError && error.code === "invoke") {
+          throw error;
+        }
+        const message = error instanceof Error ? error.message : String(error);
+        throw new RuntimeError("invoke", message);
+      }
+    },
+  };
+}
+
 function kvStoreArgs(kvStoreDir: string | undefined): string[] {
   return kvStoreDir ? ["--kv-store-dir", kvStoreDir] : [];
 }
@@ -169,6 +223,19 @@ function parseInvokeResponse(stdout: string): InvokeComponentResponse {
     headers: parseHeaders(record.headers),
     body: Buffer.from(typeof record.body === "string" ? record.body : "", "utf8"),
   };
+}
+
+function daemonErrorMessage(text: string, status: number): string {
+  try {
+    const value = JSON.parse(text);
+    const message = value?.error?.message;
+    if (typeof message === "string") {
+      return message;
+    }
+  } catch {
+    // Fall through to the raw text/status fallback.
+  }
+  return `wasip3 host daemon returned ${status}${text ? `: ${text}` : ""}`;
 }
 
 function parseHeaders(value: unknown): Array<{ name: string; value: string }> {
