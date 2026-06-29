@@ -3,6 +3,9 @@ set shell := ["zsh", "-cu"]
 wasi_adapter := env_var_or_default("WASI_PREVIEW1_ADAPTER", "node_modules/@bytecodealliance/jco/lib/wasi_snapshot_preview1.reactor.wasm")
 guest_wasm := "examples/hello-worker/target/wasm32-wasip1/debug/hello_worker.wasm"
 guest_component := "examples/hello-worker/target/wasm32-wasip1/debug/hello_worker.component.wasm"
+fly_control_app := env_var_or_default("FLY_CONTROL_APP", "wasmplane-control")
+fly_runtime_app := env_var_or_default("FLY_RUNTIME_APP", "wasmplane-runtime")
+fly_region := env_var_or_default("FLY_REGION", "nrt")
 
 test:
     pnpm test
@@ -35,6 +38,23 @@ guest-invoke: rust-build guest-build
 
 bench: rust-build guest-build
     pnpm bench all --component "{{ guest_component }}" --host-bin target/debug/wasmplane-wasip3-host --iterations 30 --warmup 3 --concurrency 1,2,4
+
+cluster-bench: rust-build guest-build
+    pnpm cluster-bench --component "{{ guest_component }}" --host-bin target/debug/wasmplane-wasip3-host --nodes 1,2,4 --iterations 30 --warmup 2 --concurrency 1,4,16
+
+fly-create-volumes:
+    fly volumes create wasmplane_control_data -a "{{ fly_control_app }}" -r "{{ fly_region }}" -s 1 --yes
+    fly volumes create wasmplane_runtime_data -a "{{ fly_runtime_app }}" -r "{{ fly_region }}" -s 1 --yes
+
+fly-deploy-control:
+    fly deploy -c fly.control.toml -a "{{ fly_control_app }}"
+
+fly-deploy-runtime:
+    fly deploy -c fly.runtime.toml -a "{{ fly_runtime_app }}"
+
+fly-status:
+    fly status -a "{{ fly_control_app }}"
+    fly status -a "{{ fly_runtime_app }}"
 
 dev:
     pnpm start

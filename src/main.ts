@@ -8,6 +8,7 @@ const dbPath = process.env.WASMPLANE_DB ?? "wasmplane.sqlite";
 const port = Number.parseInt(process.env.PORT ?? "8787", 10);
 const host = process.env.HOST ?? "127.0.0.1";
 const artifactStoreDir = process.env.WASMPLANE_ARTIFACT_DIR ?? ".wasmplane/artifacts";
+const artifactPublicBaseUrl = process.env.WASMPLANE_ARTIFACT_PUBLIC_BASE_URL;
 const apiToken = process.env.WASMPLANE_API_TOKEN;
 const runtimeNodeToken = process.env.WASMPLANE_RUNTIME_TOKEN;
 
@@ -17,6 +18,7 @@ const controlPlane = createControlPlane({
 const app = createHttpApp({
   controlPlane,
   artifactStoreDir,
+  artifactPublicBaseUrl,
   artifactValidator:
     process.env.WASMPLANE_VALIDATE_LOCAL_ARTIFACTS === "0"
       ? undefined

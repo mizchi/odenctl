@@ -1,0 +1,40 @@
+app = "wasmplane-control"
+primary_region = "nrt"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[processes]
+  app = "node --experimental-strip-types src/main.ts"
+
+[env]
+  HOST = "0.0.0.0"
+  PORT = "8080"
+  WASMPLANE_DB = "/data/wasmplane.sqlite"
+  WASMPLANE_ARTIFACT_DIR = "/data/artifacts"
+  WASMPLANE_ARTIFACT_PUBLIC_BASE_URL = "auto"
+  WASMPLANE_WASIP3_HOST_BIN = "/usr/local/bin/wasmplane-wasip3-host"
+
+[mounts]
+  source = "wasmplane_control_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ["app"]
+
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval = "30s"
+    method = "GET"
+    timeout = "5s"
+    path = "/healthz"
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory = "1gb"

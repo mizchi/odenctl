@@ -1,0 +1,8 @@
+.git
+.wasmplane
+node_modules
+target
+wasmplane.sqlite
+*.sqlite
+*.db
+examples/hello-worker/target

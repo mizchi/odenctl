@@ -1,6 +1,5 @@
 import { createServer } from "node:http";
-import { unlink } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
+import { readFile, unlink } from "node:fs/promises";
 import type {
   RouteSnapshot,
   RouteSnapshotPublication,
@@ -8,7 +7,7 @@ import type {
 } from "../control-plane/contracts.ts";
 import type { LocalArtifactValidator } from "../control-plane/artifact-validation.ts";
 import { ControlPlaneError, isControlPlaneError } from "../control-plane/errors.ts";
-import { ingestLocalArtifact } from "../control-plane/local-artifacts.ts";
+import { ingestLocalArtifact, localArtifactPath } from "../control-plane/local-artifacts.ts";
 import {
   type FetchLike,
   publishRouteSnapshot,
@@ -19,6 +18,7 @@ export interface HttpAppOptions {
   controlPlane: {
     createProject(input: any): unknown;
     createArtifact(input: any): unknown;
+    getProjectArtifactByDigest(input: any): any | undefined;
     createSecret(input: any): unknown;
     getSecret(input: any): unknown;
     listProjectSecrets(input: any): unknown;
@@ -41,6 +41,7 @@ export interface HttpAppOptions {
   runtimeNodes?: RuntimeNodeTarget[];
   runtimeNodeToken?: string;
   artifactStoreDir?: string;
+  artifactPublicBaseUrl?: string;
   artifactValidator?: LocalArtifactValidator;
   apiToken?: string;
   fetch?: FetchLike;
@@ -54,6 +55,14 @@ export function createHttpApp(options: HttpAppOptions) {
 
       if (method === "GET" && url.pathname === "/healthz") {
         writeJson(response, 200, { ok: true });
+        return;
+      }
+      const localArtifact = localArtifactMatch(method, url.pathname);
+      if (localArtifact) {
+        if (!options.artifactStoreDir) {
+          throw new ControlPlaneError("validation", "local artifact store is not configured");
+        }
+        await writeLocalArtifact(response, options.artifactStoreDir, localArtifact.digestHex);
         return;
       }
       if (!authorizeRequest(options, request.headers)) {
@@ -78,17 +87,25 @@ export function createHttpApp(options: HttpAppOptions) {
         const ingested = await ingestLocalArtifact({
           storeDir: options.artifactStoreDir,
           bytesBase64: input.bytesBase64,
+          publicBaseUrl: localArtifactPublicBaseUrl(options, request.headers),
         });
+        const existing = options.controlPlane.getProjectArtifactByDigest({
+          projectId: input.projectId,
+          digest: ingested.digest,
+        });
+        if (existing) {
+          writeJson(response, 200, existing);
+          return;
+        }
         if (options.artifactValidator) {
-          const artifactPath = filePathFromLocation(ingested.location);
           try {
             await options.artifactValidator.validate({
-              path: artifactPath,
+              path: ingested.path,
               digest: ingested.digest,
               location: ingested.location,
             });
           } catch (error) {
-            await unlink(artifactPath).catch(() => undefined);
+            await unlink(ingested.path).catch(() => undefined);
             if (isControlPlaneError(error)) {
               throw error;
             }
@@ -318,6 +335,17 @@ function runtimeNodeHeartbeatMatch(method: string, pathname: string): { id: stri
   return { id: decodeURIComponent(match[1]) };
 }
 
+function localArtifactMatch(method: string, pathname: string): { digestHex: string } | undefined {
+  if (method !== "GET") {
+    return undefined;
+  }
+  const match = /^\/artifacts\/local\/([a-fA-F0-9]{64})\.wasm$/.exec(pathname);
+  if (!match) {
+    return undefined;
+  }
+  return { digestHex: match[1].toLowerCase() };
+}
+
 function projectSecretsMatch(method: string, pathname: string): { projectId: string } | undefined {
   if (method !== "GET") {
     return undefined;
@@ -381,17 +409,44 @@ function objectRecord(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-function filePathFromLocation(location: string): string {
-  const url = new URL(location);
-  if (url.protocol !== "file:") {
-    throw new ControlPlaneError("validation", "local artifact location must be a file URL");
-  }
-  return fileURLToPath(url);
-}
-
 function writeJson(response: any, status: number, value: unknown) {
   response.writeHead(status, {
     "content-type": "application/json; charset=utf-8",
   });
   response.end(JSON.stringify(value));
+}
+
+async function writeLocalArtifact(response: any, storeDir: string, digestHex: string) {
+  try {
+    const bytes = await readFile(localArtifactPath(storeDir, digestHex));
+    response.writeHead(200, {
+      "cache-control": "public, max-age=31536000, immutable",
+      "content-type": "application/wasm",
+    });
+    response.end(bytes);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      writeJson(response, 404, { error: { code: "not_found", message: "artifact not found" } });
+      return;
+    }
+    throw error;
+  }
+}
+
+function localArtifactPublicBaseUrl(
+  options: HttpAppOptions,
+  headers: Record<string, string | string[] | undefined>,
+): string | undefined {
+  if (!options.artifactPublicBaseUrl) {
+    return undefined;
+  }
+  if (options.artifactPublicBaseUrl !== "auto") {
+    return options.artifactPublicBaseUrl;
+  }
+  const host = firstHeader(headers["x-forwarded-host"]) ?? firstHeader(headers.host);
+  if (!host) {
+    return undefined;
+  }
+  const proto = firstHeader(headers["x-forwarded-proto"]) ?? "http";
+  return `${proto}://${host}`;
 }

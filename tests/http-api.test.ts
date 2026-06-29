@@ -657,6 +657,85 @@ test("HTTP API stores local artifact bytes and creates a file artifact", async (
   }
 });
 
+test("HTTP API local artifact upload is idempotent for the same project and digest", async () => {
+  const artifactDir = await mkdtemp(join(tmpdir(), "wasmplane-artifacts-"));
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+  });
+  const app = createHttpApp({ controlPlane: control, artifactStoreDir: artifactDir });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const project = await postJson(baseUrl, "/projects", { name: "hello" });
+    const bytes = Buffer.from("component bytes");
+    const first = await postJson(baseUrl, "/artifacts/local", {
+      id: "art_first",
+      projectId: project.id,
+      bytesBase64: bytes.toString("base64"),
+    });
+    const secondResponse = await fetch(`${baseUrl}/artifacts/local`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        id: "art_second",
+        projectId: project.id,
+        bytesBase64: bytes.toString("base64"),
+      }),
+    });
+    assert.equal(secondResponse.status, 200);
+    const second = await secondResponse.json();
+
+    assert.equal(second.id, first.id);
+    assert.equal(second.digest, first.digest);
+    assert.equal(second.location, first.location);
+    assert.deepEqual(await readFile(fileURLToPath(second.location)), bytes);
+  } finally {
+    await app.close();
+  }
+});
+
+test("HTTP API can expose local artifact bytes through an HTTP artifact URL", async () => {
+  const artifactDir = await mkdtemp(join(tmpdir(), "wasmplane-artifacts-"));
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+  });
+  const app = createHttpApp({
+    controlPlane: control,
+    artifactStoreDir: artifactDir,
+    artifactPublicBaseUrl: "auto",
+  });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const project = await postJson(baseUrl, "/projects", { name: "hello" });
+    const bytes = Buffer.from("component bytes");
+    const artifact = await postJson(baseUrl, "/artifacts/local", {
+      projectId: project.id,
+      bytesBase64: bytes.toString("base64"),
+    });
+
+    assert.equal(artifact.location.startsWith(`${baseUrl}/artifacts/local/`), true);
+    const artifactResponse = await fetch(artifact.location);
+    assert.equal(artifactResponse.status, 200);
+    assert.equal(artifactResponse.headers.get("content-type"), "application/wasm");
+    assert.deepEqual(Buffer.from(await artifactResponse.arrayBuffer()), bytes);
+  } finally {
+    await app.close();
+  }
+});
+
 test("HTTP API validates local artifact bytes before creating artifacts", async () => {
   const artifactDir = await mkdtemp(join(tmpdir(), "wasmplane-artifacts-"));
   const validatorCalls: string[] = [];

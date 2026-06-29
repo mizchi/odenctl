@@ -11,7 +11,8 @@
     "start": "node --experimental-strip-types src/main.ts",
     "runtime": "node --experimental-strip-types src/runtime/main.ts",
     "wasmplane": "node --experimental-strip-types src/cli.ts",
-    "bench": "node --experimental-strip-types src/bench.ts"
+    "bench": "node --experimental-strip-types src/bench.ts",
+    "cluster-bench": "node --experimental-strip-types src/cluster-bench.ts"
   },
   "devDependencies": {
     "@bytecodealliance/jco": "1.15.4"

@@ -57,6 +57,53 @@ Runtime-oriented tests expect these CLIs on `PATH`:
 - `wasm-tools`
 - `wit-bindgen`
 
+## Fly.io Trial Deploy
+
+The Fly setup uses one shared Docker image and two Fly apps:
+
+- control app: `node --experimental-strip-types src/main.ts`
+- runtime app: `node --experimental-strip-types src/runtime/main.ts`
+
+Pick globally unique app names before running the commands:
+
+```sh
+export FLY_CONTROL_APP=mz-wasmplane-control
+export FLY_RUNTIME_APP=mz-wasmplane-runtime
+export FLY_REGION=nrt
+export WASMPLANE_CONTROL_PLANE_TOKEN="$(openssl rand -hex 24)"
+export WASMPLANE_RUNTIME_TOKEN="$(openssl rand -hex 24)"
+
+fly apps create "$FLY_CONTROL_APP"
+fly apps create "$FLY_RUNTIME_APP"
+just fly-create-volumes
+
+fly secrets set -a "$FLY_CONTROL_APP" \
+  WASMPLANE_API_TOKEN="$WASMPLANE_CONTROL_PLANE_TOKEN" \
+  WASMPLANE_RUNTIME_TOKEN="$WASMPLANE_RUNTIME_TOKEN"
+
+fly secrets set -a "$FLY_RUNTIME_APP" \
+  CONTROL_PLANE_URL="https://$FLY_CONTROL_APP.fly.dev" \
+  RUNTIME_PUBLIC_URL="https://$FLY_RUNTIME_APP.fly.dev" \
+  WASMPLANE_CONTROL_PLANE_TOKEN="$WASMPLANE_CONTROL_PLANE_TOKEN" \
+  WASMPLANE_RUNTIME_TOKEN="$WASMPLANE_RUNTIME_TOKEN"
+
+just fly-deploy-control
+just fly-deploy-runtime
+```
+
+Check the deployed services:
+
+```sh
+curl -H "authorization: Bearer $WASMPLANE_CONTROL_PLANE_TOKEN" \
+  "https://$FLY_CONTROL_APP.fly.dev/runtime-nodes"
+curl "https://$FLY_RUNTIME_APP.fly.dev/__runtime/healthz"
+```
+
+The control app stores SQLite state and uploaded local artifacts on `/data`. For Fly, local uploads
+are recorded as `https://<control-app>/artifacts/local/<digest>.wasm`, so the separate runtime app can
+materialize them over HTTP. The runtime app stores `.cwasm`, artifact, and KV cache under `/data`.
+For multiple runtime Machines, create one `wasmplane_runtime_data` volume per Machine region.
+
 The runtime supervisor code currently prepares deployments by resolving a route snapshot,
 materializing `file://`, `http://`, or `https://` artifacts, verifying their `sha256` digest,
 validating the component through the Rust `wasmplane-wasip3-host` linker, and precompiling through
@@ -144,6 +191,28 @@ The output includes per-run throughput, average latency, p50/p95/p99 latency, an
 `host.invoke.component` with `host.invoke.cwasm` to isolate the benefit of skipping Cranelift
 compilation on each host process start. Use `--format json` or `--output bench.json` for
 machine-readable result capture.
+
+Cluster emulation starts multiple in-process runtime nodes, publishes route snapshots to every node,
+switches from a blue deployment to a green deployment, waits until each node returns the new
+`x-wasmplane-deployment`, and then runs aggregate HTTP throughput against the warmed green
+deployment:
+
+```sh
+just cluster-bench
+
+pnpm cluster-bench \
+  --component examples/hello-worker/target/wasm32-wasip1/debug/hello_worker.component.wasm \
+  --host-bin target/debug/wasmplane-wasip3-host \
+  --nodes 1,2,4 \
+  --iterations 100 \
+  --concurrency 1,8,32 \
+  --format json
+```
+
+`cluster.switch.cold` reports snapshot publish acknowledgement latency separately from the
+post-publish visibility latency. The visibility latency includes the first green request on each
+node, so it includes lazy materialization and `.cwasm` precompile for that deployment. The
+`cluster.http.cwasm` rows report aggregate worker HTTP throughput across the emulated runtime nodes.
 
 CI runs `just test` and `just e2e` on GitHub Actions. The workflow installs Node 24, Rust stable,
 `wasm32-wasip1`, `wasm-tools 1.245.1`, and `wit-bindgen-cli 0.51.0`.

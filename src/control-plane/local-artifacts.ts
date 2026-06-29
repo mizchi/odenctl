@@ -7,11 +7,13 @@ import { ControlPlaneError } from "./errors.ts";
 export interface LocalArtifactIngestInput {
   storeDir: string;
   bytesBase64: unknown;
+  publicBaseUrl?: string;
 }
 
 export interface LocalArtifactIngestResult {
   digest: string;
   location: string;
+  path: string;
   sizeBytes: number;
 }
 
@@ -39,7 +41,17 @@ export async function ingestLocalArtifact(
   });
   return {
     digest,
-    location: pathToFileURL(path).href,
+    location: input.publicBaseUrl
+      ? `${input.publicBaseUrl.replace(/\/+$/, "")}/artifacts/local/${digestHex}.wasm`
+      : pathToFileURL(path).href,
+    path,
     sizeBytes: bytes.length,
   };
+}
+
+export function localArtifactPath(storeDir: string, digestHex: string): string {
+  if (!/^[a-fA-F0-9]{64}$/.test(digestHex)) {
+    throw new ControlPlaneError("validation", "artifact digest must be a 64 character hex string");
+  }
+  return join(storeDir, `${digestHex.toLowerCase()}.wasm`);
 }

@@ -16,6 +16,7 @@ export interface ControlPlaneRepository {
   getProject(id: string): Project | undefined;
   createArtifact(artifact: Artifact): Artifact;
   getArtifact(id: string): Artifact | undefined;
+  getArtifactByProjectDigest(projectId: string, digest: string): Artifact | undefined;
   createSecret(secret: Secret, value: string): Secret;
   getSecret(id: string): Secret | undefined;
   getSecretValue(id: string): string | undefined;
@@ -93,6 +94,13 @@ class SqliteControlPlaneRepository implements ControlPlaneRepository {
 
   getArtifact(id: string): Artifact | undefined {
     const row = this.db.prepare("select * from artifacts where id = ?").get(id);
+    return row ? artifactFromRow(row) : undefined;
+  }
+
+  getArtifactByProjectDigest(projectId: string, digest: string): Artifact | undefined {
+    const row = this.db
+      .prepare("select * from artifacts where project_id = ? and digest = ?")
+      .get(projectId, digest);
     return row ? artifactFromRow(row) : undefined;
   }
 

@@ -359,7 +359,8 @@ fn print_usage() {
 }
 
 fn json_escape(value: &str) -> String {
-    value.replace('\\', "\\\\").replace('"', "\\\"")
+    let encoded = serde_json::to_string(value).expect("string JSON encoding should not fail");
+    encoded[1..encoded.len() - 1].to_string()
 }
 
 fn headers_json(headers: &[(String, String)]) -> String {
@@ -498,6 +499,21 @@ mod tests {
         let error = parse_invoke_args(&mut args).expect_err("ambiguous source should fail");
 
         assert!(format!("{error:?}").contains("expected exactly one"));
+    }
+
+    #[test]
+    fn invoke_output_json_escapes_response_body_control_chars() {
+        let output = format!(
+            "{{\"status\":200,\"headers\":{},\"body\":\"{}\"}}",
+            headers_json(&[("x-message".to_string(), "quote: \"".to_string())]),
+            json_escape("line 1\nline 2\r\nquote: \"")
+        );
+
+        let parsed: Value = serde_json::from_str(&output).expect("valid response JSON");
+
+        assert_eq!(parsed["status"], 200);
+        assert_eq!(parsed["headers"][0]["value"], "quote: \"");
+        assert_eq!(parsed["body"], "line 1\nline 2\r\nquote: \"");
     }
 
     #[test]

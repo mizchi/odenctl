@@ -60,6 +60,11 @@ export interface CreateArtifactInput {
   sizeBytes: number;
 }
 
+export interface GetProjectArtifactByDigestInput {
+  projectId: string;
+  digest: string;
+}
+
 export interface CreateSecretInput {
   id?: string;
   projectId: string;
@@ -165,6 +170,11 @@ export function createControlPlane(options: ControlPlaneOptions) {
       createdAt: now(),
     };
     return repository.createArtifact(artifact);
+  }
+
+  function getProjectArtifactByDigest(input: GetProjectArtifactByDigestInput): Artifact | undefined {
+    requireProject(repository, input.projectId);
+    return repository.getArtifactByProjectDigest(input.projectId, normalizeDigest(input.digest));
   }
 
   function createSecret(input: CreateSecretInput): Secret {
@@ -351,6 +361,7 @@ export function createControlPlane(options: ControlPlaneOptions) {
   return {
     createProject,
     createArtifact,
+    getProjectArtifactByDigest,
     createSecret,
     getSecret,
     listProjectSecrets,
