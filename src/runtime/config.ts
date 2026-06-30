@@ -9,6 +9,8 @@ export interface RuntimeConfigEnv {
   WASMPLANE_RUNTIME_IDENTITY_KEY_ID?: string;
   WASMPLANE_RUNTIME_IDENTITY_KEYS?: string;
   WASMPLANE_RUNTIME_IDENTITY_CERT_SHA256?: string;
+  WASMPLANE_RUNTIME_CACHE_MAX_BYTES?: string;
+  WASMPLANE_RUNTIME_CACHE_MAX_AGE_MS?: string;
   FLY_APP_NAME?: string;
   FLY_MACHINE_ID?: string;
   FLY_REGION?: string;
@@ -23,6 +25,11 @@ export interface ProjectRateLimitConfig {
 export interface RuntimeAdvertisedIdentity {
   keyId: string;
   certificateSha256?: string;
+}
+
+export interface RuntimeCacheRetentionPolicy {
+  maxBytes?: number;
+  maxAgeMs?: number;
 }
 
 export function resolveRuntimeNodeId(env: RuntimeConfigEnv, host: string, port: number): string {
@@ -107,6 +114,18 @@ export function resolveRuntimeIdentity(env: RuntimeConfigEnv): RuntimeAdvertised
   };
 }
 
+export function parseRuntimeCacheRetentionPolicy(env: RuntimeConfigEnv): RuntimeCacheRetentionPolicy | undefined {
+  const maxBytes = positiveIntegerOrUndefined(env.WASMPLANE_RUNTIME_CACHE_MAX_BYTES);
+  const maxAgeMs = positiveIntegerOrUndefined(env.WASMPLANE_RUNTIME_CACHE_MAX_AGE_MS);
+  if (maxBytes === undefined && maxAgeMs === undefined) {
+    return undefined;
+  }
+  return {
+    ...(maxBytes !== undefined ? { maxBytes } : {}),
+    ...(maxAgeMs !== undefined ? { maxAgeMs } : {}),
+  };
+}
+
 export function parseProjectConcurrencyLimits(env: RuntimeConfigEnv): Record<string, number> | undefined {
   const raw = env.RUNTIME_PROJECT_CONCURRENCY_LIMITS;
   if (!raw || raw.trim().length === 0) {
@@ -162,6 +181,14 @@ function positiveInteger(value: string | undefined, fallback: number): number {
   }
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function positiveIntegerOrUndefined(value: string | undefined): number | undefined {
+  if (!value || !/^\d+$/.test(value.trim())) {
+    return undefined;
+  }
+  const parsed = Number.parseInt(value, 10);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
 }
 
 function firstNonEmpty(...values: Array<string | undefined>): string | undefined {

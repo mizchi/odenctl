@@ -69,6 +69,7 @@ export {
 } from "./runtime/artifacts.ts";
 export { registerRuntimeNode, sendRuntimeHeartbeat, startRuntimeHeartbeat } from "./runtime/heartbeat.ts";
 export { signRuntimeIdentityHeaders, verifyRuntimeIdentityHeaders } from "./runtime/identity.ts";
+export { pruneRuntimeCaches } from "./runtime/cache-retention.ts";
 export { createRuntimeNodeApp } from "./runtime/node-app.ts";
 export {
   createEnvSecretStore,

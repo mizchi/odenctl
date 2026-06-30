@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { mkdir, mkdtemp, stat, utimes, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { test } from "node:test";
 import {
   MVP_WASI_PROFILE,
@@ -256,6 +259,80 @@ test("runtime node verifies signed snapshot publishes with identity keys", async
     });
     assert.equal(signed.status, 200, await signed.text());
     assert.equal(loadedSnapshots.length, 1);
+  } finally {
+    await app.close();
+  }
+});
+
+test("runtime node cache GC endpoint keeps prepared component files", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "wasmplane-runtime-cache-gc-"));
+  const artifactDir = join(dir, "artifacts");
+  const cwasmDir = join(dir, "cwasm");
+  const activeArtifact = join(artifactDir, "active.wasm");
+  const staleArtifact = join(artifactDir, "stale.wasm");
+  const activeCwasm = join(cwasmDir, "active.cwasm");
+  const staleCwasm = join(cwasmDir, "stale.cwasm");
+  await writeRuntimeCacheFile(activeArtifact, "active artifact", "2026-06-26T11:55:00.000Z");
+  await writeRuntimeCacheFile(staleArtifact, "stale artifact", "2026-06-26T08:00:00.000Z");
+  await writeRuntimeCacheFile(activeCwasm, "active cwasm", "2026-06-26T11:55:00.000Z");
+  await writeRuntimeCacheFile(staleCwasm, "stale cwasm", "2026-06-26T08:00:00.000Z");
+  const supervisor = createRuntimeSupervisor({
+    snapshot: snapshot([route("dep_gc", "hello.example.dev", "/", digest("gc"))]),
+    artifactStore: {
+      async materialize(artifact) {
+        return {
+          path: activeArtifact,
+          digest: artifact.digest,
+          location: artifact.location,
+          verified: true,
+        };
+      },
+    },
+    backend: {
+      async compileComponent(request) {
+        return {
+          deploymentId: request.deploymentId,
+          backend: "wasmtime",
+          componentPath: request.artifact.path,
+          precompiledPath: activeCwasm,
+          cached: false,
+        };
+      },
+    },
+  });
+  const app = createRuntimeNodeApp({
+    supervisor,
+    invoker: {
+      async invoke() {
+        return { status: 200, headers: [], body: Buffer.from("ok") };
+      },
+    },
+    cacheRetention: {
+      artifactCacheDir: artifactDir,
+      precompiledCacheDir: cwasmDir,
+      maxAgeMs: 60 * 60 * 1000,
+      nowMs: () => Date.parse("2026-06-26T12:00:00.000Z"),
+    },
+  });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const hit = await fetch(`${baseUrl}/`, { headers: { "x-forwarded-host": "hello.example.dev" } });
+    assert.equal(hit.status, 200);
+    const gc = await fetch(`${baseUrl}/__runtime/cache/gc`, { method: "POST" });
+    if (gc.status !== 200) {
+      assert.fail(await gc.text());
+    }
+    const report = await gc.json();
+    assert.equal(report.removed, 2);
+    assert.equal(await runtimeFileExists(activeArtifact), true);
+    assert.equal(await runtimeFileExists(activeCwasm), true);
+    assert.equal(await runtimeFileExists(staleArtifact), false);
+    assert.equal(await runtimeFileExists(staleCwasm), false);
   } finally {
     await app.close();
   }
@@ -1375,6 +1452,22 @@ function compiledBackend() {
       };
     },
   };
+}
+
+async function writeRuntimeCacheFile(path: string, content: string, mtime: string) {
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, content, { flag: "w" });
+  const date = new Date(mtime);
+  await utimes(path, date, date);
+}
+
+async function runtimeFileExists(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function route(

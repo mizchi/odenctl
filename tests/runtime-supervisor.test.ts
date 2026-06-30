@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
@@ -19,6 +19,7 @@ import {
   runtimeOciArtifactOptionsFromEnv,
   runtimeS3ArtifactOptionsFromEnv,
 } from "../src/runtime/artifacts.ts";
+import { pruneRuntimeCaches } from "../src/runtime/cache-retention.ts";
 import { createRouteCache, createRuntimeSupervisor } from "../src/runtime/supervisor.ts";
 import {
   createWasip3HostBackend,
@@ -292,6 +293,45 @@ test("runtime supervisor selects weighted rollout targets deterministically", as
   await supervisor.prepareRoute({ host: "hello.example.dev", path: "/b" });
 
   assert.deepEqual(new Set(calls), new Set(["dep_blue", "dep_green"]));
+});
+
+test("runtime cache retention prunes stale and over-budget files while keeping active paths", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "wasmplane-cache-retention-"));
+  const artifactDir = join(dir, "artifacts");
+  const cwasmDir = join(dir, "cwasm");
+  await writeCacheFile(join(artifactDir, "active.wasm"), "active artifact", "2026-06-26T11:55:00.000Z");
+  await writeCacheFile(join(artifactDir, "stale.wasm"), "stale artifact", "2026-06-26T08:00:00.000Z");
+  await writeCacheFile(join(artifactDir, "old.wasm"), "old artifact bytes go here", "2026-06-26T11:10:00.000Z");
+  await writeCacheFile(join(artifactDir, "new.wasm"), "new artifact", "2026-06-26T11:50:00.000Z");
+  await writeCacheFile(join(cwasmDir, "active.cwasm"), "active cwasm", "2026-06-26T11:55:00.000Z");
+  await writeCacheFile(join(cwasmDir, "stale.cwasm"), "stale cwasm", "2026-06-26T08:00:00.000Z");
+
+  const report = await pruneRuntimeCaches({
+    artifactCacheDir: artifactDir,
+    precompiledCacheDir: cwasmDir,
+    maxAgeMs: 60 * 60 * 1000,
+    maxBytes: 27,
+    keepPaths: [join(artifactDir, "active.wasm"), join(cwasmDir, "active.cwasm")],
+    nowMs: () => Date.parse("2026-06-26T12:00:00.000Z"),
+  });
+
+  assert.equal(report.removed, 3);
+  assert.deepEqual(
+    report.directories.map((entry) => ({
+      kind: entry.kind,
+      removed: entry.removed.map((file) => file.name).sort(),
+    })),
+    [
+      { kind: "artifact", removed: ["old.wasm", "stale.wasm"] },
+      { kind: "precompiled", removed: ["stale.cwasm"] },
+    ],
+  );
+  assert.equal(await fileExists(join(artifactDir, "active.wasm")), true);
+  assert.equal(await fileExists(join(artifactDir, "new.wasm")), true);
+  assert.equal(await fileExists(join(artifactDir, "old.wasm")), false);
+  assert.equal(await fileExists(join(artifactDir, "stale.wasm")), false);
+  assert.equal(await fileExists(join(cwasmDir, "active.cwasm")), true);
+  assert.equal(await fileExists(join(cwasmDir, "stale.cwasm")), false);
 });
 
 test("file artifact store verifies sha256 digests", async () => {
@@ -1308,6 +1348,22 @@ function snapshotTarget(
 
 function digest(seed: string): string {
   return `sha256:${createHash("sha256").update(seed).digest("hex")}`;
+}
+
+async function writeCacheFile(path: string, content: string, mtime: string) {
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, content, { flag: "w" });
+  const date = new Date(mtime);
+  await utimes(path, date, date);
+}
+
+async function fileExists(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function waitFor(predicate: () => boolean) {

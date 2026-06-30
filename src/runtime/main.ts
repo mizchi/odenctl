@@ -12,6 +12,7 @@ import { startRuntimeHeartbeat } from "./heartbeat.ts";
 import {
   parseProjectConcurrencyLimits,
   parseProjectRateLimits,
+  parseRuntimeCacheRetentionPolicy,
   parseRuntimeIdentityKeys,
   parseRuntimeLabels,
   resolveRuntimeIdentity,
@@ -46,6 +47,7 @@ const runtimeRegion = resolveRuntimeRegion(process.env);
 const runtimeLabels = parseRuntimeLabels(process.env);
 const runtimeIdentity = resolveRuntimeIdentity(process.env);
 const runtimeIdentityKeys = parseRuntimeIdentityKeys(process.env);
+const runtimeCacheRetention = parseRuntimeCacheRetentionPolicy(process.env);
 const controlPlaneUrl = process.env.CONTROL_PLANE_URL ?? process.env.WASMPLANE_CONTROL_PLANE_URL;
 const controlPlaneToken = process.env.CONTROL_PLANE_TOKEN ?? process.env.WASMPLANE_CONTROL_PLANE_TOKEN;
 const runtimeManagementToken = process.env.WASMPLANE_RUNTIME_TOKEN;
@@ -103,6 +105,11 @@ const app = createRuntimeNodeApp({
   maxConcurrentInvocations: runtimeConcurrency,
   maxConcurrentInvocationsByProject: projectConcurrencyLimits,
   requestRateLimitsByProject: projectRateLimits,
+  cacheRetention: {
+    artifactCacheDir,
+    precompiledCacheDir: cacheDir,
+    ...runtimeCacheRetention,
+  },
   warmupOnSnapshot,
   telemetry: otlpTraceEndpoint
     ? createOtlpHttpTraceExporter({

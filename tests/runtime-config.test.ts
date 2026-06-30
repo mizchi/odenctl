@@ -3,6 +3,7 @@ import { test } from "node:test";
 import {
   parseProjectConcurrencyLimits,
   parseProjectRateLimits,
+  parseRuntimeCacheRetentionPolicy,
   parseRuntimeIdentityKeys,
   parseRuntimeLabels,
   resolveRuntimeIdentity,
@@ -92,4 +93,25 @@ test("runtime config parses per-project request rate limits", () => {
     },
   );
   assert.equal(parseProjectRateLimits({}), undefined);
+});
+
+test("runtime config parses cache retention policy", () => {
+  assert.deepEqual(
+    parseRuntimeCacheRetentionPolicy({
+      WASMPLANE_RUNTIME_CACHE_MAX_BYTES: "1048576",
+      WASMPLANE_RUNTIME_CACHE_MAX_AGE_MS: "3600000",
+    }),
+    {
+      maxBytes: 1048576,
+      maxAgeMs: 3600000,
+    },
+  );
+  assert.equal(parseRuntimeCacheRetentionPolicy({}), undefined);
+  assert.equal(
+    parseRuntimeCacheRetentionPolicy({
+      WASMPLANE_RUNTIME_CACHE_MAX_BYTES: "bad",
+      WASMPLANE_RUNTIME_CACHE_MAX_AGE_MS: "0",
+    }),
+    undefined,
+  );
 });

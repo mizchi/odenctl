@@ -104,3 +104,10 @@ Production readiness tasks, in implementation order.
 - [x] Default cleanup to offline nodes only.
 - [x] Keep stale active node deletion explicit.
 - [x] Add Admin UI controls for registry cleanup.
+
+## 16. Runtime cache retention
+
+- [x] Add cache retention for materialized artifact and `.cwasm` cache directories.
+- [x] Protect currently prepared component files from cache GC.
+- [x] Add a runtime management endpoint to trigger cache GC.
+- [x] Add env configuration for max cache bytes and max cache age.

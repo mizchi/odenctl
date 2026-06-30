@@ -154,6 +154,7 @@ runtime node の責務:
 - concurrency limit を超える request を拒否する
 - project-specific concurrency budget を超える request を拒否する
 - snapshot warmup の materialize/precompile concurrency を制限する
+- node-local artifact / `.cwasm` cache を retention policy で GC する
 
 runtime node registry は node URL/status に加えて region, labels, capacity, current load を持つ。
 heartbeat は capacity と active request load を更新する。operator は control-plane API または Admin UI
@@ -175,6 +176,11 @@ token だけでなく署名も検証する。key rotation は multi-key keyring 
 node の active `keyId` を切り替え、heartbeat 反映後に旧 key を外す。実際の mTLS は Fly private
 network や edge proxy の TLS 終端で行い、ここでは application-level proof-of-possession と
 certificate fingerprint pinning のための contract を提供する。
+
+runtime cache retention は `WASMPLANE_ARTIFACT_CACHE_DIR` と `WASMPLANE_CACHE_DIR` を対象にする。
+GC は max age を超えた file を先に消し、次に directory ごとの max bytes を超えていれば古い file から
+削除する。現在 prepared deployment が参照している materialized artifact と `.cwasm` は keep path として
+保護し、snapshot switch や warmup 中の hot path を壊さない。
 
 `RUNTIME_SNAPSHOT_WARMUP=1` の場合、snapshot ACK 前に target deployments を materialize/precompile
 する。これにより deploy switch 後の初回 request latency を抑える。warmup work は

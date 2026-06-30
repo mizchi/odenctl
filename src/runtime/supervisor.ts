@@ -99,12 +99,20 @@ export function createRuntimeSupervisor(options: RuntimeSupervisorOptions) {
     );
   }
 
+  async function preparedComponents(): Promise<CompiledComponent[]> {
+    const settled = await Promise.allSettled(prepared.values());
+    return settled
+      .filter((result): result is PromiseFulfilledResult<CompiledComponent> => result.status === "fulfilled")
+      .map((result) => result.value);
+  }
+
   return {
     matchRoute(input: RouteMatchInput): RouteSnapshotEntry | undefined {
       return routeCache.match(input);
     },
     prepareRoute,
     prepareDeployment,
+    preparedComponents,
     loadSnapshot,
     warmupSnapshot,
   };

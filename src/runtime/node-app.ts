@@ -9,6 +9,7 @@ import {
 } from "../control-plane/contracts.ts";
 import { RuntimeError } from "./errors.ts";
 import { verifyRuntimeIdentityHeaders } from "./identity.ts";
+import { pruneRuntimeCaches, type RuntimeCacheRetentionOptions } from "./cache-retention.ts";
 import { enforceRuntimeCapabilities } from "./policy.ts";
 import { resolveRuntimeCapabilities } from "./secrets.ts";
 import type { RuntimeTelemetry } from "./otel.ts";
@@ -31,6 +32,7 @@ export interface RuntimeNodeAppOptions {
   maxConcurrentInvocations?: number;
   maxConcurrentInvocationsByProject?: Record<string, number>;
   requestRateLimitsByProject?: Record<string, RuntimeProjectRateLimit>;
+  cacheRetention?: RuntimeCacheRetentionOptions;
   requestIdGenerator?: () => string;
   monotonicNowMs?: () => number;
   eventBufferSize?: number;
@@ -54,6 +56,7 @@ export interface RuntimeProjectRateLimit {
 export interface RuntimeNodeSupervisor {
   loadSnapshot(snapshot: RouteSnapshot): void;
   warmupSnapshot?(snapshot: RouteSnapshot): Promise<unknown>;
+  preparedComponents?(): CompiledComponent[] | Promise<CompiledComponent[]>;
   prepareRoute(input: RouteMatchInput): Promise<CompiledComponent>;
 }
 
@@ -117,6 +120,11 @@ export function createRuntimeNodeApp(options: RuntimeNodeAppOptions) {
           projectId: url.searchParams.get("projectId") ?? undefined,
           deploymentId: url.searchParams.get("deploymentId") ?? undefined,
         }));
+        return;
+      }
+
+      if (method === "POST" && url.pathname === "/__runtime/cache/gc") {
+        writeJson(response, 200, await runRuntimeCacheGc(options));
         return;
       }
 
@@ -345,6 +353,18 @@ function authorizeRuntimeIdentity(
     headers,
     keys: options.managementIdentityKeys,
   }).ok;
+}
+
+async function runRuntimeCacheGc(options: RuntimeNodeAppOptions) {
+  const prepared = await options.supervisor.preparedComponents?.() ?? [];
+  const activePaths = prepared.flatMap((component) => [component.componentPath, component.precompiledPath]);
+  return pruneRuntimeCaches({
+    ...(options.cacheRetention ?? {}),
+    keepPaths: [
+      ...(options.cacheRetention?.keepPaths ?? []),
+      ...activePaths,
+    ],
+  });
 }
 
 function authorizeRuntimeManagement(

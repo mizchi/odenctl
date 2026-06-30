@@ -129,6 +129,11 @@ Set `RUNTIME_SNAPSHOT_WARMUP=1` to make route snapshot ACKs wait until every dep
 the snapshot has been materialized and precompiled into the node-local `.cwasm` cache. Use
 `RUNTIME_SNAPSHOT_WARMUP_CONCURRENCY` to bound concurrent materialize/precompile work during
 snapshot warmup; the runtime default is 4.
+Set `WASMPLANE_RUNTIME_CACHE_MAX_BYTES` and/or `WASMPLANE_RUNTIME_CACHE_MAX_AGE_MS` to enable
+runtime cache retention. `POST /__runtime/cache/gc` scans `WASMPLANE_ARTIFACT_CACHE_DIR` and
+`WASMPLANE_CACHE_DIR`, removes files older than the age limit, then removes the oldest remaining
+files until each cache directory is below the byte limit. Artifact and `.cwasm` paths for currently
+prepared deployments are protected from deletion.
 Autoscalers can read `GET /autoscaling/signals` from the control plane to get per-runtime
 `activeRequests`, `concurrentRequests`, `loadRatio`, and saturation state. The autoscaling helpers
 turn these signals into scale-up/scale-down decisions, and the Fly Machines prototype reconciler can
@@ -449,6 +454,7 @@ Runtime node endpoints:
 - `GET /__runtime/metrics`
 - `GET /__runtime/events`
 - `GET /__runtime/logs`
+- `POST /__runtime/cache/gc`
 - `PUT /__runtime/snapshots/routes`
 - any other path: resolve by `x-forwarded-host` or `host`, prepare the component, then invoke it
   through `wasmplane-wasip3-host`.
