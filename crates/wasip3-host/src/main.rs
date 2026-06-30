@@ -470,6 +470,7 @@ fn parse_invoke_args(args: &mut impl Iterator<Item = String>) -> Result<InvokeAr
             "--headers" => headers = parse_headers_arg(&value)?,
             "--body" => body = value,
             "--wall-ms" => limits.wall_ms = Some(parse_u64(&value, "--wall-ms")?),
+            "--cpu-ms" => limits.cpu_ms = Some(parse_u64(&value, "--cpu-ms")?),
             "--memory-mb" => limits.memory_mb = Some(parse_u64(&value, "--memory-mb")?),
             "--request-bytes" => {
                 limits.request_bytes = Some(parse_usize(&value, "--request-bytes")?)
@@ -875,6 +876,9 @@ fn parse_limits_value(value: &Value) -> Result<InvocationLimits> {
     if let Some(value) = object.get("wallMs") {
         limits.wall_ms = Some(json_u64(value, "limits.wallMs")?);
     }
+    if let Some(value) = object.get("cpuMs") {
+        limits.cpu_ms = Some(json_u64(value, "limits.cpuMs")?);
+    }
     if let Some(value) = object.get("memoryMb") {
         limits.memory_mb = Some(json_u64(value, "limits.memoryMb")?);
     }
@@ -1035,7 +1039,7 @@ fn print_usage() {
         "  wasmplane-wasip3-host compile --component <component.wasm> --out <component.cwasm>"
     );
     eprintln!(
-        "  wasmplane-wasip3-host invoke (--component <component.wasm> | --precompiled <component.cwasm>) --method <METHOD> --uri <URI> [--headers <JSON>] [--body <TEXT>] [--wall-ms <MS>] [--memory-mb <MB>] [--request-bytes <BYTES>] [--response-bytes <BYTES>] [--subrequests <COUNT>] [--host-calls <COUNT>] [--capabilities <JSON>] [--kv-store-dir <DIR>]"
+        "  wasmplane-wasip3-host invoke (--component <component.wasm> | --precompiled <component.cwasm>) --method <METHOD> --uri <URI> [--headers <JSON>] [--body <TEXT>] [--wall-ms <MS>] [--cpu-ms <MS>] [--memory-mb <MB>] [--request-bytes <BYTES>] [--response-bytes <BYTES>] [--subrequests <COUNT>] [--host-calls <COUNT>] [--capabilities <JSON>] [--kv-store-dir <DIR>]"
     );
     eprintln!(
         "  wasmplane-wasip3-host serve [--host <HOST>] [--port <PORT>] [--kv-store-dir <DIR>] [--max-prepared-components <COUNT>] [--max-concurrent-invocations <COUNT>] [--pooling-total-component-instances <COUNT>] [--pooling-memory-mb <MB>]"
@@ -1089,6 +1093,8 @@ mod tests {
             "payload",
             "--wall-ms",
             "1000",
+            "--cpu-ms",
+            "50",
             "--memory-mb",
             "64",
             "--request-bytes",
@@ -1124,6 +1130,7 @@ mod tests {
         );
         assert_eq!(parsed.body, "payload");
         assert_eq!(parsed.limits.wall_ms, Some(1000));
+        assert_eq!(parsed.limits.cpu_ms, Some(50));
         assert_eq!(parsed.limits.memory_mb, Some(64));
         assert_eq!(parsed.limits.request_bytes, Some(1048576));
         assert_eq!(parsed.limits.response_bytes, Some(1048576));
@@ -1277,6 +1284,7 @@ mod tests {
             "body": "payload",
             "limits": {
                 "wallMs": 1000,
+                "cpuMs": 50,
                 "memoryMb": 64,
                 "requestBytes": 1024,
                 "responseBytes": 2048,
@@ -1307,6 +1315,7 @@ mod tests {
         );
         assert_eq!(parsed.body, "payload");
         assert_eq!(parsed.limits.wall_ms, Some(1000));
+        assert_eq!(parsed.limits.cpu_ms, Some(50));
         assert_eq!(parsed.limits.memory_mb, Some(64));
         assert_eq!(parsed.limits.request_bytes, Some(1024));
         assert_eq!(parsed.limits.response_bytes, Some(2048));

@@ -76,6 +76,12 @@ export interface InvokeComponentResponse {
   status: number;
   headers: RuntimeHeader[];
   body: Uint8Array;
+  logs?: RuntimeWorkerLogLine[];
+}
+
+export interface RuntimeWorkerLogLine {
+  level?: "debug" | "info" | "warn" | "error";
+  message: string;
 }
 
 export interface RuntimeHeader {

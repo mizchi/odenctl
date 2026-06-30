@@ -11,6 +11,7 @@ import { createJsonlAuditSink } from "../src/control-plane/audit.ts";
 import { createMemoryRepository } from "../src/control-plane/repository.ts";
 import { createControlPlane } from "../src/control-plane/service.ts";
 import { createHttpApp } from "../src/http/app.ts";
+import { verifyRuntimeIdentityHeaders } from "../src/runtime/identity.ts";
 
 test("HTTP API creates deployment and exposes compact route snapshot", async () => {
   const control = createControlPlane({
@@ -27,12 +28,23 @@ test("HTTP API creates deployment and exposes compact route snapshot", async () 
 
   try {
     const project = await postJson(baseUrl, "/projects", { name: "hello" });
+    const signature = { algorithm: "sha256-hmac", keyId: "ci", value: "1".repeat(64) };
+    const provenance = {
+      builder: "github-actions",
+      source: "github.com/mizchi/wasmplane",
+      revision: "abc123",
+      buildId: "run-1",
+    };
     const artifact = await postJson(baseUrl, "/artifacts", {
       projectId: project.id,
       digest: digest("hello"),
       location: "oci://registry.example.com/mizchi/hello:v1",
       sizeBytes: 42,
+      signature,
+      provenance,
     });
+    assert.deepEqual(artifact.signature, signature);
+    assert.deepEqual(artifact.provenance, provenance);
     const deployment = await postJson(baseUrl, "/deployments", {
       projectId: project.id,
       artifactId: artifact.id,
@@ -71,6 +83,8 @@ test("HTTP API creates deployment and exposes compact route snapshot", async () 
     assert.equal(snapshot.routes[0].host, "hello.example.dev");
     assert.equal(snapshot.routes[0].deploymentId, deployment.id);
     assert.equal(snapshot.routes[0].runtime.backend, "wasmtime");
+    assert.deepEqual(snapshot.routes[0].artifact.signature, signature);
+    assert.deepEqual(snapshot.routes[0].artifact.provenance, provenance);
   } finally {
     await app.close();
   }
@@ -103,6 +117,267 @@ test("HTTP API awaits async control-plane methods", async () => {
       name: "async-control",
       createdAt: fixedNow(),
     });
+  } finally {
+    await app.close();
+  }
+});
+
+test("HTTP API exposes project quota usage", async () => {
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+  });
+  const app = createHttpApp({ controlPlane: control });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const { project } = await createHelloRoute(baseUrl);
+    await postJson(baseUrl, "/secrets", {
+      id: "sec_usage",
+      projectId: project.id,
+      name: "usage",
+      value: "secret",
+    });
+    await postJson(baseUrl, "/kv-namespaces", {
+      id: "kv_usage",
+      projectId: project.id,
+      name: "usage",
+    });
+
+    const response = await fetch(`${baseUrl}/projects/${project.id}/quota-usage`);
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      artifacts: 1,
+      deployments: 1,
+      routes: 1,
+      secrets: 1,
+      kvNamespaces: 1,
+    });
+  } finally {
+    await app.close();
+  }
+});
+
+test("HTTP admin UI renders routes, deployments, canaries, runtime nodes, and metrics", async () => {
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+  });
+  const app = createHttpApp({ controlPlane: control });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const { project, artifact, deployment } = await createHelloRoute(baseUrl);
+    const candidate = await postJson(baseUrl, "/deployments", {
+      projectId: project.id,
+      artifactId: artifact.id,
+      world: "myedge:runtime/worker@0.1.0",
+      runtime: { backend: "wasmtime", version: "wasmtime-43", wasi: "wasip3" },
+      limits: {
+        cpuMs: 50,
+        memoryMb: 64,
+        wallMs: 1000,
+        requestBytes: 1048576,
+        subrequests: 20,
+        hostCalls: 100,
+        responseBytes: 1048576,
+      },
+      capabilities: { outboundHttp: { enabled: false, allow: [] }, kv: [], secrets: [] },
+    });
+    await postJsonOk(baseUrl, "/routes/canary", {
+      projectId: project.id,
+      host: "hello.example.dev",
+      pathPrefix: "/",
+      deploymentId: candidate.id,
+      weight: 10,
+    });
+    await postJson(baseUrl, "/runtime-nodes", {
+      id: "rt_admin",
+      url: "http://runtime.local",
+      region: "nrt",
+      labels: { pool: "default" },
+    });
+    await postJsonOk(baseUrl, "/runtime-nodes/rt_admin/heartbeat", {
+      status: "active",
+      capacity: { concurrentRequests: 16, memoryMb: 2048 },
+      load: { activeRequests: 4 },
+    });
+
+    const response = await fetch(`${baseUrl}/admin`);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("content-type"), "text/html; charset=utf-8");
+    const html = await response.text();
+    assert.match(html, /wasmplane admin/);
+    assert.match(html, /hello\.example\.dev/);
+    assert.match(html, new RegExp(deployment.id));
+    assert.match(html, new RegExp(candidate.id));
+    assert.match(html, /rt_admin/);
+    assert.match(html, /Autoscaling signals/);
+    assert.match(html, /action="\/admin\/routes\/canary"/);
+    assert.match(html, /action="\/admin\/routes\/rollback"/);
+    assert.match(html, /action="\/admin\/runtime-nodes\/status"/);
+    assert.match(html, /action="\/admin\/runtime-nodes\/gc"/);
+    assert.match(html, /name="runtimeNodeId"/);
+  } finally {
+    await app.close();
+  }
+});
+
+test("HTTP admin UI keeps read and write auth scopes separate", async () => {
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+  });
+  const app = createHttpApp({
+    controlPlane: control,
+    apiTokens: [
+      { token: "reader", scopes: ["read"], principal: "reader" },
+      { token: "writer", scopes: ["write"], principal: "writer" },
+    ],
+  });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const unauthorized = await fetch(`${baseUrl}/admin`);
+    assert.equal(unauthorized.status, 401);
+
+    const readable = await fetch(`${baseUrl}/admin`, {
+      headers: { authorization: "Bearer reader" },
+    });
+    assert.equal(readable.status, 200);
+
+    const denied = await fetch(`${baseUrl}/admin/routes/rollback`, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer reader",
+        "content-type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({
+        projectId: "prj_1",
+        host: "hello.example.dev",
+        pathPrefix: "/",
+      }),
+    });
+    assert.equal(denied.status, 403);
+
+    const project = control.createProject({ name: "hello" });
+    const artifact = control.createArtifact({
+      projectId: project.id,
+      digest: digest(`hello-${project.id}`),
+      location: "oci://registry.example.com/mizchi/hello:v1",
+      sizeBytes: 42,
+    });
+    const deployment = control.createDeployment({
+      projectId: project.id,
+      artifactId: artifact.id,
+      world: "myedge:runtime/worker@0.1.0",
+      runtime: { backend: "wasmtime", version: "wasmtime-43", wasi: "wasip3" },
+      limits: {
+        cpuMs: 50,
+        memoryMb: 64,
+        wallMs: 1000,
+        requestBytes: 1048576,
+        subrequests: 20,
+        hostCalls: 100,
+        responseBytes: 1048576,
+      },
+      capabilities: { outboundHttp: { enabled: false, allow: [] }, kv: [], secrets: [] },
+    });
+    control.pointRoute({
+      projectId: project.id,
+      host: "hello.example.dev",
+      pathPrefix: "/",
+      deploymentId: deployment.id,
+    });
+    const redirected = await fetch(`${baseUrl}/admin/routes/rollback`, {
+      method: "POST",
+      redirect: "manual",
+      headers: {
+        authorization: "Bearer writer",
+        "content-type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({
+        projectId: project.id,
+        host: "hello.example.dev",
+        pathPrefix: "/",
+        deploymentId: deployment.id,
+      }),
+    });
+    assert.equal(redirected.status, 303);
+    assert.equal(redirected.headers.get("location"), "/admin?notice=rollback");
+
+    control.registerRuntimeNode({ id: "rt_admin", url: "http://runtime.local" });
+    const deniedStatus = await fetch(`${baseUrl}/admin/runtime-nodes/status`, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer reader",
+        "content-type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({
+        runtimeNodeId: "rt_admin",
+        status: "draining",
+      }),
+    });
+    assert.equal(deniedStatus.status, 403);
+
+    const redirectedStatus = await fetch(`${baseUrl}/admin/runtime-nodes/status`, {
+      method: "POST",
+      redirect: "manual",
+      headers: {
+        authorization: "Bearer writer",
+        "content-type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({
+        runtimeNodeId: "rt_admin",
+        status: "draining",
+      }),
+    });
+    assert.equal(redirectedStatus.status, 303);
+    assert.equal(redirectedStatus.headers.get("location"), "/admin?notice=runtime-node-status");
+    assert.equal(control.listRuntimeNodes()[0]?.status, "draining");
+
+    const deniedGc = await fetch(`${baseUrl}/admin/runtime-nodes/gc`, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer reader",
+        "content-type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({
+        olderThanMs: "86400000",
+        statuses: "offline",
+      }),
+    });
+    assert.equal(deniedGc.status, 403);
+
+    const redirectedGc = await fetch(`${baseUrl}/admin/runtime-nodes/gc`, {
+      method: "POST",
+      redirect: "manual",
+      headers: {
+        authorization: "Bearer writer",
+        "content-type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({
+        olderThanMs: "86400000",
+        statuses: "offline",
+      }),
+    });
+    assert.equal(redirectedGc.status, 303);
+    assert.equal(redirectedGc.headers.get("location"), "/admin?notice=runtime-node-gc");
   } finally {
     await app.close();
   }
@@ -547,6 +822,27 @@ test("HTTP API starts canary and rolls back routes", async () => {
       { deploymentId: candidate.id, weight: 10 },
     ]);
 
+    const analysis = await postJsonOk(baseUrl, "/routes/canary/analyze", {
+      projectId: project.id,
+      host: "hello.example.dev",
+      pathPrefix: "/",
+      candidateDeploymentId: candidate.id,
+      thresholds: { minRequests: 2, p95Ms: 250, errorRate: 0.25, rejectCount: 0 },
+      events: [
+        { deploymentId: candidate.id, status: 200, durationMs: 100 },
+        { deploymentId: candidate.id, status: 503, durationMs: 300, errorCode: "overloaded" },
+      ],
+    });
+    assert.equal(analysis.decision.action, "rollback");
+    assert.equal(analysis.decision.reason, "reject_count");
+    assert.deepEqual(analysis.route.targets, [{ deploymentId: stable.id, weight: 100 }]);
+
+    const decisionsResponse = await fetch(`${baseUrl}/canary-decisions`);
+    assert.equal(decisionsResponse.status, 200);
+    const decisions = await decisionsResponse.json();
+    assert.equal(decisions.length, 1);
+    assert.equal(decisions[0].candidateDeploymentId, candidate.id);
+
     const rollback = await postJsonOk(baseUrl, "/routes/rollback", {
       projectId: project.id,
       host: "hello.example.dev",
@@ -692,6 +988,142 @@ test("HTTP API signs runtime snapshot publishes with configured runtime token", 
   }
 });
 
+test("HTTP API signs runtime snapshot publishes with runtime node identity", async () => {
+  const calls: Array<{ url: string; headers: Record<string, string>; body: string }> = [];
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+  });
+  const app = createHttpApp({
+    controlPlane: control,
+    runtimeIdentityKeys: { "rt-key": "runtime-identity-secret" },
+    fetch: async (url, init) => {
+      calls.push({ url, headers: init.headers, body: init.body });
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return { ok: true, routes: 1, generatedAt: fixedNow() };
+        },
+        async text() {
+          return "ok";
+        },
+      };
+    },
+  });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    await postJson(baseUrl, "/runtime-nodes", {
+      id: "rt_identity",
+      url: "http://runtime.local",
+      identity: { keyId: "rt-key" },
+    });
+    await createHelloRoute(baseUrl);
+
+    const response = await fetch(`${baseUrl}/snapshots/routes/publish`, { method: "POST" });
+    assert.equal(response.status, 200, await response.text());
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0]?.headers["x-wasmplane-runtime-identity-key-id"], "rt-key");
+    assert.equal(
+      verifyRuntimeIdentityHeaders({
+        method: "PUT",
+        path: "/__runtime/snapshots/routes",
+        body: calls[0]?.body ?? "",
+        headers: calls[0]?.headers ?? {},
+        keys: { "rt-key": "runtime-identity-secret" },
+      }).ok,
+      true,
+    );
+  } finally {
+    await app.close();
+  }
+});
+
+test("HTTP API proxies runtime worker logs with read scope", async () => {
+  const calls: Array<{ url: string; method?: string; authorization?: string }> = [];
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+  });
+  control.registerRuntimeNode({ id: "rt_local", url: "http://runtime.local/" });
+  const app = createHttpApp({
+    controlPlane: control,
+    runtimeNodeToken: "runtime-secret",
+    apiTokens: [{ token: "read-token", scopes: ["read"], principal: "reader" }],
+    fetch: async (url, init) => {
+      calls.push({ url, method: init.method, authorization: init.headers.authorization });
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            logs: [
+              {
+                timestamp: fixedNow(),
+                requestId: "req_log_1",
+                host: "hello.example.dev",
+                path: "/",
+                projectId: "prj_hello",
+                deploymentId: "dep_hello",
+                level: "info",
+                message: "ok",
+              },
+            ],
+          };
+        },
+        async text() {
+          return "ok";
+        },
+      };
+    },
+  });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const response = await fetch(`${baseUrl}/runtime-nodes/rt_local/logs?projectId=prj_hello`, {
+      headers: { authorization: "Bearer read-token" },
+    });
+    const body = await response.json();
+    assert.equal(response.status, 200, JSON.stringify(body));
+    assert.deepEqual(body, {
+      runtimeNodeId: "rt_local",
+      url: "http://runtime.local",
+      logs: [
+        {
+          timestamp: fixedNow(),
+          requestId: "req_log_1",
+          host: "hello.example.dev",
+          path: "/",
+          projectId: "prj_hello",
+          deploymentId: "dep_hello",
+          level: "info",
+          message: "ok",
+        },
+      ],
+    });
+    assert.deepEqual(calls, [
+      {
+        url: "http://runtime.local/__runtime/logs?projectId=prj_hello",
+        method: "GET",
+        authorization: "Bearer runtime-secret",
+      },
+    ]);
+  } finally {
+    await app.close();
+  }
+});
+
 test("HTTP API registers runtime nodes and publishes snapshots through the registry", async () => {
   const receivedSnapshots: RouteSnapshot[] = [];
   const runtime = await listenRuntimeSnapshotSink(receivedSnapshots);
@@ -783,6 +1215,261 @@ test("HTTP API registers runtime nodes and publishes snapshots through the regis
   }
 });
 
+test("HTTP API updates runtime node lifecycle status and skips draining nodes", async () => {
+  const receivedSnapshots: RouteSnapshot[] = [];
+  const runtime = await listenRuntimeSnapshotSink(receivedSnapshots);
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+  });
+  const app = createHttpApp({ controlPlane: control });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    await postJson(baseUrl, "/runtime-nodes", { id: "rt_maint", url: runtime.baseUrl });
+    await postJsonOk(baseUrl, "/runtime-nodes/rt_maint/heartbeat", {
+      version: "wasmplane-runtime/0.1.0",
+      capacity: { concurrentRequests: 128, memoryMb: 4096 },
+      load: { activeRequests: 2 },
+    });
+
+    const drainingResponse = await fetch(`${baseUrl}/runtime-nodes/rt_maint/status`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status: "draining" }),
+    });
+    if (drainingResponse.status !== 200) {
+      assert.fail(await drainingResponse.text());
+    }
+    const draining = await drainingResponse.json();
+    assert.equal(draining.status, "draining");
+    assert.equal(draining.version, "wasmplane-runtime/0.1.0");
+    assert.deepEqual(draining.load, { activeRequests: 2 });
+
+    await createHelloRoute(baseUrl);
+    const blockedPublish = await fetch(`${baseUrl}/snapshots/routes/publish`, { method: "POST" });
+    assert.equal(blockedPublish.status, 400);
+    assert.match(await blockedPublish.text(), /no runtime nodes are configured/);
+    assert.equal(receivedSnapshots.length, 0);
+
+    const activeResponse = await fetch(`${baseUrl}/runtime-nodes/rt_maint/status`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status: "active" }),
+    });
+    if (activeResponse.status !== 200) {
+      assert.fail(await activeResponse.text());
+    }
+
+    const publishResponse = await fetch(`${baseUrl}/snapshots/routes/publish`, { method: "POST" });
+    if (publishResponse.status !== 200) {
+      assert.fail(await publishResponse.text());
+    }
+    assert.equal(receivedSnapshots.length, 1);
+
+    const missingResponse = await fetch(`${baseUrl}/runtime-nodes/rt_missing/status`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status: "offline" }),
+    });
+    assert.equal(missingResponse.status, 404);
+  } finally {
+    await app.close();
+    await runtime.close();
+  }
+});
+
+test("HTTP API cleans up old runtime nodes with write scope", async () => {
+  let currentNow = "2026-06-26T10:00:00.000Z";
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: () => currentNow,
+  });
+  const app = createHttpApp({
+    controlPlane: control,
+    apiTokens: [
+      { token: "reader", scopes: ["read"], principal: "reader" },
+      { token: "writer", scopes: ["write"], principal: "writer" },
+    ],
+  });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    await postJson(baseUrl, "/runtime-nodes", { id: "rt_offline_old", url: "http://runtime-old.local" }, "writer");
+    await postJsonOk(baseUrl, "/runtime-nodes/rt_offline_old/heartbeat", { status: "offline" }, "writer");
+    await postJson(baseUrl, "/runtime-nodes", { id: "rt_active_old", url: "http://runtime-active.local" }, "writer");
+    await postJsonOk(baseUrl, "/runtime-nodes/rt_active_old/heartbeat", { status: "active" }, "writer");
+
+    currentNow = "2026-06-26T11:50:00.000Z";
+    await postJson(
+      baseUrl,
+      "/runtime-nodes",
+      { id: "rt_offline_fresh", url: "http://runtime-fresh.local", status: "offline" },
+      "writer",
+    );
+
+    currentNow = "2026-06-26T12:00:00.000Z";
+    const denied = await fetch(`${baseUrl}/runtime-nodes/gc`, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer reader",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ olderThanMs: 60 * 60 * 1000 }),
+    });
+    assert.equal(denied.status, 403);
+
+    const response = await fetch(`${baseUrl}/runtime-nodes/gc`, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer writer",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ olderThanMs: 60 * 60 * 1000 }),
+    });
+    if (response.status !== 200) {
+      assert.fail(await response.text());
+    }
+    const cleanup = await response.json();
+    assert.equal(cleanup.cutoff, "2026-06-26T11:00:00.000Z");
+    assert.deepEqual(cleanup.removed.map((node: any) => node.id), ["rt_offline_old"]);
+
+    const nodesResponse = await fetch(`${baseUrl}/runtime-nodes`, {
+      headers: { authorization: "Bearer reader" },
+    });
+    assert.equal(nodesResponse.status, 200);
+    assert.deepEqual(
+      (await nodesResponse.json()).map((node: any) => node.id),
+      ["rt_active_old", "rt_offline_fresh"],
+    );
+
+    const activeCleanupResponse = await fetch(`${baseUrl}/runtime-nodes/gc`, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer writer",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ olderThanMs: 60 * 60 * 1000, statuses: ["active"] }),
+    });
+    if (activeCleanupResponse.status !== 200) {
+      assert.fail(await activeCleanupResponse.text());
+    }
+    const activeCleanup = await activeCleanupResponse.json();
+    assert.deepEqual(activeCleanup.removed.map((node: any) => node.id), ["rt_active_old"]);
+  } finally {
+    await app.close();
+  }
+});
+
+test("HTTP API applies project placement policy to snapshot publish targets", async () => {
+  const nrtSnapshots: RouteSnapshot[] = [];
+  const iadSnapshots: RouteSnapshot[] = [];
+  const nrtRuntime = await listenRuntimeSnapshotSink(nrtSnapshots);
+  const iadRuntime = await listenRuntimeSnapshotSink(iadSnapshots);
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+  });
+  const app = createHttpApp({
+    controlPlane: control,
+    runtimePlacement: {
+      projects: {
+        prj_place: { regions: ["nrt"], labels: { pool: "default" } },
+      },
+    },
+  });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    await postJson(baseUrl, "/runtime-nodes", {
+      id: "rt_nrt",
+      url: nrtRuntime.baseUrl,
+      region: "nrt",
+      labels: { pool: "default" },
+    });
+    await postJson(baseUrl, "/runtime-nodes", {
+      id: "rt_iad",
+      url: iadRuntime.baseUrl,
+      region: "iad",
+      labels: { pool: "default" },
+    });
+    await postJsonOk(baseUrl, "/runtime-nodes/rt_nrt/heartbeat", {
+      capacity: { concurrentRequests: 128, memoryMb: 4096 },
+      load: { activeRequests: 1 },
+    });
+    await postJsonOk(baseUrl, "/runtime-nodes/rt_iad/heartbeat", {
+      capacity: { concurrentRequests: 128, memoryMb: 4096 },
+      load: { activeRequests: 1 },
+    });
+
+    const project = await postJson(baseUrl, "/projects", { id: "prj_place", name: "placed" });
+    const artifact = await postJson(baseUrl, "/artifacts", {
+      projectId: project.id,
+      digest: digest("placed"),
+      location: "oci://registry.example.com/mizchi/placed:v1",
+      sizeBytes: 42,
+    });
+    const deployment = await postJson(baseUrl, "/deployments", {
+      projectId: project.id,
+      artifactId: artifact.id,
+      world: "myedge:runtime/worker@0.1.0",
+      runtime: {
+        backend: "wasmtime",
+        version: "wasmtime-43",
+        wasi: "wasip3",
+      },
+      limits: {
+        cpuMs: 50,
+        memoryMb: 64,
+        wallMs: 1000,
+        requestBytes: 1048576,
+        subrequests: 20,
+        hostCalls: 100,
+        responseBytes: 1048576,
+      },
+      capabilities: {
+        outboundHttp: { enabled: false, allow: [] },
+        kv: [],
+        secrets: [],
+      },
+    });
+    await putJson(baseUrl, "/routes", {
+      projectId: project.id,
+      host: "placed.example.dev",
+      pathPrefix: "/",
+      deploymentId: deployment.id,
+    });
+
+    const publishResponse = await fetch(`${baseUrl}/snapshots/routes/publish`, { method: "POST" });
+    if (publishResponse.status !== 200) {
+      assert.fail(await publishResponse.text());
+    }
+    const publish = await publishResponse.json();
+    assert.deepEqual(publish.targets.map((target: any) => target.id), ["rt_nrt"]);
+    assert.equal(nrtSnapshots.length, 1);
+    assert.equal(iadSnapshots.length, 0);
+  } finally {
+    await app.close();
+    await nrtRuntime.close();
+    await iadRuntime.close();
+  }
+});
+
 test("HTTP API records runtime node heartbeat and skips inactive nodes when publishing", async () => {
   const activeSnapshots: RouteSnapshot[] = [];
   const offlineSnapshots: RouteSnapshot[] = [];
@@ -839,6 +1526,51 @@ test("HTTP API records runtime node heartbeat and skips inactive nodes when publ
     await app.close();
     await activeRuntime.close();
     await offlineRuntime.close();
+  }
+});
+
+test("HTTP API exposes runtime saturation signals for autoscalers", async () => {
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+  });
+  control.registerRuntimeNode({ id: "rt_busy", url: "http://runtime-busy.local" });
+  control.recordRuntimeNodeHeartbeat({
+    id: "rt_busy",
+    capacity: { concurrentRequests: 100, memoryMb: 512 },
+    load: { activeRequests: 90 },
+  });
+  const app = createHttpApp({
+    controlPlane: control,
+    apiTokens: [{ token: "read-token", scopes: ["read"], principal: "reader" }],
+  });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const response = await fetch(`${baseUrl}/autoscaling/signals`, {
+      headers: { authorization: "Bearer read-token" },
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      signals: [
+        {
+          id: "rt_busy",
+          url: "http://runtime-busy.local",
+          status: "active",
+          activeRequests: 90,
+          concurrentRequests: 100,
+          loadRatio: 0.9,
+          saturated: false,
+        },
+      ],
+    });
+  } finally {
+    await app.close();
   }
 });
 
@@ -1070,10 +1802,10 @@ test("HTTP API exposes route snapshot publication history", async () => {
   }
 });
 
-async function postJson(baseUrl: string, path: string, body: unknown) {
+async function postJson(baseUrl: string, path: string, body: unknown, token?: string) {
   const response = await fetch(`${baseUrl}${path}`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: jsonHeaders(token),
     body: JSON.stringify(body),
   });
   if (response.status !== 201) {
@@ -1082,16 +1814,23 @@ async function postJson(baseUrl: string, path: string, body: unknown) {
   return await response.json();
 }
 
-async function postJsonOk(baseUrl: string, path: string, body: unknown) {
+async function postJsonOk(baseUrl: string, path: string, body: unknown, token?: string) {
   const response = await fetch(`${baseUrl}${path}`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: jsonHeaders(token),
     body: JSON.stringify(body),
   });
   if (response.status !== 200) {
     assert.fail(await response.text());
   }
   return await response.json();
+}
+
+function jsonHeaders(token: string | undefined): Record<string, string> {
+  return {
+    "content-type": "application/json",
+    ...(token ? { authorization: `Bearer ${token}` } : {}),
+  };
 }
 
 async function putJson(baseUrl: string, path: string, body: unknown) {

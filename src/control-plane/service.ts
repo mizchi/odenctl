@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type {
   Artifact,
+  CanaryDecision,
   CapabilityPolicy,
   Deployment,
   KvNamespace,
@@ -18,8 +19,9 @@ import type {
   Secret,
 } from "./contracts.ts";
 import {
-  MVP_WORKER_WORLD,
   normalizeCapabilities,
+  normalizeArtifactProvenance,
+  normalizeArtifactSignature,
   normalizeDigest,
   normalizeHost,
   normalizeKvNamespaceName,
@@ -30,6 +32,10 @@ import {
   normalizeRuntime,
   normalizeRouteTargets,
   normalizeRuntimeNodeCapacity,
+  normalizeRuntimeNodeIdentity,
+  normalizeRuntimeNodeLabels,
+  normalizeRuntimeNodeLoad,
+  normalizeRuntimeNodeRegion,
   normalizeRuntimeNodeStatus,
   normalizeRuntimeNodeUrl,
   normalizeSecretName,
@@ -37,15 +43,27 @@ import {
   normalizeSizeBytes,
   normalizeWorld,
   optionalId,
+  workerWorldVersion,
 } from "./contracts.ts";
-import type { ControlPlaneRepository } from "./repository.ts";
+import type { ControlPlaneRepository, ProjectResourceUsage } from "./repository.ts";
 import { ControlPlaneError } from "./errors.ts";
+import type { SecretCipher } from "./secret-encryption.ts";
+import { enforceProjectQuota, type ProjectQuotaResource, type ProjectQuotas } from "./quotas.ts";
+import type { ArtifactSignatureVerifier } from "./artifact-signing.ts";
+import {
+  analyzeCanaryEvents,
+  type CanaryAnalysisThresholds,
+  type CanaryMetricEvent,
+} from "./canary-analysis.ts";
 
 export interface ControlPlaneOptions {
   repository: ControlPlaneRepository;
   idGenerator?: (prefix: string) => string;
   now?: () => string;
   runtimeNodeActiveTtlMs?: number;
+  secretCipher?: SecretCipher;
+  projectQuotas?: ProjectQuotas;
+  artifactSignatureVerifier?: ArtifactSignatureVerifier;
 }
 
 export interface CreateProjectInput {
@@ -59,11 +77,17 @@ export interface CreateArtifactInput {
   digest: string;
   location: string;
   sizeBytes: number;
+  signature?: unknown;
+  provenance?: unknown;
 }
 
 export interface GetProjectArtifactByDigestInput {
   projectId: string;
   digest: string;
+}
+
+export interface GetProjectUsageInput {
+  projectId: string;
 }
 
 export interface CreateSecretInput {
@@ -142,9 +166,27 @@ export interface RollbackRouteInput {
   deploymentId?: string;
 }
 
+export interface AnalyzeRouteCanaryInput {
+  projectId: string;
+  host: string;
+  pathPrefix: string;
+  candidateDeploymentId: string;
+  events: CanaryMetricEvent[];
+  thresholds: CanaryAnalysisThresholds;
+}
+
+export interface AnalyzeRouteCanaryOutput {
+  decision: CanaryDecision;
+  route: RoutePointer;
+}
+
 export interface RegisterRuntimeNodeInput {
   id?: string;
   url: string;
+  status?: RuntimeNodeStatus;
+  region?: string;
+  labels?: Record<string, string>;
+  identity?: unknown;
 }
 
 export interface RecordRuntimeNodeHeartbeatInput {
@@ -152,6 +194,22 @@ export interface RecordRuntimeNodeHeartbeatInput {
   status?: RuntimeNodeStatus;
   version?: string;
   capacity?: RuntimeNodeCapacity;
+  load?: RuntimeNode["load"];
+}
+
+export interface UpdateRuntimeNodeStatusInput {
+  id: string;
+  status: RuntimeNodeStatus;
+}
+
+export interface CleanupRuntimeNodesInput {
+  olderThanMs: number;
+  statuses?: unknown;
+}
+
+export interface CleanupRuntimeNodesOutput {
+  cutoff: string;
+  removed: RuntimeNode[];
 }
 
 export interface RecordRouteSnapshotPublicationInput {
@@ -167,6 +225,9 @@ export function createControlPlane(options: ControlPlaneOptions) {
   const idGenerator = options.idGenerator ?? defaultIdGenerator;
   const now = options.now ?? (() => new Date().toISOString());
   const runtimeNodeActiveTtlMs = options.runtimeNodeActiveTtlMs;
+  const secretCipher = options.secretCipher;
+  const projectQuotas = options.projectQuotas;
+  const artifactSignatureVerifier = options.artifactSignatureVerifier;
 
   function createProject(input: CreateProjectInput): Project {
     const project: Project = {
@@ -179,12 +240,15 @@ export function createControlPlane(options: ControlPlaneOptions) {
 
   function createArtifact(input: CreateArtifactInput): Artifact {
     requireProject(repository, input.projectId);
+    enforceQuota(input.projectId, "artifact");
     const artifact: Artifact = {
       id: optionalId(input.id, "artifact id") ?? idGenerator("art"),
       projectId: input.projectId,
       digest: normalizeDigest(input.digest),
       location: normalizeLocation(input.location),
       sizeBytes: normalizeSizeBytes(input.sizeBytes),
+      signature: normalizeArtifactSignature(input.signature),
+      provenance: normalizeArtifactProvenance(input.provenance),
       createdAt: now(),
     };
     return repository.createArtifact(artifact);
@@ -195,8 +259,14 @@ export function createControlPlane(options: ControlPlaneOptions) {
     return repository.getArtifactByProjectDigest(input.projectId, normalizeDigest(input.digest));
   }
 
+  function getProjectUsage(input: GetProjectUsageInput): ProjectResourceUsage {
+    requireProject(repository, input.projectId);
+    return repository.getProjectUsage(input.projectId);
+  }
+
   function createSecret(input: CreateSecretInput): Secret {
     requireProject(repository, input.projectId);
+    enforceQuota(input.projectId, "secret");
     const secret: Secret = {
       id: optionalId(input.id, "secret id") ?? idGenerator("sec"),
       projectId: input.projectId,
@@ -204,7 +274,7 @@ export function createControlPlane(options: ControlPlaneOptions) {
       createdAt: now(),
       updatedAt: now(),
     };
-    return repository.createSecret(secret, normalizeSecretValue(input.value));
+    return repository.createSecret(secret, encodeSecretValue(normalizeSecretValue(input.value)));
   }
 
   function getSecret(input: GetSecretInput): Secret {
@@ -218,7 +288,7 @@ export function createControlPlane(options: ControlPlaneOptions) {
 
   function updateSecretValue(input: UpdateSecretValueInput): Secret {
     requireSecret(repository, input.id);
-    return repository.updateSecretValue(input.id, normalizeSecretValue(input.value), now());
+    return repository.updateSecretValue(input.id, encodeSecretValue(normalizeSecretValue(input.value)), now());
   }
 
   function deleteSecret(input: DeleteSecretInput): void {
@@ -228,6 +298,7 @@ export function createControlPlane(options: ControlPlaneOptions) {
 
   function createKvNamespace(input: CreateKvNamespaceInput): KvNamespace {
     requireProject(repository, input.projectId);
+    enforceQuota(input.projectId, "kv namespace");
     const namespace: KvNamespace = {
       id: optionalId(input.id, "kv namespace id") ?? idGenerator("kv"),
       projectId: input.projectId,
@@ -254,19 +325,23 @@ export function createControlPlane(options: ControlPlaneOptions) {
 
   function createDeployment(input: CreateDeploymentInput): Deployment {
     requireProject(repository, input.projectId);
+    enforceQuota(input.projectId, "deployment");
     const artifact = requireArtifact(repository, input.artifactId);
     if (artifact.projectId !== input.projectId) {
       throw new ControlPlaneError("validation", "deployment artifact must belong to the same project");
     }
+    artifactSignatureVerifier?.verify(artifact);
     const capabilities = normalizeCapabilities(input.capabilities);
     requireDeploymentKvNamespaces(repository, input.projectId, capabilities);
     requireDeploymentSecrets(repository, input.projectId, capabilities);
 
+    const world = normalizeWorld(input.world);
     const deployment: Deployment = {
       id: optionalId(input.id, "deployment id") ?? idGenerator("dep"),
       projectId: input.projectId,
       artifactId: input.artifactId,
-      world: normalizeWorld(input.world),
+      world,
+      worldVersion: workerWorldVersion(world),
       runtime: normalizeRuntime(input.runtime),
       limits: normalizeLimits(input.limits),
       capabilities,
@@ -285,11 +360,17 @@ export function createControlPlane(options: ControlPlaneOptions) {
       }
     }
 
+    const host = normalizeHost(input.host);
+    const pathPrefix = normalizePathPrefix(input.pathPrefix);
+    if (!repository.getRoute(input.projectId, host, pathPrefix)) {
+      enforceQuota(input.projectId, "route");
+    }
+
     const route: RoutePointer = {
       id: optionalId(input.id, "route id") ?? idGenerator("rte"),
       projectId: input.projectId,
-      host: normalizeHost(input.host),
-      pathPrefix: normalizePathPrefix(input.pathPrefix),
+      host,
+      pathPrefix,
       deploymentId: targets[0].deploymentId,
       targets,
       updatedAt: now(),
@@ -340,6 +421,45 @@ export function createControlPlane(options: ControlPlaneOptions) {
     });
   }
 
+  function analyzeRouteCanary(input: AnalyzeRouteCanaryInput): AnalyzeRouteCanaryOutput {
+    requireProject(repository, input.projectId);
+    const host = normalizeHost(input.host);
+    const pathPrefix = normalizePathPrefix(input.pathPrefix);
+    const existing = requireRoute(repository, input.projectId, host, pathPrefix);
+    const stableDeploymentId = existing.targets[0]?.deploymentId ?? existing.deploymentId;
+    const candidate = requireDeployment(repository, input.candidateDeploymentId);
+    if (candidate.projectId !== input.projectId) {
+      throw new ControlPlaneError("validation", "canary deployment must belong to the same project");
+    }
+    if (!existing.targets.some((target) => target.deploymentId === candidate.id)) {
+      throw new ControlPlaneError("validation", "canary deployment is not a target of the route");
+    }
+
+    const analysis = analyzeCanaryEvents(input.events, candidate.id, input.thresholds);
+    const decision = repository.createCanaryDecision({
+      id: idGenerator("can"),
+      projectId: input.projectId,
+      host,
+      pathPrefix,
+      stableDeploymentId,
+      candidateDeploymentId: candidate.id,
+      action: analysis.action,
+      reason: analysis.reason,
+      metrics: analysis.metrics,
+      thresholds: input.thresholds,
+      createdAt: now(),
+    });
+    const route = analysis.action === "rollback"
+      ? repository.upsertRoute({
+        ...existing,
+        deploymentId: stableDeploymentId,
+        targets: [{ deploymentId: stableDeploymentId, weight: 100 }],
+        updatedAt: now(),
+      })
+      : existing;
+    return { decision, route };
+  }
+
   function createRouteSnapshot(): RouteSnapshot {
     const routes = repository.listRoutes().map((route) => {
       const targets = route.targets.map((target) => routeSnapshotTarget(target));
@@ -351,14 +471,11 @@ export function createControlPlane(options: ControlPlaneOptions) {
         deploymentId: primary.deploymentId,
         targets,
         world: primary.world,
+        worldVersion: primary.worldVersion,
         runtime: primary.runtime,
         limits: primary.limits,
         capabilities: primary.capabilities,
-        artifact: {
-          id: primary.artifact.id,
-          digest: primary.artifact.digest,
-          location: primary.artifact.location,
-        },
+        artifact: routeSnapshotArtifact(primary.artifact),
       };
     });
 
@@ -372,11 +489,15 @@ export function createControlPlane(options: ControlPlaneOptions) {
   }
 
   function registerRuntimeNode(input: RegisterRuntimeNodeInput): RuntimeNode {
+    const identity = normalizeRuntimeNodeIdentity(input.identity);
     const node: RuntimeNode = {
       id: optionalId(input.id, "runtime node id") ?? idGenerator("rt"),
       url: normalizeRuntimeNodeUrl(input.url),
-      status: "active",
+      status: normalizeRuntimeNodeStatus(input.status),
       registeredAt: now(),
+      region: normalizeRuntimeNodeRegion(input.region),
+      labels: normalizeRuntimeNodeLabels(input.labels),
+      ...(identity ? { identity } : {}),
     };
     return repository.createRuntimeNode(node);
   }
@@ -392,8 +513,27 @@ export function createControlPlane(options: ControlPlaneOptions) {
       lastSeenAt: now(),
       version: input.version ?? existing.version,
       capacity: normalizeRuntimeNodeCapacity(input.capacity) ?? existing.capacity,
+      load: normalizeRuntimeNodeLoad(input.load) ?? existing.load,
     };
     return repository.updateRuntimeNodeHeartbeat(node);
+  }
+
+  function updateRuntimeNodeStatus(input: UpdateRuntimeNodeStatusInput): RuntimeNode {
+    return repository.updateRuntimeNodeStatus(input.id, normalizeRuntimeNodeStatus(input.status));
+  }
+
+  function cleanupRuntimeNodes(input: CleanupRuntimeNodesInput): CleanupRuntimeNodesOutput {
+    const olderThanMs = cleanupOlderThanMs(input.olderThanMs);
+    const statuses = cleanupStatuses(input.statuses);
+    const cutoffMs = Date.parse(now()) - olderThanMs;
+    const cutoff = new Date(cutoffMs).toISOString();
+    const removed = repository.listRuntimeNodes().filter((node) =>
+      statuses.has(node.status) && runtimeNodeObservedAtMs(node) < cutoffMs
+    );
+    for (const node of removed) {
+      repository.deleteRuntimeNode(node.id);
+    }
+    return { cutoff, removed };
   }
 
   function listRuntimeNodes(): RuntimeNode[] {
@@ -422,8 +562,13 @@ export function createControlPlane(options: ControlPlaneOptions) {
     return repository.listRouteSnapshotPublications();
   }
 
+  function listCanaryDecisions(): CanaryDecision[] {
+    return repository.listCanaryDecisions();
+  }
+
   return {
     createProject,
+    getProjectUsage,
     createArtifact,
     getProjectArtifactByDigest,
     createSecret,
@@ -438,14 +583,18 @@ export function createControlPlane(options: ControlPlaneOptions) {
     createDeployment,
     pointRoute,
     startRouteCanary,
+    analyzeRouteCanary,
     rollbackRoute,
     createRouteSnapshot,
     registerRuntimeNode,
     recordRuntimeNodeHeartbeat,
+    updateRuntimeNodeStatus,
+    cleanupRuntimeNodes,
     listRuntimeNodes,
     listActiveRuntimeNodes,
     recordRouteSnapshotPublication,
     listRouteSnapshotPublications,
+    listCanaryDecisions,
   };
 
   function routeSnapshotTarget(target: RouteTarget) {
@@ -454,16 +603,31 @@ export function createControlPlane(options: ControlPlaneOptions) {
     return {
       deploymentId: deployment.id,
       weight: target.weight,
-      world: MVP_WORKER_WORLD,
+      world: deployment.world,
+      worldVersion: deployment.worldVersion,
       runtime: deployment.runtime,
       limits: deployment.limits,
       capabilities: deployment.capabilities,
-      artifact: {
-        id: artifact.id,
-        digest: artifact.digest,
-        location: artifact.location,
-      },
+      artifact: routeSnapshotArtifact(artifact),
     };
+  }
+
+  function routeSnapshotArtifact(artifact: Artifact) {
+    return {
+      id: artifact.id,
+      digest: artifact.digest,
+      location: artifact.location,
+      ...(artifact.signature ? { signature: artifact.signature } : {}),
+      ...(artifact.provenance ? { provenance: artifact.provenance } : {}),
+    };
+  }
+
+  function encodeSecretValue(value: string): string {
+    return secretCipher ? secretCipher.encrypt(value) : value;
+  }
+
+  function enforceQuota(projectId: string, resource: ProjectQuotaResource) {
+    enforceProjectQuota(projectId, projectQuotas, repository.getProjectUsage(projectId), resource);
   }
 }
 
@@ -476,9 +640,38 @@ function isActiveRuntimeNode(
     return false;
   }
   if (activeTtlMs === undefined || !node.lastSeenAt) {
-    return true;
+    return !isSaturatedRuntimeNode(node);
   }
-  return Date.parse(nowValue) - Date.parse(node.lastSeenAt) <= activeTtlMs;
+  return Date.parse(nowValue) - Date.parse(node.lastSeenAt) <= activeTtlMs && !isSaturatedRuntimeNode(node);
+}
+
+function isSaturatedRuntimeNode(node: RuntimeNode): boolean {
+  return Boolean(
+    node.capacity
+      && node.load
+      && node.load.activeRequests >= node.capacity.concurrentRequests,
+  );
+}
+
+function cleanupOlderThanMs(value: unknown): number {
+  if (!Number.isInteger(value) || (value as number) <= 0) {
+    throw new ControlPlaneError("validation", "runtime node cleanup olderThanMs must be a positive integer");
+  }
+  return value as number;
+}
+
+function cleanupStatuses(value: unknown): Set<RuntimeNodeStatus> {
+  if (value === undefined) {
+    return new Set(["offline"]);
+  }
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new ControlPlaneError("validation", "runtime node cleanup statuses must be a non-empty array");
+  }
+  return new Set(value.map((status) => normalizeRuntimeNodeStatus(status)));
+}
+
+function runtimeNodeObservedAtMs(node: RuntimeNode): number {
+  return Date.parse(node.lastSeenAt ?? node.registeredAt);
 }
 
 function requireProject(repository: ControlPlaneRepository, id: string): Project {

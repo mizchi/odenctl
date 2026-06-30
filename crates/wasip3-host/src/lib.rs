@@ -7,7 +7,7 @@ use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use anyhow::{Result, bail};
+use anyhow::{Result, anyhow, bail};
 use native_tls::TlsConnector;
 use wasmtime::component::{Component, HasData, Linker, Resource, ResourceTable, bindgen};
 use wasmtime::{
@@ -153,6 +153,7 @@ struct FileKvStore {
 #[derive(Debug, Clone, Copy)]
 pub struct InvocationLimits {
     pub wall_ms: Option<u64>,
+    pub cpu_ms: Option<u64>,
     pub memory_mb: Option<u64>,
     pub request_bytes: Option<usize>,
     pub response_bytes: Option<usize>,
@@ -164,6 +165,7 @@ impl Default for InvocationLimits {
     fn default() -> Self {
         Self {
             wall_ms: None,
+            cpu_ms: None,
             memory_mb: None,
             request_bytes: None,
             response_bytes: None,
@@ -1499,8 +1501,9 @@ impl Wasip3Runtime {
         let worker_pre = self.prepare_worker(component_key)?;
         let mut store = Store::new(&self.engine, host);
         store.limiter(|host| &mut host.store_limits);
-        configure_ticker_epoch_deadline(&mut store, limits);
-        let worker = futures::executor::block_on(worker_pre.instantiate_async(&mut store))?;
+        let epoch_deadline = configure_ticker_epoch_deadline(&mut store, limits);
+        let worker = futures::executor::block_on(worker_pre.instantiate_async(&mut store))
+            .map_err(|error| map_epoch_deadline_error(error, epoch_deadline))?;
 
         let response = futures::executor::block_on(async {
             store
@@ -1526,7 +1529,8 @@ impl Wasip3Runtime {
                     worker.call_handle(accessor, request).await
                 })
                 .await?
-        })?;
+        })
+        .map_err(|error| map_epoch_deadline_error(error, epoch_deadline))?;
 
         let response_body = store.data().outgoing_body_bytes(&response.body)?;
         Ok(HttpResponseOutput {
@@ -1628,15 +1632,107 @@ fn start_epoch_ticker(engine: Engine) {
 #[cfg(not(target_has_atomic = "64"))]
 fn start_epoch_ticker(_engine: Engine) {}
 
-fn configure_ticker_epoch_deadline(store: &mut Store<WorkerHost>, limits: InvocationLimits) {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EpochDeadline {
+    CpuMs(u64),
+    WallMs(u64),
+}
+
+impl EpochDeadline {
+    fn ms(self) -> u64 {
+        match self {
+            Self::CpuMs(ms) | Self::WallMs(ms) => ms,
+        }
+    }
+
+    fn field(self) -> &'static str {
+        match self {
+            Self::CpuMs(_) => "cpuMs",
+            Self::WallMs(_) => "wallMs",
+        }
+    }
+}
+
+fn epoch_deadline_for_limits(limits: InvocationLimits) -> Option<EpochDeadline> {
+    match (limits.cpu_ms, limits.wall_ms) {
+        (Some(cpu_ms), Some(wall_ms)) if cpu_ms <= wall_ms => Some(EpochDeadline::CpuMs(cpu_ms)),
+        (Some(_), Some(wall_ms)) => Some(EpochDeadline::WallMs(wall_ms)),
+        (Some(cpu_ms), None) => Some(EpochDeadline::CpuMs(cpu_ms)),
+        (None, Some(wall_ms)) => Some(EpochDeadline::WallMs(wall_ms)),
+        (None, None) => None,
+    }
+}
+
+fn epoch_deadline_ticks(deadline: EpochDeadline) -> u64 {
+    deadline.ms().div_ceil(EPOCH_TICK_MS).max(1)
+}
+
+fn map_epoch_deadline_error(
+    error: wasmtime::Error,
+    deadline: Option<EpochDeadline>,
+) -> anyhow::Error {
+    if let Some(deadline) = deadline {
+        let message = format!("{error:#}");
+        if is_epoch_deadline_error(&message) {
+            return anyhow!(
+                "{} limit exceeded after {}ms",
+                deadline.field(),
+                deadline.ms()
+            );
+        }
+    }
+    anyhow!("{error:#}")
+}
+
+fn is_epoch_deadline_error(message: &str) -> bool {
+    message.contains("epoch") || message.contains("interrupt") || message.contains("deadline")
+}
+
+fn configure_ticker_epoch_deadline(
+    store: &mut Store<WorkerHost>,
+    limits: InvocationLimits,
+) -> Option<EpochDeadline> {
     #[cfg(target_has_atomic = "64")]
     {
+        let deadline = epoch_deadline_for_limits(limits);
         store.epoch_deadline_trap();
-        let ticks = limits
-            .wall_ms
-            .map(|wall_ms| wall_ms.div_ceil(EPOCH_TICK_MS).max(1))
-            .unwrap_or(u64::MAX / 2);
+        let ticks = deadline.map(epoch_deadline_ticks).unwrap_or(u64::MAX / 2);
         store.set_epoch_deadline(ticks);
+        deadline
+    }
+    #[cfg(not(target_has_atomic = "64"))]
+    {
+        let _ = store;
+        let _ = limits;
+        None
+    }
+}
+
+fn configure_single_invocation_epoch_deadline(
+    engine: &Engine,
+    store: &mut Store<WorkerHost>,
+    limits: InvocationLimits,
+) -> Option<EpochDeadline> {
+    #[cfg(target_has_atomic = "64")]
+    {
+        let deadline = epoch_deadline_for_limits(limits);
+        if let Some(deadline) = deadline {
+            store.epoch_deadline_trap();
+            store.set_epoch_deadline(1);
+            let engine = engine.clone();
+            thread::spawn(move || {
+                thread::sleep(Duration::from_millis(deadline.ms()));
+                engine.increment_epoch();
+            });
+        }
+        deadline
+    }
+    #[cfg(not(target_has_atomic = "64"))]
+    {
+        let _ = engine;
+        let _ = store;
+        let _ = limits;
+        None
     }
 }
 
@@ -1754,20 +1850,10 @@ fn invoke_component_handle_with_host(
     add_worker_imports(&mut linker)?;
     let mut store = Store::new(&engine, host);
     store.limiter(|host| &mut host.store_limits);
-    #[cfg(target_has_atomic = "64")]
-    {
-        store.epoch_deadline_trap();
-        store.set_epoch_deadline(1);
-        if let Some(wall_ms) = limits.wall_ms {
-            let engine = engine.clone();
-            std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_millis(wall_ms));
-                engine.increment_epoch();
-            });
-        }
-    }
+    let epoch_deadline = configure_single_invocation_epoch_deadline(&engine, &mut store, limits);
     let worker =
-        futures::executor::block_on(Worker::instantiate_async(&mut store, &component, &linker))?;
+        futures::executor::block_on(Worker::instantiate_async(&mut store, &component, &linker))
+            .map_err(|error| map_epoch_deadline_error(error, epoch_deadline))?;
 
     let response = futures::executor::block_on(async {
         store
@@ -1793,7 +1879,8 @@ fn invoke_component_handle_with_host(
                 worker.call_handle(accessor, request).await
             })
             .await?
-    })?;
+    })
+    .map_err(|error| map_epoch_deadline_error(error, epoch_deadline))?;
 
     let response_body = store.data().outgoing_body_bytes(&response.body)?;
     Ok(HttpResponseOutput {
@@ -1833,6 +1920,28 @@ mod tests {
     fn engine_enables_wasip3_component_async_features() {
         let engine = wasip3_engine().expect("engine");
         Component::new(&engine, "(component)").expect("empty component compiles");
+    }
+
+    #[test]
+    fn epoch_deadline_prefers_cpu_budget_over_larger_wall_budget() {
+        let deadline = epoch_deadline_for_limits(InvocationLimits {
+            cpu_ms: Some(50),
+            wall_ms: Some(1000),
+            ..InvocationLimits::default()
+        });
+
+        assert_eq!(deadline, Some(EpochDeadline::CpuMs(50)));
+    }
+
+    #[test]
+    fn epoch_deadline_keeps_wall_budget_when_smaller_than_cpu_budget() {
+        let deadline = epoch_deadline_for_limits(InvocationLimits {
+            cpu_ms: Some(500),
+            wall_ms: Some(100),
+            ..InvocationLimits::default()
+        });
+
+        assert_eq!(deadline, Some(EpochDeadline::WallMs(100)));
     }
 
     #[test]

@@ -10,6 +10,7 @@ import {
   MVP_RUNTIME_BACKEND,
   MVP_WASI_PROFILE,
   MVP_WORKER_WORLD,
+  MVP_WORKER_WORLD_VERSION,
   type CapabilityPolicy,
   type RouteSnapshot,
   type RuntimeLimits,
@@ -43,6 +44,8 @@ export interface ClusterBenchOptions {
   maxConcurrentInvocations?: number;
   hostDaemonUrl?: string;
   pooling?: ClusterBenchPoolingOptions;
+  placement?: boolean;
+  autoscaling?: boolean;
 }
 
 export interface ClusterBenchPoolingOptions {
@@ -67,6 +70,8 @@ export interface ClusterBenchmarkReport {
   };
   throughput: ClusterThroughputResult[];
   switches: ClusterSwitchResult[];
+  placements: ClusterPlacementResult[];
+  autoscaling: ClusterAutoscalingResult[];
 }
 
 export interface ClusterThroughputResult extends BenchmarkResult {
@@ -81,6 +86,33 @@ export interface ClusterSwitchResult {
   visibleAfterPublishMs: number;
   totalMs: number;
   attempts: number;
+  errors: number;
+}
+
+export interface ClusterPlacementResult {
+  name: string;
+  nodes: number;
+  region: string;
+  selectedNodes: number;
+  skippedNodes: number;
+  ok: boolean;
+  publishMs: number;
+  selectedVisibleMs: number;
+  skippedVerifiedMs: number;
+  totalMs: number;
+  errors: number;
+}
+
+export interface ClusterAutoscalingResult {
+  name: string;
+  action: "scale_up" | "scale_down";
+  nodes: number;
+  fromNodes: number;
+  toNodes: number;
+  ok: boolean;
+  publishMs: number;
+  visibleMs: number;
+  totalMs: number;
   errors: number;
 }
 
@@ -100,6 +132,7 @@ interface RuntimeCluster {
 interface RuntimeClusterNode {
   id: string;
   url: string;
+  region: string;
   close(): Promise<void>;
 }
 
@@ -137,6 +170,8 @@ export async function runClusterBenchmarkSuite(
   const componentLocation = pathToFileURL(componentPath).href;
   const throughput: ClusterThroughputResult[] = [];
   const switches: ClusterSwitchResult[] = [];
+  const placements: ClusterPlacementResult[] = [];
+  const autoscaling: ClusterAutoscalingResult[] = [];
 
   for (const nodeCount of options.nodeCounts) {
     const cluster = await startRuntimeCluster(nodeCount, options);
@@ -181,6 +216,55 @@ export async function runClusterBenchmarkSuite(
           ),
         );
       }
+      if (options.placement && cluster.nodes.length > 1) {
+        placements.push(
+          await measurePlacementPublish(
+            cluster.nodes,
+            buildClusterRouteSnapshot({
+              deploymentId: `dep_placed_${nodeCount}`,
+              componentLocation,
+              digest,
+              generatedAt: new Date().toISOString(),
+              hostHeader: options.hostHeader,
+              pathPrefix: "/",
+            }),
+            `dep_placed_${nodeCount}`,
+            greenDeploymentId,
+            "nrt",
+            options,
+          ),
+        );
+      }
+      if (options.autoscaling && cluster.nodes.length > 1) {
+        autoscaling.push(
+          await measureScaleUpWarm(
+            cluster.nodes,
+            buildClusterRouteSnapshot({
+              deploymentId: `dep_scale_up_${nodeCount}`,
+              componentLocation,
+              digest,
+              generatedAt: new Date().toISOString(),
+              hostHeader: options.hostHeader,
+              pathPrefix: "/",
+            }),
+            `dep_scale_up_${nodeCount}`,
+            options,
+          ),
+          await measureScaleDownExclude(
+            cluster.nodes,
+            buildClusterRouteSnapshot({
+              deploymentId: `dep_scale_down_${nodeCount}`,
+              componentLocation,
+              digest,
+              generatedAt: new Date().toISOString(),
+              hostHeader: options.hostHeader,
+              pathPrefix: "/",
+            }),
+            `dep_scale_down_${nodeCount}`,
+            options,
+          ),
+        );
+      }
     } finally {
       await closeRuntimeCluster(cluster);
     }
@@ -197,6 +281,8 @@ export async function runClusterBenchmarkSuite(
     },
     throughput,
     switches,
+    placements,
+    autoscaling,
   };
 }
 
@@ -217,6 +303,7 @@ export function buildClusterRouteSnapshot(
     deploymentId: input.deploymentId,
     weight: 100,
     world: MVP_WORKER_WORLD,
+    worldVersion: MVP_WORKER_WORLD_VERSION,
     runtime,
     limits: defaultLimits,
     capabilities: defaultCapabilities,
@@ -233,6 +320,7 @@ export function buildClusterRouteSnapshot(
         deploymentId: input.deploymentId,
         targets: [target],
         world: MVP_WORKER_WORLD,
+        worldVersion: MVP_WORKER_WORLD_VERSION,
         runtime,
         limits: defaultLimits,
         capabilities: defaultCapabilities,
@@ -323,6 +411,12 @@ export function parseClusterBenchArgs(args: string[]): ClusterBenchOptions {
       case "--host-daemon-url":
         options.hostDaemonUrl = requiredValue(flag, value);
         index += 1;
+        break;
+      case "--placement":
+        options.placement = true;
+        break;
+      case "--autoscaling":
+        options.autoscaling = true;
         break;
       case "--pooling-total-component-instances":
         options.pooling = {
@@ -422,6 +516,30 @@ export function formatClusterBenchmarkMarkdown(report: ClusterBenchmarkReport): 
   }
   lines.push(
     "",
+    "## placement",
+    "",
+    "| benchmark | nodes | region | selected | skipped | publish ms | selected visible ms | skipped verified ms | total ms | errors | ok |",
+    "| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
+  );
+  for (const item of report.placements) {
+    lines.push(
+      `| ${item.name} | ${item.nodes} | ${item.region} | ${item.selectedNodes} | ${item.skippedNodes} | ${item.publishMs} | ${item.selectedVisibleMs} | ${item.skippedVerifiedMs} | ${item.totalMs} | ${item.errors} | ${item.ok ? "yes" : "no"} |`,
+    );
+  }
+  lines.push(
+    "",
+    "## autoscaling",
+    "",
+    "| benchmark | action | nodes | from | to | publish ms | visible ms | total ms | errors | ok |",
+    "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
+  );
+  for (const item of report.autoscaling) {
+    lines.push(
+      `| ${item.name} | ${item.action} | ${item.nodes} | ${item.fromNodes} | ${item.toNodes} | ${item.publishMs} | ${item.visibleMs} | ${item.totalMs} | ${item.errors} | ${item.ok ? "yes" : "no"} |`,
+    );
+  }
+  lines.push(
+    "",
     "## throughput",
     "",
     "| benchmark | nodes | concurrency | iterations | rps | avg ms | p50 ms | p95 ms | p99 ms | errors |",
@@ -471,6 +589,7 @@ async function startRuntimeCluster(
       nodes.push({
         id,
         url: serverBaseUrl(server),
+        region: index % 2 === 0 ? "nrt" : "iad",
         close: app.close,
       });
     }
@@ -516,6 +635,145 @@ async function measureDeploymentSwitch(
     visibleAfterPublishMs: round3(Math.max(0, ...visibleChecks.map((item) => item.elapsedMs))),
     totalMs: round3(performance.now() - started),
     attempts: visibleChecks.reduce((sum, item) => sum + item.attempts, 0),
+    errors,
+  };
+}
+
+async function measurePlacementPublish(
+  nodes: RuntimeClusterNode[],
+  snapshot: RouteSnapshot,
+  expectedDeploymentId: string,
+  skippedDeploymentId: string,
+  region: string,
+  options: ClusterBenchOptions,
+): Promise<ClusterPlacementResult> {
+  const selected = nodes.filter((node) => node.region === region);
+  const skipped = nodes.filter((node) => node.region !== region);
+  const started = performance.now();
+  const publish = await publishRouteSnapshot(snapshot, publishTargets(selected));
+  const publishDone = performance.now();
+  let errors = publish.targets.filter((target) => !target.ok).length;
+  if (!publish.ok) {
+    return {
+      name: "cluster.placement.region",
+      nodes: nodes.length,
+      region,
+      selectedNodes: selected.length,
+      skippedNodes: skipped.length,
+      ok: false,
+      publishMs: round3(publishDone - started),
+      selectedVisibleMs: 0,
+      skippedVerifiedMs: 0,
+      totalMs: round3(performance.now() - started),
+      errors,
+    };
+  }
+
+  const selectedChecks = await Promise.all(
+    selected.map((node) => waitForDeployment(node, options, expectedDeploymentId)),
+  );
+  const selectedDone = performance.now();
+  const skippedChecks = await Promise.all(
+    skipped.map((node) => waitForDeployment(node, options, skippedDeploymentId)),
+  );
+  errors += selectedChecks.filter((item) => !item.ok).length;
+  errors += skippedChecks.filter((item) => !item.ok).length;
+  return {
+    name: "cluster.placement.region",
+    nodes: nodes.length,
+    region,
+    selectedNodes: selected.length,
+    skippedNodes: skipped.length,
+    ok: errors === 0,
+    publishMs: round3(publishDone - started),
+    selectedVisibleMs: round3(Math.max(0, ...selectedChecks.map((item) => item.elapsedMs))),
+    skippedVerifiedMs: round3(Math.max(0, performance.now() - selectedDone)),
+    totalMs: round3(performance.now() - started),
+    errors,
+  };
+}
+
+async function measureScaleUpWarm(
+  nodes: RuntimeClusterNode[],
+  snapshot: RouteSnapshot,
+  expectedDeploymentId: string,
+  options: ClusterBenchOptions,
+): Promise<ClusterAutoscalingResult> {
+  const fromNodes = nodes.length - 1;
+  const newNode = nodes[nodes.length - 1];
+  const started = performance.now();
+  const publish = await publishRouteSnapshot(snapshot, publishTargets([newNode]));
+  const publishDone = performance.now();
+  let errors = publish.targets.filter((target) => !target.ok).length;
+  if (!publish.ok) {
+    return {
+      name: "cluster.autoscale.scale_up_warm",
+      action: "scale_up",
+      nodes: nodes.length,
+      fromNodes,
+      toNodes: nodes.length,
+      ok: false,
+      publishMs: round3(publishDone - started),
+      visibleMs: 0,
+      totalMs: round3(performance.now() - started),
+      errors,
+    };
+  }
+  const visible = await waitForDeployment(newNode, options, expectedDeploymentId);
+  errors += visible.ok ? 0 : 1;
+  return {
+    name: "cluster.autoscale.scale_up_warm",
+    action: "scale_up",
+    nodes: nodes.length,
+    fromNodes,
+    toNodes: nodes.length,
+    ok: errors === 0,
+    publishMs: round3(publishDone - started),
+    visibleMs: round3(visible.elapsedMs),
+    totalMs: round3(performance.now() - started),
+    errors,
+  };
+}
+
+async function measureScaleDownExclude(
+  nodes: RuntimeClusterNode[],
+  snapshot: RouteSnapshot,
+  expectedDeploymentId: string,
+  options: ClusterBenchOptions,
+): Promise<ClusterAutoscalingResult> {
+  const remaining = nodes.slice(0, -1);
+  const started = performance.now();
+  const publish = await publishRouteSnapshot(snapshot, publishTargets(remaining));
+  const publishDone = performance.now();
+  let errors = publish.targets.filter((target) => !target.ok).length;
+  if (!publish.ok) {
+    return {
+      name: "cluster.autoscale.scale_down_exclude",
+      action: "scale_down",
+      nodes: nodes.length,
+      fromNodes: nodes.length,
+      toNodes: remaining.length,
+      ok: false,
+      publishMs: round3(publishDone - started),
+      visibleMs: 0,
+      totalMs: round3(performance.now() - started),
+      errors,
+    };
+  }
+  const visibleChecks = await Promise.all(
+    remaining.map((node) => waitForDeployment(node, options, expectedDeploymentId)),
+  );
+  errors += visibleChecks.filter((item) => !item.ok).length;
+  return {
+    name: "cluster.autoscale.scale_down_exclude",
+    action: "scale_down",
+    nodes: nodes.length,
+    fromNodes: nodes.length,
+    toNodes: remaining.length,
+    ok: errors === 0,
+    publishMs: round3(publishDone - started),
+    visibleMs: round3(Math.max(0, ...visibleChecks.map((item) => item.elapsedMs))),
+    totalMs: round3(performance.now() - started),
     errors,
   };
 }

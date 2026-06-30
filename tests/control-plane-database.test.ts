@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
-import { resolveControlPlaneDatabaseConfig } from "../src/control-plane/database.ts";
+import {
+  applyConfiguredControlPlaneMigrations,
+  checkConfiguredControlPlaneMigrations,
+  resolveControlPlaneDatabaseConfig,
+} from "../src/control-plane/database.ts";
 
 test("control-plane database config prefers DATABASE_URL Postgres over local SQLite", () => {
   assert.deepEqual(resolveControlPlaneDatabaseConfig({}), {
@@ -48,14 +54,44 @@ test("Postgres schema covers control-plane tables without SQLite-only syntax", a
     "routes",
     "runtime_nodes",
     "route_snapshot_publications",
+    "canary_decisions",
   ]) {
     assert.match(sql, new RegExp(`create table if not exists ${table}`));
   }
   assert.match(sql, /targets_json jsonb/);
+  assert.match(sql, /signature_json jsonb/);
+  assert.match(sql, /provenance_json jsonb/);
+  assert.match(sql, /world_version text not null default '0\.1\.0'/);
   assert.match(sql, /capacity_json jsonb/);
+  assert.match(sql, /labels_json jsonb/);
+  assert.match(sql, /load_json jsonb/);
+  assert.match(sql, /identity_json jsonb/);
   assert.match(sql, /snapshot_id text/);
+  assert.match(sql, /canary_decisions_created_at_idx/);
   assert.match(sql, /create index if not exists routes_lookup_idx/);
   assert.match(sql, /create index if not exists runtime_nodes_status_last_seen_idx/);
   assert.doesNotMatch(sql, /pragma/i);
   assert.doesNotMatch(sql, /\binteger primary key\b/i);
+});
+
+test("control-plane migration status tracks SQLite schema version", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "wasmplane-migration-status-"));
+  const dbPath = join(dir, "control.sqlite");
+
+  const pending = await checkConfiguredControlPlaneMigrations({
+    env: { WASMPLANE_DB: dbPath },
+  });
+  assert.equal(pending.kind, "sqlite");
+  assert.equal(pending.ok, false);
+  assert.equal(pending.currentVersion, undefined);
+  assert.ok(pending.latestVersion);
+  assert.ok(pending.pending.includes(pending.latestVersion));
+
+  const applied = await applyConfiguredControlPlaneMigrations({
+    env: { WASMPLANE_DB: dbPath },
+  });
+  assert.equal(applied.ok, true);
+  assert.equal(applied.currentVersion, applied.latestVersion);
+  assert.deepEqual(applied.pending, []);
+  assert.equal(applied.applied.at(-1), applied.latestVersion);
 });

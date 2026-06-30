@@ -46,10 +46,13 @@ cluster-bench: rust-build guest-build
 cluster-bench-daemon: rust-build guest-build
     pnpm cluster-bench --component "{{ guest_component }}" --host-bin target/debug/wasmplane-wasip3-host --host-daemon-url http://127.0.0.1:8790 --pooling-total-component-instances 64 --pooling-total-core-instances 256 --pooling-total-memories 64 --pooling-total-tables 128 --pooling-memory-mb 64 --nodes 1,2,4 --iterations 30 --warmup 2 --concurrency 1,4,16
 
-pg-migrate:
-    test -n "$DATABASE_URL"
-    psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/postgres/001_init.sql
-    psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "insert into schema_migrations (id, applied_at) values ('202606300001_postgres_init', now()::text) on conflict (id) do nothing"
+db-migrate-check:
+    pnpm wasmplane migrate check
+
+db-migrate-apply:
+    pnpm wasmplane migrate apply
+
+pg-migrate: db-migrate-apply
 
 pg-backup output="backups/wasmplane.dump":
     test -n "$DATABASE_URL"

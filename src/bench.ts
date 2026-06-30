@@ -10,6 +10,7 @@ import {
   MVP_RUNTIME_BACKEND,
   MVP_WASI_PROFILE,
   MVP_WORKER_WORLD,
+  MVP_WORKER_WORLD_VERSION,
   type CapabilityPolicy,
   type RuntimeLimits,
 } from "./control-plane/contracts.ts";
@@ -80,7 +81,7 @@ export interface HostInvokeArgsInput {
   uri: string;
   headers: Array<{ name: string; value: string }>;
   body: string;
-  limits?: Partial<Omit<RuntimeLimits, "cpuMs">>;
+  limits?: Partial<RuntimeLimits>;
   capabilities?: CapabilityPolicy;
   kvStoreDir?: string;
 }
@@ -317,6 +318,9 @@ export function buildHostInvokeArgs(input: HostInvokeArgsInput): string[] {
   if (input.limits?.wallMs !== undefined) {
     args.push("--wall-ms", String(input.limits.wallMs));
   }
+  if (input.limits?.cpuMs !== undefined) {
+    args.push("--cpu-ms", String(input.limits.cpuMs));
+  }
   if (input.limits?.memoryMb !== undefined) {
     args.push("--memory-mb", String(input.limits.memoryMb));
   }
@@ -481,11 +485,21 @@ function benchmarkRoute(artifact: { id: string; digest: string; location: string
     projectId: "prj_bench",
     deploymentId: "dep_bench",
     world: MVP_WORKER_WORLD,
+    worldVersion: MVP_WORKER_WORLD_VERSION,
     runtime,
     limits: defaultLimits,
     capabilities,
     artifact,
-    targets: [{ deploymentId: "dep_bench", weight: 100, world: MVP_WORKER_WORLD, runtime, limits: defaultLimits, capabilities, artifact }],
+    targets: [{
+      deploymentId: "dep_bench",
+      weight: 100,
+      world: MVP_WORKER_WORLD,
+      worldVersion: MVP_WORKER_WORLD_VERSION,
+      runtime,
+      limits: defaultLimits,
+      capabilities,
+      artifact,
+    }],
   };
 }
 

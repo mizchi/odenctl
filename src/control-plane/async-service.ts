@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type {
   Artifact,
+  CanaryDecision,
   CapabilityPolicy,
   Deployment,
   KvNamespace,
@@ -18,8 +19,9 @@ import type {
   Secret,
 } from "./contracts.ts";
 import {
-  MVP_WORKER_WORLD,
   normalizeCapabilities,
+  normalizeArtifactProvenance,
+  normalizeArtifactSignature,
   normalizeDigest,
   normalizeHost,
   normalizeKvNamespaceName,
@@ -30,6 +32,10 @@ import {
   normalizeRuntime,
   normalizeRouteTargets,
   normalizeRuntimeNodeCapacity,
+  normalizeRuntimeNodeIdentity,
+  normalizeRuntimeNodeLabels,
+  normalizeRuntimeNodeLoad,
+  normalizeRuntimeNodeRegion,
   normalizeRuntimeNodeStatus,
   normalizeRuntimeNodeUrl,
   normalizeSecretName,
@@ -37,12 +43,23 @@ import {
   normalizeSizeBytes,
   normalizeWorld,
   optionalId,
+  workerWorldVersion,
 } from "./contracts.ts";
 import { ControlPlaneError } from "./errors.ts";
+import type { SecretCipher } from "./secret-encryption.ts";
+import type { ProjectResourceUsage } from "./repository.ts";
+import { enforceProjectQuota, type ProjectQuotaResource, type ProjectQuotas } from "./quotas.ts";
+import type { ArtifactSignatureVerifier } from "./artifact-signing.ts";
+import {
+  analyzeCanaryEvents,
+  type CanaryAnalysisThresholds,
+  type CanaryMetricEvent,
+} from "./canary-analysis.ts";
 
 export interface AsyncControlPlaneRepository {
   createProject(project: Project): Promise<Project>;
   getProject(id: string): Promise<Project | undefined>;
+  getProjectUsage(projectId: string): Promise<ProjectResourceUsage>;
   createArtifact(artifact: Artifact): Promise<Artifact>;
   getArtifact(id: string): Promise<Artifact | undefined>;
   getArtifactByProjectDigest(projectId: string, digest: string): Promise<Artifact | undefined>;
@@ -64,11 +81,15 @@ export interface AsyncControlPlaneRepository {
   createRuntimeNode(node: RuntimeNode): Promise<RuntimeNode>;
   getRuntimeNode(id: string): Promise<RuntimeNode | undefined>;
   updateRuntimeNodeHeartbeat(node: RuntimeNode): Promise<RuntimeNode>;
+  updateRuntimeNodeStatus(id: string, status: RuntimeNodeStatus): Promise<RuntimeNode>;
+  deleteRuntimeNode(id: string): Promise<RuntimeNode>;
   listRuntimeNodes(): Promise<RuntimeNode[]>;
   createRouteSnapshotPublication(
     publication: RouteSnapshotPublication,
   ): Promise<RouteSnapshotPublication>;
   listRouteSnapshotPublications(): Promise<RouteSnapshotPublication[]>;
+  createCanaryDecision(decision: CanaryDecision): Promise<CanaryDecision>;
+  listCanaryDecisions(): Promise<CanaryDecision[]>;
 }
 
 export interface AsyncControlPlaneOptions {
@@ -76,6 +97,9 @@ export interface AsyncControlPlaneOptions {
   idGenerator?: (prefix: string) => string;
   now?: () => string;
   runtimeNodeActiveTtlMs?: number;
+  secretCipher?: SecretCipher;
+  projectQuotas?: ProjectQuotas;
+  artifactSignatureVerifier?: ArtifactSignatureVerifier;
 }
 
 export interface CreateProjectInput {
@@ -89,11 +113,17 @@ export interface CreateArtifactInput {
   digest: string;
   location: string;
   sizeBytes: number;
+  signature?: unknown;
+  provenance?: unknown;
 }
 
 export interface GetProjectArtifactByDigestInput {
   projectId: string;
   digest: string;
+}
+
+export interface GetProjectUsageInput {
+  projectId: string;
 }
 
 export interface CreateSecretInput {
@@ -172,9 +202,27 @@ export interface RollbackRouteInput {
   deploymentId?: string;
 }
 
+export interface AnalyzeRouteCanaryInput {
+  projectId: string;
+  host: string;
+  pathPrefix: string;
+  candidateDeploymentId: string;
+  events: CanaryMetricEvent[];
+  thresholds: CanaryAnalysisThresholds;
+}
+
+export interface AnalyzeRouteCanaryOutput {
+  decision: CanaryDecision;
+  route: RoutePointer;
+}
+
 export interface RegisterRuntimeNodeInput {
   id?: string;
   url: string;
+  status?: RuntimeNodeStatus;
+  region?: string;
+  labels?: Record<string, string>;
+  identity?: unknown;
 }
 
 export interface RecordRuntimeNodeHeartbeatInput {
@@ -182,6 +230,22 @@ export interface RecordRuntimeNodeHeartbeatInput {
   status?: RuntimeNodeStatus;
   version?: string;
   capacity?: RuntimeNodeCapacity;
+  load?: RuntimeNode["load"];
+}
+
+export interface UpdateRuntimeNodeStatusInput {
+  id: string;
+  status: RuntimeNodeStatus;
+}
+
+export interface CleanupRuntimeNodesInput {
+  olderThanMs: number;
+  statuses?: unknown;
+}
+
+export interface CleanupRuntimeNodesOutput {
+  cutoff: string;
+  removed: RuntimeNode[];
 }
 
 export interface RecordRouteSnapshotPublicationInput {
@@ -197,6 +261,9 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
   const idGenerator = options.idGenerator ?? defaultIdGenerator;
   const now = options.now ?? (() => new Date().toISOString());
   const runtimeNodeActiveTtlMs = options.runtimeNodeActiveTtlMs;
+  const secretCipher = options.secretCipher;
+  const projectQuotas = options.projectQuotas;
+  const artifactSignatureVerifier = options.artifactSignatureVerifier;
 
   async function createProject(input: CreateProjectInput): Promise<Project> {
     const project: Project = {
@@ -209,12 +276,15 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
 
   async function createArtifact(input: CreateArtifactInput): Promise<Artifact> {
     await requireProject(repository, input.projectId);
+    await enforceQuota(input.projectId, "artifact");
     const artifact: Artifact = {
       id: optionalId(input.id, "artifact id") ?? idGenerator("art"),
       projectId: input.projectId,
       digest: normalizeDigest(input.digest),
       location: normalizeLocation(input.location),
       sizeBytes: normalizeSizeBytes(input.sizeBytes),
+      signature: normalizeArtifactSignature(input.signature),
+      provenance: normalizeArtifactProvenance(input.provenance),
       createdAt: now(),
     };
     return repository.createArtifact(artifact);
@@ -227,8 +297,14 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
     return repository.getArtifactByProjectDigest(input.projectId, normalizeDigest(input.digest));
   }
 
+  async function getProjectUsage(input: GetProjectUsageInput): Promise<ProjectResourceUsage> {
+    await requireProject(repository, input.projectId);
+    return repository.getProjectUsage(input.projectId);
+  }
+
   async function createSecret(input: CreateSecretInput): Promise<Secret> {
     await requireProject(repository, input.projectId);
+    await enforceQuota(input.projectId, "secret");
     const secret: Secret = {
       id: optionalId(input.id, "secret id") ?? idGenerator("sec"),
       projectId: input.projectId,
@@ -236,7 +312,7 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
       createdAt: now(),
       updatedAt: now(),
     };
-    return repository.createSecret(secret, normalizeSecretValue(input.value));
+    return repository.createSecret(secret, encodeSecretValue(normalizeSecretValue(input.value)));
   }
 
   async function getSecret(input: GetSecretInput): Promise<Secret> {
@@ -250,7 +326,7 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
 
   async function updateSecretValue(input: UpdateSecretValueInput): Promise<Secret> {
     await requireSecret(repository, input.id);
-    return repository.updateSecretValue(input.id, normalizeSecretValue(input.value), now());
+    return repository.updateSecretValue(input.id, encodeSecretValue(normalizeSecretValue(input.value)), now());
   }
 
   async function deleteSecret(input: DeleteSecretInput): Promise<void> {
@@ -260,6 +336,7 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
 
   async function createKvNamespace(input: CreateKvNamespaceInput): Promise<KvNamespace> {
     await requireProject(repository, input.projectId);
+    await enforceQuota(input.projectId, "kv namespace");
     const namespace: KvNamespace = {
       id: optionalId(input.id, "kv namespace id") ?? idGenerator("kv"),
       projectId: input.projectId,
@@ -288,19 +365,23 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
 
   async function createDeployment(input: CreateDeploymentInput): Promise<Deployment> {
     await requireProject(repository, input.projectId);
+    await enforceQuota(input.projectId, "deployment");
     const artifact = await requireArtifact(repository, input.artifactId);
     if (artifact.projectId !== input.projectId) {
       throw new ControlPlaneError("validation", "deployment artifact must belong to the same project");
     }
+    artifactSignatureVerifier?.verify(artifact);
     const capabilities = normalizeCapabilities(input.capabilities);
     await requireDeploymentKvNamespaces(repository, input.projectId, capabilities);
     await requireDeploymentSecrets(repository, input.projectId, capabilities);
 
+    const world = normalizeWorld(input.world);
     const deployment: Deployment = {
       id: optionalId(input.id, "deployment id") ?? idGenerator("dep"),
       projectId: input.projectId,
       artifactId: input.artifactId,
-      world: normalizeWorld(input.world),
+      world,
+      worldVersion: workerWorldVersion(world),
       runtime: normalizeRuntime(input.runtime),
       limits: normalizeLimits(input.limits),
       capabilities,
@@ -319,11 +400,17 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
       }
     }
 
+    const host = normalizeHost(input.host);
+    const pathPrefix = normalizePathPrefix(input.pathPrefix);
+    if (!(await repository.getRoute(input.projectId, host, pathPrefix))) {
+      await enforceQuota(input.projectId, "route");
+    }
+
     const route: RoutePointer = {
       id: optionalId(input.id, "route id") ?? idGenerator("rte"),
       projectId: input.projectId,
-      host: normalizeHost(input.host),
-      pathPrefix: normalizePathPrefix(input.pathPrefix),
+      host,
+      pathPrefix,
       deploymentId: targets[0].deploymentId,
       targets,
       updatedAt: now(),
@@ -374,6 +461,45 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
     });
   }
 
+  async function analyzeRouteCanary(input: AnalyzeRouteCanaryInput): Promise<AnalyzeRouteCanaryOutput> {
+    await requireProject(repository, input.projectId);
+    const host = normalizeHost(input.host);
+    const pathPrefix = normalizePathPrefix(input.pathPrefix);
+    const existing = await requireRoute(repository, input.projectId, host, pathPrefix);
+    const stableDeploymentId = existing.targets[0]?.deploymentId ?? existing.deploymentId;
+    const candidate = await requireDeployment(repository, input.candidateDeploymentId);
+    if (candidate.projectId !== input.projectId) {
+      throw new ControlPlaneError("validation", "canary deployment must belong to the same project");
+    }
+    if (!existing.targets.some((target) => target.deploymentId === candidate.id)) {
+      throw new ControlPlaneError("validation", "canary deployment is not a target of the route");
+    }
+
+    const analysis = analyzeCanaryEvents(input.events, candidate.id, input.thresholds);
+    const decision = await repository.createCanaryDecision({
+      id: idGenerator("can"),
+      projectId: input.projectId,
+      host,
+      pathPrefix,
+      stableDeploymentId,
+      candidateDeploymentId: candidate.id,
+      action: analysis.action,
+      reason: analysis.reason,
+      metrics: analysis.metrics,
+      thresholds: input.thresholds,
+      createdAt: now(),
+    });
+    const route = analysis.action === "rollback"
+      ? await repository.upsertRoute({
+        ...existing,
+        deploymentId: stableDeploymentId,
+        targets: [{ deploymentId: stableDeploymentId, weight: 100 }],
+        updatedAt: now(),
+      })
+      : existing;
+    return { decision, route };
+  }
+
   async function createRouteSnapshot(): Promise<RouteSnapshot> {
     const routes = await Promise.all(
       (await repository.listRoutes()).map(async (route) => {
@@ -386,14 +512,11 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
           deploymentId: primary.deploymentId,
           targets,
           world: primary.world,
+          worldVersion: primary.worldVersion,
           runtime: primary.runtime,
           limits: primary.limits,
           capabilities: primary.capabilities,
-          artifact: {
-            id: primary.artifact.id,
-            digest: primary.artifact.digest,
-            location: primary.artifact.location,
-          },
+          artifact: routeSnapshotArtifact(primary.artifact),
         };
       }),
     );
@@ -408,11 +531,15 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
   }
 
   async function registerRuntimeNode(input: RegisterRuntimeNodeInput): Promise<RuntimeNode> {
+    const identity = normalizeRuntimeNodeIdentity(input.identity);
     const node: RuntimeNode = {
       id: optionalId(input.id, "runtime node id") ?? idGenerator("rt"),
       url: normalizeRuntimeNodeUrl(input.url),
-      status: "active",
+      status: normalizeRuntimeNodeStatus(input.status),
       registeredAt: now(),
+      region: normalizeRuntimeNodeRegion(input.region),
+      labels: normalizeRuntimeNodeLabels(input.labels),
+      ...(identity ? { identity } : {}),
     };
     return repository.createRuntimeNode(node);
   }
@@ -430,8 +557,27 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
       lastSeenAt: now(),
       version: input.version ?? existing.version,
       capacity: normalizeRuntimeNodeCapacity(input.capacity) ?? existing.capacity,
+      load: normalizeRuntimeNodeLoad(input.load) ?? existing.load,
     };
     return repository.updateRuntimeNodeHeartbeat(node);
+  }
+
+  async function updateRuntimeNodeStatus(input: UpdateRuntimeNodeStatusInput): Promise<RuntimeNode> {
+    return repository.updateRuntimeNodeStatus(input.id, normalizeRuntimeNodeStatus(input.status));
+  }
+
+  async function cleanupRuntimeNodes(input: CleanupRuntimeNodesInput): Promise<CleanupRuntimeNodesOutput> {
+    const olderThanMs = cleanupOlderThanMs(input.olderThanMs);
+    const statuses = cleanupStatuses(input.statuses);
+    const cutoffMs = Date.parse(now()) - olderThanMs;
+    const cutoff = new Date(cutoffMs).toISOString();
+    const removed = (await repository.listRuntimeNodes()).filter((node) =>
+      statuses.has(node.status) && runtimeNodeObservedAtMs(node) < cutoffMs
+    );
+    for (const node of removed) {
+      await repository.deleteRuntimeNode(node.id);
+    }
+    return { cutoff, removed };
   }
 
   async function listRuntimeNodes(): Promise<RuntimeNode[]> {
@@ -462,8 +608,13 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
     return repository.listRouteSnapshotPublications();
   }
 
+  async function listCanaryDecisions(): Promise<CanaryDecision[]> {
+    return repository.listCanaryDecisions();
+  }
+
   return {
     createProject,
+    getProjectUsage,
     createArtifact,
     getProjectArtifactByDigest,
     createSecret,
@@ -478,14 +629,18 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
     createDeployment,
     pointRoute,
     startRouteCanary,
+    analyzeRouteCanary,
     rollbackRoute,
     createRouteSnapshot,
     registerRuntimeNode,
     recordRuntimeNodeHeartbeat,
+    updateRuntimeNodeStatus,
+    cleanupRuntimeNodes,
     listRuntimeNodes,
     listActiveRuntimeNodes,
     recordRouteSnapshotPublication,
     listRouteSnapshotPublications,
+    listCanaryDecisions,
   };
 
   async function routeSnapshotTarget(target: RouteTarget) {
@@ -494,16 +649,31 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
     return {
       deploymentId: deployment.id,
       weight: target.weight,
-      world: MVP_WORKER_WORLD,
+      world: deployment.world,
+      worldVersion: deployment.worldVersion,
       runtime: deployment.runtime,
       limits: deployment.limits,
       capabilities: deployment.capabilities,
-      artifact: {
-        id: artifact.id,
-        digest: artifact.digest,
-        location: artifact.location,
-      },
+      artifact: routeSnapshotArtifact(artifact),
     };
+  }
+
+  function routeSnapshotArtifact(artifact: Artifact) {
+    return {
+      id: artifact.id,
+      digest: artifact.digest,
+      location: artifact.location,
+      ...(artifact.signature ? { signature: artifact.signature } : {}),
+      ...(artifact.provenance ? { provenance: artifact.provenance } : {}),
+    };
+  }
+
+  function encodeSecretValue(value: string): string {
+    return secretCipher ? secretCipher.encrypt(value) : value;
+  }
+
+  async function enforceQuota(projectId: string, resource: ProjectQuotaResource) {
+    enforceProjectQuota(projectId, projectQuotas, await repository.getProjectUsage(projectId), resource);
   }
 }
 
@@ -516,9 +686,38 @@ function isActiveRuntimeNode(
     return false;
   }
   if (activeTtlMs === undefined || !node.lastSeenAt) {
-    return true;
+    return !isSaturatedRuntimeNode(node);
   }
-  return Date.parse(nowValue) - Date.parse(node.lastSeenAt) <= activeTtlMs;
+  return Date.parse(nowValue) - Date.parse(node.lastSeenAt) <= activeTtlMs && !isSaturatedRuntimeNode(node);
+}
+
+function isSaturatedRuntimeNode(node: RuntimeNode): boolean {
+  return Boolean(
+    node.capacity
+      && node.load
+      && node.load.activeRequests >= node.capacity.concurrentRequests,
+  );
+}
+
+function cleanupOlderThanMs(value: unknown): number {
+  if (!Number.isInteger(value) || (value as number) <= 0) {
+    throw new ControlPlaneError("validation", "runtime node cleanup olderThanMs must be a positive integer");
+  }
+  return value as number;
+}
+
+function cleanupStatuses(value: unknown): Set<RuntimeNodeStatus> {
+  if (value === undefined) {
+    return new Set(["offline"]);
+  }
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new ControlPlaneError("validation", "runtime node cleanup statuses must be a non-empty array");
+  }
+  return new Set(value.map((status) => normalizeRuntimeNodeStatus(status)));
+}
+
+function runtimeNodeObservedAtMs(node: RuntimeNode): number {
+  return Date.parse(node.lastSeenAt ?? node.registeredAt);
 }
 
 async function requireProject(repository: AsyncControlPlaneRepository, id: string): Promise<Project> {

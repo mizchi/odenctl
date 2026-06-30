@@ -2,6 +2,11 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import {
+  applyConfiguredControlPlaneMigrations,
+  checkConfiguredControlPlaneMigrations,
+  type ConfiguredControlPlaneMigrationOptions,
+} from "./control-plane/database.ts";
+import {
   MVP_RUNTIME_BACKEND,
   MVP_WASI_PROFILE,
   MVP_WORKER_WORLD,
@@ -34,6 +39,10 @@ export interface DeployComponentResult {
   deployment: any;
   route: any;
   publish?: any;
+}
+
+export interface MigrateCommandInput extends ConfiguredControlPlaneMigrationOptions {
+  action: "apply" | "check";
 }
 
 export type FetchFunction = (input: string, init?: any) => Promise<FetchResponseLike>;
@@ -202,6 +211,47 @@ export function parseDeployArgs(args: string[], env: Record<string, string | und
   return input as DeployComponentInput;
 }
 
+export function parseMigrateArgs(
+  args: string[],
+  env: Record<string, string | undefined> = process.env,
+): MigrateCommandInput {
+  const [action, ...rest] = args;
+  if (action !== "apply" && action !== "check") {
+    throw new Error("usage: wasmplane migrate <apply|check> [--sqlite <path> | --database-url <url>]");
+  }
+  const migrateEnv = migrationEnvFromProcess(env);
+  for (let index = 0; index < rest.length; index += 1) {
+    const flag = rest[index];
+    const value = rest[index + 1];
+    switch (flag) {
+      case "--sqlite":
+        migrateEnv.WASMPLANE_DB = requiredValue(flag, value);
+        delete migrateEnv.DATABASE_URL;
+        delete migrateEnv.WASMPLANE_DATABASE_URL;
+        index += 1;
+        break;
+      case "--database-url":
+        migrateEnv.DATABASE_URL = requiredValue(flag, value);
+        delete migrateEnv.WASMPLANE_DB;
+        index += 1;
+        break;
+      case "--postgres-ssl":
+        migrateEnv.WASMPLANE_POSTGRES_SSL = requiredValue(flag, value);
+        index += 1;
+        break;
+      default:
+        throw new Error(`unknown migrate argument ${flag}`);
+    }
+  }
+  return { action, env: migrateEnv };
+}
+
+export async function runMigrateCommand(input: MigrateCommandInput) {
+  return input.action === "apply"
+    ? applyConfiguredControlPlaneMigrations({ env: input.env })
+    : checkConfiguredControlPlaneMigrations({ env: input.env });
+}
+
 async function postJson(
   fetchImpl: FetchFunction,
   baseUrl: string,
@@ -306,12 +356,41 @@ function printDeployResult(result: DeployComponentResult) {
   );
 }
 
+function printMigrationStatus(status: Awaited<ReturnType<typeof runMigrateCommand>>) {
+  console.log(JSON.stringify(status, null, 2));
+}
+
 async function main() {
   const [command, ...args] = process.argv.slice(2);
-  if (command !== "deploy") {
-    throw new Error("usage: wasmplane deploy --project-id <id> --component <component.wasm> --host <host>");
+  if (command === "deploy") {
+    printDeployResult(await deployComponent(parseDeployArgs(args)));
+    return;
   }
-  printDeployResult(await deployComponent(parseDeployArgs(args)));
+  if (command === "migrate") {
+    const input = parseMigrateArgs(args);
+    const status = await runMigrateCommand(input);
+    printMigrationStatus(status);
+    if (input.action === "check" && !status.ok) {
+      process.exitCode = 1;
+    }
+    return;
+  }
+  throw new Error(
+    "usage: wasmplane <deploy|migrate> ...",
+  );
+}
+
+function migrationEnvFromProcess(env: Record<string, string | undefined>): Record<string, string | undefined> {
+  const keys = [
+    "DATABASE_URL",
+    "WASMPLANE_DATABASE_URL",
+    "WASMPLANE_DB",
+    "WASMPLANE_POSTGRES_SSL",
+    "WASMPLANE_POSTGRES_POOL_SIZE",
+  ];
+  return Object.fromEntries(
+    keys.flatMap((key) => env[key] ? [[key, env[key]]] : []),
+  );
 }
 
 if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {

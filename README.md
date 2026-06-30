@@ -7,6 +7,7 @@ The MVP follows the design memo in `/Users/mz/Downloads/wasi-edge-worker-platfor
 - Deployments are immutable.
 - Routes are mutable pointers to deployments, so rollback is a pointer update.
 - The initial runtime backend is Wasmtime with WASIp3.
+- Deployments and route snapshots track the WIT worker world version explicitly as `worldVersion`.
 - Workers do not receive arbitrary filesystem, socket, process, or env access.
 - Request hot paths should consume compact route snapshots, not query the product DB.
 
@@ -25,9 +26,13 @@ The control plane listens on `http://127.0.0.1:8787` by default and stores state
 `wasmplane.sqlite`. Set `WASMPLANE_DB`, `HOST`, or `PORT` to override this. For production, set
 `DATABASE_URL` or `WASMPLANE_DATABASE_URL` to use the async Postgres repository instead of SQLite.
 `WASMPLANE_POSTGRES_SSL=1` forces TLS, while `sslmode=require` in the URL also enables TLS.
-Run `just pg-migrate` before first boot when applying schema outside the app startup path, and use
-`just pg-backup backups/wasmplane.dump` / `just pg-restore backups/wasmplane.dump` for custom-format
-`pg_dump` backups. Set
+Startup applies known migrations and logs the current/latest schema version. Run
+`just db-migrate-check` in CI or before rollout, and `just db-migrate-apply` when applying schema
+outside the app startup path. `just pg-migrate` is kept as a Postgres-compatible alias.
+Before production changes, take a custom-format backup with
+`just pg-backup backups/wasmplane.dump`; rollback is restore-first:
+stop writers, run `just pg-restore backups/wasmplane.dump`, then redeploy the previous app image.
+Set
 `WASMPLANE_RUNTIME_NODES` to a comma-separated list of static runtime node base URLs, or register
 runtime nodes through `POST /runtime-nodes`, when using `POST /snapshots/routes/publish`.
 Set `WASMPLANE_API_TOKEN` to require `Authorization: Bearer <token>` on all control-plane API
@@ -38,10 +43,29 @@ endpoints except `GET /healthz`; this legacy token has all scopes. For scoped to
 audit events as JSONL.
 Set `WASMPLANE_RUNTIME_TOKEN` on the control plane to sign route snapshot publishes sent to runtime
 nodes.
+Set `WASMPLANE_RUNTIME_IDENTITY_KEYS` on the control plane and runtime nodes as a comma-separated
+keyring such as `rt-key=secret,old-key=old-secret`. Runtime nodes advertise their active key with
+`WASMPLANE_RUNTIME_IDENTITY_KEY_ID=rt-key`, and can also advertise a pinned transport certificate
+fingerprint through `WASMPLANE_RUNTIME_IDENTITY_CERT_SHA256=<sha256>`. When a registered runtime
+node has an identity key id and the control plane has the matching secret, snapshot publishes to
+`PUT /__runtime/snapshots/routes` include an HMAC proof-of-possession signature in addition to the
+optional bearer token.
+Set `WASMPLANE_QUOTA_MAX_ARTIFACTS`, `WASMPLANE_QUOTA_MAX_DEPLOYMENTS`,
+`WASMPLANE_QUOTA_MAX_ROUTES`, `WASMPLANE_QUOTA_MAX_SECRETS`, and
+`WASMPLANE_QUOTA_MAX_KV_NAMESPACES` to enforce per-project resource quotas before writes are
+accepted.
 Set `WASMPLANE_SNAPSHOT_PUBLISH_INTERVAL_MS` to run a background publish job that periodically
 generates the current route snapshot and publishes it to configured/registered active runtime
 nodes. Each generated route snapshot includes a content-derived `snap_<hash>` id, and publish
 history records that id for retry and audit correlation.
+Operators can drain runtime nodes before maintenance or scale-down with
+`PATCH /runtime-nodes/:id/status` and body `{"status":"draining"}`. Draining and offline nodes stay
+in the registry for visibility, but are excluded from snapshot publish targets. Switch back to
+`active` after warmup or mark `offline` when the node should remain out of service.
+Old registry entries can be removed with `POST /runtime-nodes/gc`. The body requires
+`olderThanMs` and optionally accepts `statuses`, for example
+`{"olderThanMs":86400000,"statuses":["offline"]}`. If `statuses` is omitted, cleanup only removes
+old offline nodes. Removing stale active nodes requires explicitly passing `["active"]`.
 Local artifact ingestion stores bytes in `.wasmplane/artifacts` by default; set
 `WASMPLANE_ARTIFACT_DIR` to override it. Local artifact ingestion validates components through
 `wasmplane-wasip3-host` by default; set `WASMPLANE_VALIDATE_LOCAL_ARTIFACTS=0` to disable that
@@ -60,24 +84,56 @@ export WASMPLANE_ARTIFACT_PUBLIC_BASE_URL=https://cdn.example.com/artifacts
 ```
 
 If `WASMPLANE_ARTIFACT_PUBLIC_BASE_URL` is omitted for S3/R2, artifact locations are recorded as
-`s3://<bucket>/<key>`. Runtime nodes materialize `file://`, `http://`, `https://`, and private
-`s3://` artifacts. Private S3/R2 runtime fetches use SigV4 GET with the same
+`s3://<bucket>/<key>`. Runtime nodes materialize `file://`, `http://`, `https://`, private
+`s3://`, and `oci://` artifacts. Private S3/R2 runtime fetches use SigV4 GET with the same
 `WASMPLANE_ARTIFACT_*` or `AWS_*` credentials; if `WASMPLANE_ARTIFACT_BUCKET` is set, runtime
 nodes reject `s3://` artifacts from other buckets.
+
+OCI locations may point at a tag (`oci://registry.example.com/team/worker:v1`) or directly at the
+artifact blob digest (`oci://registry.example.com/team/worker@sha256:<digest>`). For tag references,
+runtime nodes fetch the OCI manifest and require a layer digest that exactly matches the control
+plane artifact digest before downloading the blob. Configure private registry auth with either a
+single registry:
+
+```sh
+export WASMPLANE_OCI_REGISTRY=registry.example.com
+export WASMPLANE_OCI_REGISTRY_TOKEN=...
+# or:
+export WASMPLANE_OCI_REGISTRY_USERNAME=...
+export WASMPLANE_OCI_REGISTRY_PASSWORD=...
+```
+
+or multiple registries through `WASMPLANE_OCI_REGISTRIES_JSON`. Each entry can include `scheme`,
+`bearerToken`, `username`, and `password`; `scheme: "http"` is useful for local registry tests.
 
 The runtime node listens on `http://127.0.0.1:8788` by default. Set `RUNTIME_HOST`,
 `RUNTIME_PORT`, `WASMPLANE_CACHE_DIR`, or `WASMPLANE_ARTIFACT_CACHE_DIR` to override this.
 Set `CONTROL_PLANE_URL` or `WASMPLANE_CONTROL_PLANE_URL` to make the runtime register itself and
 send heartbeat updates.
 `RUNTIME_PUBLIC_URL`, `RUNTIME_NODE_ID`, `RUNTIME_CONCURRENCY`, `RUNTIME_MEMORY_MB`, and
-`RUNTIME_HEARTBEAT_INTERVAL_MS` tune the heartbeat payload. Runtime secret values are loaded from
-environment variables named `WASMPLANE_SECRET_<secretId>` or `WASMPLANE_SECRET_<NORMALIZED_ID>` by
-default. Set `WASMPLANE_SECRET_DB` to a control-plane SQLite database path to resolve values from
-the local secret registry instead. Route snapshots only carry `secretId`, never the secret value.
+`RUNTIME_HEARTBEAT_INTERVAL_MS` tune the heartbeat payload. `RUNTIME_REGION` or `FLY_REGION` records
+node placement region, and `RUNTIME_LABELS` accepts comma-separated `key=value` labels such as
+`pool=default,tier=edge`. Heartbeats include current active worker request load so the control plane
+can skip saturated nodes when publishing snapshots. Runtime secret values are loaded from environment
+variables named `WASMPLANE_SECRET_<secretId>` or `WASMPLANE_SECRET_<NORMALIZED_ID>` by default. Set
+`WASMPLANE_SECRET_DB` to a control-plane SQLite database path to resolve values from the local secret
+registry instead. If the control plane stores encrypted secret envelopes, set the same secret KMS
+keyring settings on the runtime so repository secret values can be decrypted before worker
+invocation. Route snapshots only carry `secretId`, never the secret value.
+Runtime nodes keep bounded in-memory request events and worker log lines. `GET /__runtime/events`
+returns recent request events, and `GET /__runtime/logs?projectId=...&deploymentId=...` returns
+recent worker logs filtered by project or deployment. Worker logs are redacted before retention:
+resolved secret values and sensitive key-value fields such as `authorization`, `cookie`, `token`,
+`password`, and `secret` are replaced with `[REDACTED]`.
 Set `RUNTIME_SNAPSHOT_WARMUP=1` to make route snapshot ACKs wait until every deployment target in
 the snapshot has been materialized and precompiled into the node-local `.cwasm` cache. Use
 `RUNTIME_SNAPSHOT_WARMUP_CONCURRENCY` to bound concurrent materialize/precompile work during
 snapshot warmup; the runtime default is 4.
+Autoscalers can read `GET /autoscaling/signals` from the control plane to get per-runtime
+`activeRequests`, `concurrentRequests`, `loadRatio`, and saturation state. The autoscaling helpers
+turn these signals into scale-up/scale-down decisions, and the Fly Machines prototype reconciler can
+create Machines or stop excess Machines. New runtime nodes should be registered as `draining`,
+receive the current route snapshot directly for warmup, then be marked `active` by heartbeat.
 Set `WASMPLANE_KV_STORE_DIR` to choose the host-side persistent KV directory; the default is
 `.wasmplane/kv`.
 Set `WASMPLANE_WASIP3_HOST_DAEMON=1` to make the Node runtime start a local embedded Rust
@@ -108,6 +164,14 @@ plane requires bearer-token authentication for registration and heartbeat update
 Set `WASMPLANE_RUNTIME_TOKEN` on the runtime node to require `Authorization: Bearer <token>` for
 runtime management endpoints such as `PUT /__runtime/snapshots/routes`; `GET /__runtime/healthz`
 remains unauthenticated.
+Set `WASMPLANE_RUNTIME_IDENTITY_KEYS` on the runtime node to require signed route snapshot publishes.
+The same keyring must be available to the control plane. Rotate keys online by first adding the new
+key to both keyrings, then switching runtime nodes to the new
+`WASMPLANE_RUNTIME_IDENTITY_KEY_ID`, waiting for heartbeat/registration to advertise it, and finally
+removing the old key after all publishers and nodes have moved. For transport-level mTLS, terminate
+TLS on the runtime edge or private network proxy and pin the certificate fingerprint with
+`WASMPLANE_RUNTIME_IDENTITY_CERT_SHA256`; the built-in identity signature protects the application
+request even when bearer tokens are also configured.
 Set `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` or `OTEL_EXPORTER_OTLP_ENDPOINT` to emit OTLP/HTTP JSON
 trace spans for worker requests. `OTEL_SERVICE_NAME` defaults to `wasmplane-runtime`, and
 `OTEL_EXPORTER_OTLP_HEADERS` accepts comma-separated `key=value` headers for collector auth.
@@ -135,6 +199,8 @@ export FLY_COLLECTOR_APP=mz-wasmplane-otel-collector
 export FLY_REGION=nrt
 export WASMPLANE_CONTROL_PLANE_TOKEN="$(openssl rand -hex 24)"
 export WASMPLANE_RUNTIME_TOKEN="$(openssl rand -hex 24)"
+export WASMPLANE_RUNTIME_IDENTITY_KEY_ID=rt-key
+export WASMPLANE_RUNTIME_IDENTITY_SECRET="$(openssl rand -hex 32)"
 
 fly apps create "$FLY_CONTROL_APP"
 fly apps create "$FLY_RUNTIME_APP"
@@ -143,14 +209,17 @@ just fly-create-volumes
 
 fly secrets set -a "$FLY_CONTROL_APP" \
   WASMPLANE_API_TOKEN="$WASMPLANE_CONTROL_PLANE_TOKEN" \
-  WASMPLANE_RUNTIME_TOKEN="$WASMPLANE_RUNTIME_TOKEN"
+  WASMPLANE_RUNTIME_TOKEN="$WASMPLANE_RUNTIME_TOKEN" \
+  WASMPLANE_RUNTIME_IDENTITY_KEYS="$WASMPLANE_RUNTIME_IDENTITY_KEY_ID=$WASMPLANE_RUNTIME_IDENTITY_SECRET"
 
 fly secrets set -a "$FLY_RUNTIME_APP" \
   CONTROL_PLANE_URL="https://$FLY_CONTROL_APP.fly.dev" \
   RUNTIME_PUBLIC_URL="auto" \
   OTEL_EXPORTER_OTLP_ENDPOINT="http://$FLY_COLLECTOR_APP.internal:4318" \
   WASMPLANE_CONTROL_PLANE_TOKEN="$WASMPLANE_CONTROL_PLANE_TOKEN" \
-  WASMPLANE_RUNTIME_TOKEN="$WASMPLANE_RUNTIME_TOKEN"
+  WASMPLANE_RUNTIME_TOKEN="$WASMPLANE_RUNTIME_TOKEN" \
+  WASMPLANE_RUNTIME_IDENTITY_KEY_ID="$WASMPLANE_RUNTIME_IDENTITY_KEY_ID" \
+  WASMPLANE_RUNTIME_IDENTITY_KEYS="$WASMPLANE_RUNTIME_IDENTITY_KEY_ID=$WASMPLANE_RUNTIME_IDENTITY_SECRET"
 
 just fly-deploy-collector
 just fly-deploy-control
@@ -221,17 +290,30 @@ host linker satisfies.
 Runtime invocation enforces the route snapshot contract before calling guest code. The runtime node
 rejects privileged capabilities (`arbitraryFilesystem`, `arbitrarySockets`, `processSpawn`) and
 passes denied-by-default capability policy to the Rust host. The Rust host applies Wasmtime memory
-limits, wall-clock interruption through epoch deadlines, request and response byte limits, KV
-namespace allowlists, outbound HTTP allowlists, host API call counters, and subrequest counters.
-`limits.cpuMs` remains part of the deployment contract, but it is not yet a precise CPU-time meter.
+limits, wall-clock and `cpuMs` interruption through Wasmtime epoch deadlines, request and response
+byte limits, KV namespace allowlists, outbound HTTP allowlists, host API call counters, and
+subrequest counters. `cpuMs` uses epoch-tick compute budgeting rather than kernel CPU-time
+accounting; CPU budget exits are reported as `503 cpu_limit`, while wall-clock exits remain
+`504 timeout`.
 Guest components resolve configured capability bindings through WIT handles: `kv.open-namespace`
 maps a binding name such as `MAIN` to its physical namespace, and `secrets.open-secret` returns a
 secret handle whose `reveal` operation is backed by host-loaded secret values. Secret values are
 redacted from host logs. KV `get`/`put`/`delete` operations are backed by a host-side persistent
 store when `--kv-store-dir`/`WASMPLANE_KV_STORE_DIR` is configured, including TTL expiry.
 The control plane stores local secret values through `POST /secrets`, but all public API responses
-return only secret metadata. KV namespaces are also registered in the control plane. Deployments can
-only reference registered secrets and KV namespaces owned by the same project.
+return only secret metadata. Set `WASMPLANE_SECRET_KMS_KEY_BASE64` to a 32-byte base64 key to store
+secret values as `wasmplane:v1:aes-256-gcm:*` envelopes before repository persistence. For local
+development and Fly trials, `WASMPLANE_SECRET_KMS_KEY` is accepted as a passphrase-style key and is
+derived with SHA-256; prefer the base64 key form for production. `WASMPLANE_SECRET_KMS_KEY_ID` is
+recorded in the envelope and selects the primary encryption key. During online rotation, keep old
+decrypt keys in `WASMPLANE_SECRET_KMS_KEYS_BASE64` as comma-separated `keyId=base64` entries until
+all stored envelopes have been rewritten with the new primary key. For external KMS integrations,
+set `WASMPLANE_SECRET_KMS_KEY_PROVIDER_COMMAND` to an executable that prints JSON such as
+`{"primaryKeyId":"kid2","keys":[{"keyId":"kid1","keyBase64":"..."},{"keyId":"kid2","keyBase64":"..."}]}`.
+`WASMPLANE_SECRET_KMS_KEY_PROVIDER_ARGS` may contain a JSON string array of command arguments.
+Configure the same keyring or provider on runtime nodes when they read `WASMPLANE_SECRET_DB`.
+KV namespaces are also registered in the control plane. Deployments can only reference registered
+secrets and KV namespaces owned by the same project.
 Outbound requests go through the host `outbound.fetch` proxy and are checked against the deployment
 allowlist and subrequest limit. The host proxy supports `http://` and `https://` upstreams, with
 system trust roots used for TLS verification. Outbound allowlists are matched by URL scheme, host,
@@ -335,6 +417,7 @@ pnpm cluster-bench \
   --nodes 1,2,4 \
   --iterations 100 \
   --concurrency 1,8,32 \
+  --placement \
   --format json
 ```
 
@@ -342,6 +425,10 @@ pnpm cluster-bench \
 post-publish visibility latency. The visibility latency includes the first green request on each
 node, so it includes lazy materialization and `.cwasm` precompile for that deployment. The
 `cluster.http.cwasm` rows report aggregate worker HTTP throughput across the emulated runtime nodes.
+With `--placement`, `cluster.placement.region` publishes a new deployment only to the emulated `nrt`
+region nodes and verifies that skipped-region nodes keep serving the previous deployment.
+With `--autoscaling`, the report also includes `cluster.autoscale.scale_up_warm` and
+`cluster.autoscale.scale_down_exclude` rows for new-node warmup and target exclusion timing.
 Pass `--host-daemon-url` to use the embedded Wasmtime daemon instead of spawning the host CLI for
 every request. When the daemon uses Wasmtime pooling, pass the same `--pooling-*` flags to
 `pnpm cluster-bench` so benchmark-generated `.cwasm` files are compiled with the same Engine
@@ -350,14 +437,18 @@ settings.
 CI runs `just test` and `just e2e` on GitHub Actions. The workflow installs Node 24, Rust stable,
 `wasm32-wasip1`, `wasm-tools 1.245.1`, and `wit-bindgen-cli 0.51.0`.
 
-SQLite schema upgrades are tracked in `schema_migrations`; repository initialization applies
-missing migrations before serving requests.
+SQLite and Postgres schema upgrades are tracked in `schema_migrations`; repository initialization
+applies missing migrations before serving requests, then verifies the current schema version against
+the compiled migration catalog. `pnpm wasmplane migrate check` exits non-zero when migrations are
+pending or when the database is ahead of the running binary; `pnpm wasmplane migrate apply` applies
+the configured database migrations and prints the resulting status JSON.
 
 Runtime node endpoints:
 
 - `GET /__runtime/healthz`
 - `GET /__runtime/metrics`
 - `GET /__runtime/events`
+- `GET /__runtime/logs`
 - `PUT /__runtime/snapshots/routes`
 - any other path: resolve by `x-forwarded-host` or `host`, prepare the component, then invoke it
   through `wasmplane-wasip3-host`.
@@ -369,7 +460,17 @@ worker request events with request id, host/path, project/deployment, status, du
 code. Worker responses include `x-wasmplane-request-id`.
 
 The runtime node enforces `RUNTIME_CONCURRENCY` as the maximum concurrent worker invocations. Extra
-worker requests are rejected with `503 overloaded` and counted in metrics.
+worker requests are rejected with `503 overloaded` and counted in metrics. Set
+`RUNTIME_PROJECT_CONCURRENCY_LIMITS` to comma-separated `projectId=count` entries such as
+`prj_a=16,prj_b=4` to cap noisy projects independently while allowing other projects to keep
+serving traffic. Set `RUNTIME_PROJECT_RATE_LIMITS` to comma-separated `projectId=rps[:burst]`
+entries such as `prj_a=100:200,prj_b=10`; requests over the token-bucket rate limit return
+`429 rate_limited`.
+
+The control plane serves a small server-rendered admin UI at `GET /admin`. It summarizes the active
+route snapshot, projects, deployments, canaries, runtime nodes, autoscaling signals, and recent
+publish/canary state. The UI uses the same bearer-token scope boundaries as the JSON API: admin
+reads require `read`, while canary and rollback form posts require `write`.
 
 ## CLI Deploy
 
@@ -390,11 +491,15 @@ pnpm wasmplane deploy \
 
 The command uploads bytes through `POST /artifacts/local`, creates an immutable deployment, points
 the route, then publishes a route snapshot unless `--no-publish` is passed. Limit overrides use
-`--limit name=value`, for example `--limit wallMs=2500`. The CLI also reads
+`--limit name=value`, for example `--limit wallMs=2500 --limit cpuMs=100`. The CLI also reads
 `WASMPLANE_CONTROL_PLANE_TOKEN` when `--token` is omitted.
 Canary rollout can be driven through the control-plane API by first pointing a route at the stable
 deployment, then calling `POST /routes/canary` with a candidate deployment and weight. Rollback uses
-`POST /routes/rollback` and returns the route to the stable target with 100% weight.
+`POST /routes/rollback` and returns the route to the stable target with 100% weight. Automatic
+canary analysis uses `POST /routes/canary/analyze` with runtime event samples, a candidate
+deployment id, and thresholds such as `minRequests`, `p95Ms`, `errorRate`, and `rejectCount`.
+When a threshold fails, the route is rolled back and the decision is stored in
+`GET /canary-decisions`.
 
 ## API
 
@@ -406,7 +511,11 @@ curl -X POST http://127.0.0.1:8787/projects \
 
 Available endpoints:
 
+- `GET /admin`
+- `POST /admin/routes/canary`
+- `POST /admin/routes/rollback`
 - `POST /projects`
+- `GET /projects/:id/quota-usage`
 - `POST /artifacts`
 - `POST /artifacts/local`
 - `POST /secrets`
@@ -421,18 +530,30 @@ Available endpoints:
 - `POST /deployments`
 - `PUT /routes`
 - `POST /routes/canary`
+- `POST /routes/canary/analyze`
 - `POST /routes/rollback`
+- `GET /canary-decisions`
 - `POST /runtime-nodes`
 - `POST /runtime-nodes/:id/heartbeat`
+- `PATCH /runtime-nodes/:id/status`
+- `POST /runtime-nodes/gc`
 - `GET /runtime-nodes`
+- `GET /runtime-nodes/:id/logs`
+- `GET /autoscaling/signals`
 - `GET /snapshots/routes`
 - `POST /snapshots/routes/publish`
 - `GET /snapshots/routes/publishes`
 - `GET /healthz`
 
 Artifact locations may use `file://`, `http://`, `https://`, `oci://`, or `s3://`. The runtime
-materializer currently supports direct `file://` and HTTP(S) artifact bytes; OCI/S3 locations are
-accepted at the contract layer for future backends.
+materializer supports direct `file://` and HTTP(S) artifact bytes, private S3/R2 objects, and OCI
+registry artifacts backed by manifest-layer or digest-addressed blob pulls.
+
+Artifacts may include signature and provenance metadata. `signature` currently supports
+`sha256-hmac` over the artifact digest with a configured key id, and the control plane can reject
+deployment creation when the artifact signature is missing or invalid. `provenance` records CI/build
+context such as builder, source, revision, and build id; artifact responses and route snapshots
+surface this metadata for deploy audit and runtime publication checks.
 
 `POST /snapshots/routes/publish` creates a fresh compact route snapshot and pushes it to each
 active registered runtime node, plus statically configured runtime nodes, through

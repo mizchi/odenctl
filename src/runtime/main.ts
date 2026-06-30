@@ -1,13 +1,24 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { MVP_WASI_PROFILE } from "../control-plane/contracts.ts";
+import { createConfiguredSecretCipher } from "../control-plane/secret-encryption.ts";
 import { createSqliteRepository } from "../control-plane/repository.ts";
-import { createRuntimeArtifactStore, runtimeS3ArtifactOptionsFromEnv } from "./artifacts.ts";
+import {
+  createRuntimeArtifactStore,
+  runtimeOciArtifactOptionsFromEnv,
+  runtimeS3ArtifactOptionsFromEnv,
+} from "./artifacts.ts";
 import { startRuntimeHeartbeat } from "./heartbeat.ts";
 import {
+  parseProjectConcurrencyLimits,
+  parseProjectRateLimits,
+  parseRuntimeIdentityKeys,
+  parseRuntimeLabels,
+  resolveRuntimeIdentity,
   resolveRuntimeMemoryMb,
   resolveRuntimeNodeId,
   resolveRuntimePublicUrl,
+  resolveRuntimeRegion,
 } from "./config.ts";
 import { createRuntimeNodeApp } from "./node-app.ts";
 import { createOtlpHttpTraceExporter, parseOtlpHeaders } from "./otel.ts";
@@ -31,11 +42,18 @@ const hostDaemonUrl = process.env.WASMPLANE_WASIP3_HOST_DAEMON_URL
   ?? (hostDaemonEnabled ? `http://127.0.0.1:${hostDaemonPort}` : undefined);
 const publicUrl = resolveRuntimePublicUrl(process.env, host, port);
 const runtimeNodeId = resolveRuntimeNodeId(process.env, host, port);
+const runtimeRegion = resolveRuntimeRegion(process.env);
+const runtimeLabels = parseRuntimeLabels(process.env);
+const runtimeIdentity = resolveRuntimeIdentity(process.env);
+const runtimeIdentityKeys = parseRuntimeIdentityKeys(process.env);
 const controlPlaneUrl = process.env.CONTROL_PLANE_URL ?? process.env.WASMPLANE_CONTROL_PLANE_URL;
 const controlPlaneToken = process.env.CONTROL_PLANE_TOKEN ?? process.env.WASMPLANE_CONTROL_PLANE_TOKEN;
 const runtimeManagementToken = process.env.WASMPLANE_RUNTIME_TOKEN;
 const secretDbPath = process.env.WASMPLANE_SECRET_DB;
+const secretCipher = createConfiguredSecretCipher(process.env);
 const runtimeConcurrency = Number.parseInt(process.env.RUNTIME_CONCURRENCY ?? "128", 10);
+const projectConcurrencyLimits = parseProjectConcurrencyLimits(process.env);
+const projectRateLimits = parseProjectRateLimits(process.env);
 const warmupOnSnapshot = process.env.RUNTIME_SNAPSHOT_WARMUP === "1";
 const warmupConcurrency = Number.parseInt(process.env.RUNTIME_SNAPSHOT_WARMUP_CONCURRENCY ?? "4", 10);
 const otlpTraceEndpoint =
@@ -55,6 +73,7 @@ const supervisor = createRuntimeSupervisor({
   artifactStore: createRuntimeArtifactStore({
     cacheDir: artifactCacheDir,
     s3: runtimeS3ArtifactOptionsFromEnv(process.env),
+    oci: runtimeOciArtifactOptionsFromEnv(process.env),
   }),
   warmupConcurrency: Number.isFinite(warmupConcurrency) && warmupConcurrency > 0 ? warmupConcurrency : 4,
   backend: createWasip3HostBackend({
@@ -80,7 +99,10 @@ const app = createRuntimeNodeApp({
     ? createWasip3HostDaemonInvoker({ url: hostDaemonUrl })
     : createWasip3HostInvoker({ hostBin, kvStoreDir }),
   managementToken: runtimeManagementToken,
+  managementIdentityKeys: runtimeIdentityKeys,
   maxConcurrentInvocations: runtimeConcurrency,
+  maxConcurrentInvocationsByProject: projectConcurrencyLimits,
+  requestRateLimitsByProject: projectRateLimits,
   warmupOnSnapshot,
   telemetry: otlpTraceEndpoint
     ? createOtlpHttpTraceExporter({
@@ -92,7 +114,7 @@ const app = createRuntimeNodeApp({
     : undefined,
   hostDaemonMetrics: hostDaemonUrl ? { url: hostDaemonUrl } : undefined,
   secretStore: secretDbPath
-    ? createRepositorySecretStore(createSqliteRepository(secretDbPath))
+    ? createRepositorySecretStore(createSqliteRepository(secretDbPath), { secretCipher })
     : createEnvSecretStore(),
 });
 await app.listen({ port, host });
@@ -103,10 +125,14 @@ if (controlPlaneUrl) {
     publicUrl,
     token: controlPlaneToken,
     version: "wasmplane-runtime/0.1.0",
+    region: runtimeRegion,
+    labels: runtimeLabels,
+    identity: runtimeIdentity,
     capacity: {
       concurrentRequests: runtimeConcurrency,
       memoryMb: resolveRuntimeMemoryMb(process.env, 4096),
     },
+    load: () => ({ activeRequests: app.metrics().invocations.active }),
     intervalMs: Number.parseInt(process.env.RUNTIME_HEARTBEAT_INTERVAL_MS ?? "30000", 10),
   });
 }

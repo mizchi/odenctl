@@ -4,7 +4,12 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { deployComponent, parseDeployArgs } from "../src/cli.ts";
+import {
+  deployComponent,
+  parseDeployArgs,
+  parseMigrateArgs,
+  runMigrateCommand,
+} from "../src/cli.ts";
 import {
   MVP_RUNTIME_BACKEND,
   MVP_WASI_PROFILE,
@@ -156,6 +161,32 @@ test("CLI deploy args read token from environment", () => {
   );
 
   assert.equal(input.token, "env-secret");
+});
+
+test("CLI migrate args parse explicit SQLite path", () => {
+  const input = parseMigrateArgs(
+    ["check", "--sqlite", "/tmp/control.sqlite"],
+    {},
+  );
+
+  assert.deepEqual(input, {
+    action: "check",
+    env: { WASMPLANE_DB: "/tmp/control.sqlite" },
+  });
+});
+
+test("CLI migrate apply returns current schema status", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "wasmplane-cli-migrate-"));
+  const dbPath = join(dir, "control.sqlite");
+
+  const result = await runMigrateCommand({
+    action: "apply",
+    env: { WASMPLANE_DB: dbPath },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.currentVersion, result.latestVersion);
+  assert.deepEqual(result.pending, []);
 });
 
 function jsonResponse(status: number, body: any) {

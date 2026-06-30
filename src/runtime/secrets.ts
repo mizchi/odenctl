@@ -1,4 +1,5 @@
 import type { CapabilityPolicy } from "../control-plane/contracts.ts";
+import { isEncryptedSecretValue, type SecretCipher } from "../control-plane/secret-encryption.ts";
 import type { RuntimeCapabilityPolicy, RuntimeSecretStore } from "./types.ts";
 
 export interface SecretValueRepository {
@@ -24,10 +25,24 @@ export function createEnvSecretStore(
   };
 }
 
-export function createRepositorySecretStore(repository: SecretValueRepository): RuntimeSecretStore {
+export interface RepositorySecretStoreOptions {
+  secretCipher?: SecretCipher;
+}
+
+export function createRepositorySecretStore(
+  repository: SecretValueRepository,
+  options: RepositorySecretStoreOptions = {},
+): RuntimeSecretStore {
   return {
     async getSecret(secretId: string): Promise<string | undefined> {
-      return repository.getSecretValue(secretId);
+      const value = repository.getSecretValue(secretId);
+      if (value === undefined) {
+        return undefined;
+      }
+      if (options.secretCipher && isEncryptedSecretValue(value)) {
+        return options.secretCipher.decrypt(value);
+      }
+      return value;
     },
   };
 }

@@ -1,4 +1,7 @@
-import { createConfiguredControlPlane } from "./control-plane/database.ts";
+import {
+  checkConfiguredControlPlaneMigrations,
+  createConfiguredControlPlane,
+} from "./control-plane/database.ts";
 import { createConfiguredControlPlaneArtifactStore } from "./control-plane/artifact-store.ts";
 import { createJsonlAuditSink } from "./control-plane/audit.ts";
 import { parseApiTokens } from "./control-plane/authz.ts";
@@ -6,12 +9,14 @@ import { createSnapshotPublishJob } from "./control-plane/snapshot-publish-job.t
 import { createWasip3HostArtifactValidator } from "./control-plane/artifact-validation.ts";
 import { runtimeNodeTargetsFromEnv } from "./control-plane/snapshot-publisher.ts";
 import { createHttpApp, publishCurrentRouteSnapshot } from "./http/app.ts";
+import { parseRuntimeIdentityKeys } from "./runtime/config.ts";
 
 const port = Number.parseInt(process.env.PORT ?? "8787", 10);
 const host = process.env.HOST ?? "127.0.0.1";
 const artifactPublicBaseUrl = process.env.WASMPLANE_ARTIFACT_PUBLIC_BASE_URL;
 const apiTokens = parseApiTokens(process.env);
 const runtimeNodeToken = process.env.WASMPLANE_RUNTIME_TOKEN;
+const runtimeIdentityKeys = parseRuntimeIdentityKeys(process.env);
 const auditSink = process.env.WASMPLANE_AUDIT_LOG
   ? createJsonlAuditSink({ path: process.env.WASMPLANE_AUDIT_LOG })
   : undefined;
@@ -40,11 +45,13 @@ const appOptions = {
   apiTokens: apiTokens.length > 0 ? apiTokens : undefined,
   auditSink,
   runtimeNodeToken,
+  runtimeIdentityKeys,
   runtimeNodes: runtimeNodeTargetsFromEnv(process.env.WASMPLANE_RUNTIME_NODES),
 };
 const app = createHttpApp(appOptions);
 
 await app.listen({ port, host });
+const schemaStatus = await checkConfiguredControlPlaneMigrations({ env: process.env });
 if (snapshotPublishIntervalMs) {
   createSnapshotPublishJob({
     intervalMs: snapshotPublishIntervalMs,
@@ -56,6 +63,9 @@ if (snapshotPublishIntervalMs) {
   }).start();
 }
 console.log(`wasmplane control plane listening on http://${host}:${port}`);
+console.log(
+  `control-plane schema ${schemaStatus.currentVersion ?? "none"}/${schemaStatus.latestVersion ?? "none"}`,
+);
 
 function positiveInteger(value: string | undefined, fallback: number): number {
   if (!value) {

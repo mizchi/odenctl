@@ -5,10 +5,14 @@ import { test } from "node:test";
 import {
   MVP_WASI_PROFILE,
   MVP_WORKER_WORLD,
+  MVP_WORKER_WORLD_VERSION,
   type RouteSnapshot,
 } from "../src/control-plane/contracts.ts";
+import { createAesGcmSecretCipher } from "../src/control-plane/secret-encryption.ts";
 import { createRuntimeNodeApp } from "../src/runtime/node-app.ts";
+import { RuntimeError } from "../src/runtime/errors.ts";
 import { registerRuntimeNode, sendRuntimeHeartbeat } from "../src/runtime/heartbeat.ts";
+import { signRuntimeIdentityHeaders } from "../src/runtime/identity.ts";
 import { createEnvSecretStore, createRepositorySecretStore } from "../src/runtime/secrets.ts";
 import { createRuntimeSupervisor } from "../src/runtime/supervisor.ts";
 
@@ -204,6 +208,59 @@ test("runtime node requires management bearer token for runtime endpoints when c
   }
 });
 
+test("runtime node verifies signed snapshot publishes with identity keys", async () => {
+  const loadedSnapshots: RouteSnapshot[] = [];
+  const app = createRuntimeNodeApp({
+    managementIdentityKeys: { "rt-key": "runtime-identity-secret" },
+    supervisor: {
+      loadSnapshot(snapshot) {
+        loadedSnapshots.push(snapshot);
+      },
+      async prepareRoute() {
+        throw new Error("not used");
+      },
+    },
+  });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+  const routeSnapshot = snapshot([route("dep_identity", "hello.example.dev", "/", digest("identity"))]);
+  const body = JSON.stringify(routeSnapshot);
+
+  try {
+    const unsigned = await fetch(`${baseUrl}/__runtime/snapshots/routes`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body,
+    });
+    assert.equal(unsigned.status, 401);
+    assert.deepEqual(await unsigned.json(), {
+      error: { code: "unauthorized", message: "missing or invalid runtime identity signature" },
+    });
+
+    const signed = await fetch(`${baseUrl}/__runtime/snapshots/routes`, {
+      method: "PUT",
+      headers: {
+        "content-type": "application/json",
+        ...signRuntimeIdentityHeaders({
+          method: "PUT",
+          path: "/__runtime/snapshots/routes",
+          body,
+          keyId: "rt-key",
+          secret: "runtime-identity-secret",
+        }),
+      },
+      body,
+    });
+    assert.equal(signed.status, 200, await signed.text());
+    assert.equal(loadedSnapshots.length, 1);
+  } finally {
+    await app.close();
+  }
+});
+
 test("runtime node rejects invalid route snapshots before loading them", async () => {
   const loadedSnapshots: RouteSnapshot[] = [];
   const app = createRuntimeNodeApp({
@@ -246,6 +303,16 @@ test("runtime node rejects invalid route snapshots before loading them", async (
         },
       ]),
       message: /artifact.digest/,
+    },
+    {
+      name: "worker world version",
+      snapshot: snapshot([
+        {
+          ...route("dep_bad_world_version", "hello.example.dev", "/", digest("world-version")),
+          worldVersion: "0.2.0",
+        },
+      ]),
+      message: /worldVersion/,
     },
     {
       name: "privileged capabilities",
@@ -442,6 +509,38 @@ test("runtime node maps wall clock limit timeouts to 504", async () => {
     assert.equal(response.status, 504);
     const body = await response.json();
     assert.equal(body.error.code, "timeout");
+  } finally {
+    await app.close();
+  }
+});
+
+test("runtime node reports CPU limits distinctly from wall timeouts", async () => {
+  const supervisor = createRuntimeSupervisor({
+    snapshot: snapshot([route("dep_cpu", "hello.example.dev", "/", digest("cpu"))]),
+    artifactStore: materializedArtifactStore(),
+    backend: compiledBackend(),
+  });
+  const app = createRuntimeNodeApp({
+    supervisor,
+    invoker: {
+      async invoke() {
+        throw new RuntimeError("cpu_limit", "cpuMs limit exceeded after 1ms");
+      },
+    },
+  });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const response = await fetch(`${baseUrl}/`, {
+      headers: { "x-forwarded-host": "hello.example.dev" },
+    });
+    assert.equal(response.status, 503);
+    const body = await response.json();
+    assert.equal(body.error.code, "cpu_limit");
   } finally {
     await app.close();
   }
@@ -760,6 +859,93 @@ test("runtime node exposes structured worker request events", async () => {
   }
 });
 
+test("runtime node stores bounded redacted worker logs", async () => {
+  const withSecret = route("dep_logs", "hello.example.dev", "/", digest("logs"));
+  withSecret.capabilities.secrets = [{ binding: "API_KEY", secretId: "sec_api_key" }];
+  let requestIndex = 0;
+  const app = createRuntimeNodeApp({
+    supervisor: createRuntimeSupervisor({
+      snapshot: snapshot([withSecret]),
+      artifactStore: materializedArtifactStore(),
+      backend: compiledBackend(),
+    }),
+    logBufferSize: 2,
+    now: fixedNow,
+    requestIdGenerator() {
+      requestIndex += 1;
+      return `req_log_${requestIndex}`;
+    },
+    secretStore: {
+      async getSecret() {
+        return "super-secret";
+      },
+    },
+    invoker: {
+      async invoke() {
+        if (requestIndex === 1) {
+          return {
+            status: 200,
+            headers: [],
+            body: Buffer.from("old"),
+            logs: [{ level: "info", message: "old secret=super-secret" }],
+          };
+        }
+        return {
+          status: 200,
+          headers: [],
+          body: Buffer.from("new"),
+          logs: [
+            { level: "warn", message: "authorization: Bearer runtime-token" },
+            { message: "new secret=super-secret" },
+          ],
+        };
+      },
+    },
+  });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    await fetch(`${baseUrl}/first`, { headers: { "x-forwarded-host": "hello.example.dev" } });
+    await fetch(`${baseUrl}/second`, { headers: { "x-forwarded-host": "hello.example.dev" } });
+
+    const logsResponse = await fetch(`${baseUrl}/__runtime/logs?deploymentId=dep_logs`);
+    assert.equal(logsResponse.status, 200);
+    assert.deepEqual(await logsResponse.json(), {
+      logs: [
+        {
+          timestamp: fixedNow(),
+          requestId: "req_log_2",
+          host: "hello.example.dev",
+          path: "/second",
+          projectId: "prj_hello",
+          deploymentId: "dep_logs",
+          level: "warn",
+          message: "authorization: [REDACTED]",
+        },
+        {
+          timestamp: fixedNow(),
+          requestId: "req_log_2",
+          host: "hello.example.dev",
+          path: "/second",
+          projectId: "prj_hello",
+          deploymentId: "dep_logs",
+          level: "info",
+          message: "new secret=[REDACTED]",
+        },
+      ],
+    });
+
+    const filtered = await fetch(`${baseUrl}/__runtime/logs?deploymentId=dep_missing`);
+    assert.deepEqual(await filtered.json(), { logs: [] });
+  } finally {
+    await app.close();
+  }
+});
+
 test("runtime node rejects worker invocations over the configured concurrency limit", async () => {
   const supervisor = createRuntimeSupervisor({
     snapshot: snapshot([route("dep_limited", "hello.example.dev", "/", digest("limited"))]),
@@ -824,6 +1010,132 @@ test("runtime node rejects worker invocations over the configured concurrency li
   }
 });
 
+test("runtime node enforces per-project concurrency budgets", async () => {
+  const firstRoute = route("dep_limited", "hello.example.dev", "/", digest("limited"));
+  firstRoute.projectId = "prj_limited";
+  const otherRoute = route("dep_other", "other.example.dev", "/", digest("other"));
+  otherRoute.projectId = "prj_other";
+  const supervisor = createRuntimeSupervisor({
+    snapshot: snapshot([firstRoute, otherRoute]),
+    artifactStore: materializedArtifactStore(),
+    backend: compiledBackend(),
+  });
+  let releaseInvocation!: () => void;
+  let invocationStarted!: () => void;
+  const started = new Promise<void>((resolve) => {
+    invocationStarted = resolve;
+  });
+  const app = createRuntimeNodeApp({
+    supervisor,
+    maxConcurrentInvocationsByProject: {
+      prj_limited: 1,
+    },
+    now: fixedNow,
+    invoker: {
+      async invoke(request) {
+        if (request.component.projectId === "prj_limited") {
+          invocationStarted();
+          await new Promise<void>((resolve) => {
+            releaseInvocation = resolve;
+          });
+        }
+        return { status: 200, headers: [], body: Buffer.from("ok") };
+      },
+    },
+  });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const first = fetch(`${baseUrl}/`, {
+      headers: { "x-forwarded-host": "hello.example.dev" },
+    });
+    await started;
+    const rejected = await fetch(`${baseUrl}/`, {
+      headers: { "x-forwarded-host": "hello.example.dev" },
+    });
+    assert.equal(rejected.status, 503);
+    assert.equal((await rejected.json()).error.code, "overloaded");
+
+    const otherProject = await fetch(`${baseUrl}/`, {
+      headers: { "x-forwarded-host": "other.example.dev" },
+    });
+    assert.equal(otherProject.status, 200);
+
+    releaseInvocation();
+    const accepted = await first;
+    assert.equal(accepted.status, 200);
+  } finally {
+    await app.close();
+  }
+});
+
+test("runtime node enforces per-project request rate limits", async () => {
+  const firstRoute = route("dep_limited", "hello.example.dev", "/", digest("rate-limited"));
+  firstRoute.projectId = "prj_limited";
+  const otherRoute = route("dep_other", "other.example.dev", "/", digest("rate-other"));
+  otherRoute.projectId = "prj_other";
+  const supervisor = createRuntimeSupervisor({
+    snapshot: snapshot([firstRoute, otherRoute]),
+    artifactStore: materializedArtifactStore(),
+    backend: compiledBackend(),
+  });
+  let nowMs = 0;
+  const app = createRuntimeNodeApp({
+    supervisor,
+    requestRateLimitsByProject: {
+      prj_limited: { requestsPerSecond: 1, burst: 1 },
+    },
+    monotonicNowMs() {
+      return nowMs;
+    },
+    now: fixedNow,
+    invoker: {
+      async invoke() {
+        return { status: 200, headers: [], body: Buffer.from("ok") };
+      },
+    },
+  });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const first = await fetch(`${baseUrl}/`, {
+      headers: { "x-forwarded-host": "hello.example.dev" },
+    });
+    assert.equal(first.status, 200);
+
+    const rejected = await fetch(`${baseUrl}/`, {
+      headers: { "x-forwarded-host": "hello.example.dev" },
+    });
+    assert.equal(rejected.status, 429);
+    assert.equal((await rejected.json()).error.code, "rate_limited");
+
+    const otherProject = await fetch(`${baseUrl}/`, {
+      headers: { "x-forwarded-host": "other.example.dev" },
+    });
+    assert.equal(otherProject.status, 200);
+
+    nowMs = 1000;
+    const refilled = await fetch(`${baseUrl}/`, {
+      headers: { "x-forwarded-host": "hello.example.dev" },
+    });
+    assert.equal(refilled.status, 200);
+
+    const metrics = await (await fetch(`${baseUrl}/__runtime/metrics`)).json();
+    assert.equal(metrics.responses.byStatus["429"], 1);
+    assert.equal(metrics.errors.rate_limited, 1);
+  } finally {
+    await app.close();
+  }
+});
+
 test("runtime heartbeat client registers node and reports capacity", async () => {
   const requests: Array<{ method: string; path: string; body: any }> = [];
   const control = await listenControlPlaneSink(requests);
@@ -833,12 +1145,16 @@ test("runtime heartbeat client registers node and reports capacity", async () =>
       controlPlaneUrl: control.baseUrl,
       runtimeNodeId: "rt_local",
       publicUrl: "http://127.0.0.1:8788",
+      region: "nrt",
+      labels: { pool: "default" },
+      identity: { keyId: "rt-key", certificateSha256: "a".repeat(64) },
     });
     await sendRuntimeHeartbeat({
       controlPlaneUrl: control.baseUrl,
       runtimeNodeId: "rt_local",
       version: "wasmplane-runtime/0.1.0",
       capacity: { concurrentRequests: 128, memoryMb: 4096 },
+      load: { activeRequests: 12 },
     });
 
     assert.deepEqual(requests, [
@@ -848,6 +1164,9 @@ test("runtime heartbeat client registers node and reports capacity", async () =>
         body: {
           id: "rt_local",
           url: "http://127.0.0.1:8788",
+          region: "nrt",
+          labels: { pool: "default" },
+          identity: { keyId: "rt-key", certificateSha256: "a".repeat(64) },
         },
       },
       {
@@ -857,6 +1176,7 @@ test("runtime heartbeat client registers node and reports capacity", async () =>
           status: "active",
           version: "wasmplane-runtime/0.1.0",
           capacity: { concurrentRequests: 128, memoryMb: 4096 },
+          load: { activeRequests: 12 },
         },
       },
     ]);
@@ -932,6 +1252,27 @@ test("runtime repository secret store resolves values by secret id", async () =>
       return secretId === "sec_api_key" ? "super-secret" : undefined;
     },
   });
+
+  assert.equal(await store.getSecret("sec_api_key"), "super-secret");
+  assert.equal(await store.getSecret("sec_missing"), undefined);
+});
+
+test("runtime repository secret store decrypts encrypted repository values", async () => {
+  const secretCipher = createAesGcmSecretCipher({
+    key: Buffer.alloc(32, 5),
+    keyId: "runtime-test",
+    randomBytes(size) {
+      return Buffer.alloc(size, 2);
+    },
+  });
+  const store = createRepositorySecretStore(
+    {
+      getSecretValue(secretId) {
+        return secretId === "sec_api_key" ? secretCipher.encrypt("super-secret") : undefined;
+      },
+    },
+    { secretCipher },
+  );
 
   assert.equal(await store.getSecret("sec_api_key"), "super-secret");
   assert.equal(await store.getSecret("sec_missing"), undefined);
@@ -1071,11 +1412,21 @@ function route(
     projectId: "prj_hello",
     deploymentId,
     world: MVP_WORKER_WORLD,
+    worldVersion: MVP_WORKER_WORLD_VERSION,
     runtime,
     limits,
     capabilities,
     artifact,
-    targets: [{ deploymentId, weight: 100, world: MVP_WORKER_WORLD, runtime, limits, capabilities, artifact }],
+    targets: [{
+      deploymentId,
+      weight: 100,
+      world: MVP_WORKER_WORLD,
+      worldVersion: MVP_WORKER_WORLD_VERSION,
+      runtime,
+      limits,
+      capabilities,
+      artifact,
+    }],
   };
 }
 

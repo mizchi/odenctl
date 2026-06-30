@@ -5,8 +5,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
-import { MVP_WASI_PROFILE } from "../src/control-plane/contracts.ts";
+import { MVP_WASI_PROFILE, MVP_WORKER_WORLD_VERSION } from "../src/control-plane/contracts.ts";
 import { createAsyncControlPlane } from "../src/control-plane/async-service.ts";
+import { createHmacArtifactSignatureVerifier, signArtifactDigest } from "../src/control-plane/artifact-signing.ts";
+import { createAesGcmSecretCipher, isEncryptedSecretValue } from "../src/control-plane/secret-encryption.ts";
 import { createControlPlane } from "../src/control-plane/service.ts";
 import { createMemoryRepository, createSqliteRepository } from "../src/control-plane/repository.ts";
 
@@ -63,6 +65,7 @@ test("creates immutable wasmtime deployments with denied-by-default host capabil
   });
 
   assert.equal(deployment.id, "dep_hello_v1");
+  assert.equal(deployment.worldVersion, MVP_WORKER_WORLD_VERSION);
   assert.equal(deployment.runtime.backend, "wasmtime");
   assert.equal(deployment.runtime.wasi, MVP_WASI_PROFILE);
   assert.equal(deployment.capabilities.arbitraryFilesystem, false);
@@ -162,6 +165,64 @@ test("accepts remote HTTP artifact locations for runtime materialization", () =>
   assert.equal(artifact.location, "https://artifacts.example.dev/workers/hello.component.wasm");
 });
 
+test("artifact signatures are verified before deployment and provenance is surfaced in snapshots", () => {
+  const verifier = createHmacArtifactSignatureVerifier({ keys: { ci: "secret-key" } });
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+    artifactSignatureVerifier: verifier,
+  });
+  const project = control.createProject({ id: "prj_signed", name: "signed" });
+  const digestValue = digest("signed");
+  const signature = signArtifactDigest(digestValue, { algorithm: "sha256-hmac", keyId: "ci" }, "secret-key");
+  const artifact = control.createArtifact({
+    id: "art_signed",
+    projectId: project.id,
+    digest: digestValue,
+    location: "oci://registry.example.com/mizchi/signed:v1",
+    sizeBytes: 42,
+    signature,
+    provenance: {
+      builder: "github-actions",
+      source: "github.com/mizchi/wasmplane",
+      revision: "abc123",
+      buildId: "run-1",
+    },
+  });
+
+  const deployment = control.createDeployment({
+    ...seedDeployment("dep_signed", artifact.id),
+    projectId: project.id,
+  });
+  control.pointRoute({
+    projectId: project.id,
+    host: "signed.example.dev",
+    pathPrefix: "/",
+    deploymentId: deployment.id,
+  });
+  const snapshotArtifact = control.createRouteSnapshot().routes[0]?.artifact;
+  assert.deepEqual(snapshotArtifact?.signature, signature);
+  assert.deepEqual(snapshotArtifact?.provenance, artifact.provenance);
+
+  const badArtifact = control.createArtifact({
+    id: "art_bad_signature",
+    projectId: project.id,
+    digest: digest("bad-signature"),
+    location: "oci://registry.example.com/mizchi/bad:v1",
+    sizeBytes: 42,
+    signature: { ...signature, value: "0".repeat(64) },
+  });
+  assert.throws(
+    () =>
+      control.createDeployment({
+        ...seedDeployment("dep_bad_signature", badArtifact.id),
+        projectId: project.id,
+      }),
+    /signature verification failed/,
+  );
+});
+
 test("registers project secrets and validates deployment secret bindings", () => {
   const control = createSeededControlPlane();
   const secret = control.createSecret({
@@ -216,6 +277,72 @@ test("registers project secrets and validates deployment secret bindings", () =>
   );
 });
 
+test("control plane encrypts secret values before repository persistence", () => {
+  const repository = createMemoryRepository();
+  const secretCipher = createAesGcmSecretCipher({
+    key: Buffer.alloc(32, 4),
+    keyId: "test-key",
+    randomBytes(size) {
+      return Buffer.alloc(size, 1);
+    },
+  });
+  const control = createControlPlane({
+    repository,
+    secretCipher,
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+  });
+  const project = control.createProject({ id: "prj_secure", name: "secure" });
+
+  control.createSecret({
+    id: "sec_secure",
+    projectId: project.id,
+    name: "API key",
+    value: "super-secret",
+  });
+
+  const stored = repository.getSecretValue("sec_secure");
+  assert.equal(typeof stored, "string");
+  assert.equal(isEncryptedSecretValue(stored as string), true);
+  assert.equal((stored as string).includes("super-secret"), false);
+  assert.equal(secretCipher.decrypt(stored as string), "super-secret");
+
+  control.updateSecretValue({ id: "sec_secure", value: "rotated-secret" });
+  const rotated = repository.getSecretValue("sec_secure") as string;
+  assert.equal(isEncryptedSecretValue(rotated), true);
+  assert.equal(secretCipher.decrypt(rotated), "rotated-secret");
+});
+
+test("async control plane encrypts secret values before repository persistence", async () => {
+  const repository = createMemoryRepository();
+  const secretCipher = createAesGcmSecretCipher({
+    key: Buffer.alloc(32, 6),
+    keyId: "async-test-key",
+    randomBytes(size) {
+      return Buffer.alloc(size, 1);
+    },
+  });
+  const control = createAsyncControlPlane({
+    repository: asyncRepository(repository),
+    secretCipher,
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+  });
+  const project = await control.createProject({ id: "prj_secure_async", name: "secure async" });
+
+  await control.createSecret({
+    id: "sec_secure_async",
+    projectId: project.id,
+    name: "API key",
+    value: "super-secret",
+  });
+
+  const stored = repository.getSecretValue("sec_secure_async") as string;
+  assert.equal(isEncryptedSecretValue(stored), true);
+  assert.equal(stored.includes("super-secret"), false);
+  assert.equal(secretCipher.decrypt(stored), "super-secret");
+});
+
 test("deployment secret bindings cannot reference another project", () => {
   const control = createSeededControlPlane();
   const other = control.createProject({ id: "prj_other", name: "other" });
@@ -238,6 +365,137 @@ test("deployment secret bindings cannot reference another project", () => {
       }),
     /same project/,
   );
+});
+
+test("project quotas reject resources beyond configured limits", () => {
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+    projectQuotas: {
+      maxArtifacts: 1,
+      maxDeployments: 1,
+      maxRoutes: 1,
+      maxSecrets: 1,
+      maxKvNamespaces: 1,
+    },
+  });
+  const project = control.createProject({ id: "prj_quota", name: "quota" });
+  const artifact = control.createArtifact({
+    id: "art_one",
+    projectId: project.id,
+    digest: digest("one"),
+    location: "oci://registry.example.com/mizchi/one:v1",
+    sizeBytes: 1,
+  });
+  control.createSecret({
+    id: "sec_one",
+    projectId: project.id,
+    name: "one",
+    value: "secret",
+  });
+  control.createKvNamespace({
+    id: "kv_one",
+    projectId: project.id,
+    name: "one",
+  });
+  const deployment = control.createDeployment({
+    ...seedDeployment("dep_one", artifact.id),
+    projectId: project.id,
+  });
+  control.pointRoute({
+    projectId: project.id,
+    host: "quota.example.dev",
+    pathPrefix: "/",
+    deploymentId: deployment.id,
+  });
+
+  assert.throws(
+    () =>
+      control.createArtifact({
+        id: "art_two",
+        projectId: project.id,
+        digest: digest("two"),
+        location: "oci://registry.example.com/mizchi/two:v1",
+        sizeBytes: 1,
+      }),
+    /artifact quota exceeded/,
+  );
+  assert.throws(
+    () =>
+      control.createSecret({
+        id: "sec_two",
+        projectId: project.id,
+        name: "two",
+        value: "secret",
+      }),
+    /secret quota exceeded/,
+  );
+  assert.throws(
+    () =>
+      control.createKvNamespace({
+        id: "kv_two",
+        projectId: project.id,
+        name: "two",
+      }),
+    /kv namespace quota exceeded/,
+  );
+  assert.throws(
+    () =>
+      control.createDeployment({
+        ...seedDeployment("dep_two", artifact.id),
+        projectId: project.id,
+      }),
+    /deployment quota exceeded/,
+  );
+  assert.throws(
+    () =>
+      control.pointRoute({
+        projectId: project.id,
+        host: "quota.example.dev",
+        pathPrefix: "/two",
+        deploymentId: deployment.id,
+      }),
+    /route quota exceeded/,
+  );
+
+  const updated = control.pointRoute({
+    projectId: project.id,
+    host: "quota.example.dev",
+    pathPrefix: "/",
+    deploymentId: deployment.id,
+  });
+  assert.equal(updated.deploymentId, deployment.id);
+});
+
+test("control plane exposes project resource usage", () => {
+  const control = createSeededControlPlane();
+  control.createSecret({
+    id: "sec_usage",
+    projectId: "prj_hello",
+    name: "usage",
+    value: "secret",
+  });
+  control.createKvNamespace({
+    id: "kv_usage",
+    projectId: "prj_hello",
+    name: "usage",
+  });
+  const deployment = control.createDeployment(seedDeployment("dep_usage"));
+  control.pointRoute({
+    projectId: "prj_hello",
+    host: "usage.example.dev",
+    pathPrefix: "/",
+    deploymentId: deployment.id,
+  });
+
+  assert.deepEqual(control.getProjectUsage({ projectId: "prj_hello" }), {
+    artifacts: 2,
+    deployments: 1,
+    routes: 1,
+    secrets: 1,
+    kvNamespaces: 1,
+  });
 });
 
 test("registers project KV namespaces and validates deployment bindings", () => {
@@ -382,12 +640,16 @@ test("registers runtime nodes for route snapshot publication", () => {
   const node = control.registerRuntimeNode({
     id: "rt_local",
     url: "http://127.0.0.1:8788/",
+    region: "NRT",
+    labels: { tier: "edge", pool: "default" },
   });
 
   assert.equal(node.id, "rt_local");
   assert.equal(node.url, "http://127.0.0.1:8788");
   assert.equal(node.status, "active");
   assert.equal(node.registeredAt, fixedNow());
+  assert.equal(node.region, "nrt");
+  assert.deepEqual(node.labels, { pool: "default", tier: "edge" });
   assert.deepEqual(control.listRuntimeNodes(), [node]);
 
   assert.throws(
@@ -414,6 +676,7 @@ test("tracks runtime node heartbeat and excludes inactive nodes from publish tar
     id: "rt_active",
     version: "wasmplane-runtime/0.1.0",
     capacity: { concurrentRequests: 128, memoryMb: 4096 },
+    load: { activeRequests: 64 },
   });
   control.recordRuntimeNodeHeartbeat({ id: "rt_offline", status: "offline" });
 
@@ -421,9 +684,121 @@ test("tracks runtime node heartbeat and excludes inactive nodes from publish tar
   assert.equal(heartbeat.lastSeenAt, fixedNow());
   assert.equal(heartbeat.version, "wasmplane-runtime/0.1.0");
   assert.deepEqual(heartbeat.capacity, { concurrentRequests: 128, memoryMb: 4096 });
+  assert.deepEqual(heartbeat.load, { activeRequests: 64 });
   assert.deepEqual(
     control.listActiveRuntimeNodes().map((node) => node.id),
     ["rt_active"],
+  );
+});
+
+test("updates runtime node lifecycle status without rewriting heartbeat data", () => {
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+  });
+
+  control.registerRuntimeNode({ id: "rt_maint", url: "http://127.0.0.1:8788" });
+  control.recordRuntimeNodeHeartbeat({
+    id: "rt_maint",
+    version: "wasmplane-runtime/0.1.0",
+    capacity: { concurrentRequests: 128, memoryMb: 4096 },
+    load: { activeRequests: 3 },
+  });
+
+  const draining = control.updateRuntimeNodeStatus({ id: "rt_maint", status: "draining" });
+
+  assert.equal(draining.status, "draining");
+  assert.equal(draining.lastSeenAt, fixedNow());
+  assert.equal(draining.version, "wasmplane-runtime/0.1.0");
+  assert.deepEqual(draining.capacity, { concurrentRequests: 128, memoryMb: 4096 });
+  assert.deepEqual(draining.load, { activeRequests: 3 });
+  assert.deepEqual(control.listActiveRuntimeNodes(), []);
+
+  const active = control.updateRuntimeNodeStatus({ id: "rt_maint", status: "active" });
+  assert.equal(active.status, "active");
+  assert.deepEqual(
+    control.listActiveRuntimeNodes().map((node) => node.id),
+    ["rt_maint"],
+  );
+
+  assert.throws(
+    () => control.updateRuntimeNodeStatus({ id: "rt_missing", status: "offline" }),
+    /runtime node rt_missing was not found/,
+  );
+});
+
+test("cleans up old runtime nodes by lifecycle status", () => {
+  let currentNow = "2026-06-26T10:00:00.000Z";
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: () => currentNow,
+  });
+
+  control.registerRuntimeNode({ id: "rt_offline_old", url: "http://127.0.0.1:8788" });
+  control.recordRuntimeNodeHeartbeat({ id: "rt_offline_old", status: "offline" });
+  control.registerRuntimeNode({ id: "rt_active_old", url: "http://127.0.0.1:8789" });
+  control.recordRuntimeNodeHeartbeat({ id: "rt_active_old", status: "active" });
+
+  currentNow = "2026-06-26T11:50:00.000Z";
+  control.registerRuntimeNode({ id: "rt_offline_fresh", url: "http://127.0.0.1:8790", status: "offline" });
+
+  currentNow = "2026-06-26T12:00:00.000Z";
+  const offlineCleanup = control.cleanupRuntimeNodes({ olderThanMs: 60 * 60 * 1000 });
+
+  assert.equal(offlineCleanup.cutoff, "2026-06-26T11:00:00.000Z");
+  assert.deepEqual(
+    offlineCleanup.removed.map((node) => node.id),
+    ["rt_offline_old"],
+  );
+  assert.deepEqual(
+    control.listRuntimeNodes().map((node) => node.id),
+    ["rt_active_old", "rt_offline_fresh"],
+  );
+
+  const activeCleanup = control.cleanupRuntimeNodes({
+    olderThanMs: 60 * 60 * 1000,
+    statuses: ["active"],
+  });
+  assert.deepEqual(
+    activeCleanup.removed.map((node) => node.id),
+    ["rt_active_old"],
+  );
+  assert.deepEqual(
+    control.listRuntimeNodes().map((node) => node.id),
+    ["rt_offline_fresh"],
+  );
+
+  assert.throws(
+    () => control.cleanupRuntimeNodes({ olderThanMs: 0 }),
+    /olderThanMs/,
+  );
+});
+
+test("excludes saturated runtime nodes from active publish targets", () => {
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+  });
+
+  control.registerRuntimeNode({ id: "rt_room", url: "http://127.0.0.1:8788" });
+  control.registerRuntimeNode({ id: "rt_full", url: "http://127.0.0.1:8789" });
+  control.recordRuntimeNodeHeartbeat({
+    id: "rt_room",
+    capacity: { concurrentRequests: 128, memoryMb: 4096 },
+    load: { activeRequests: 127 },
+  });
+  control.recordRuntimeNodeHeartbeat({
+    id: "rt_full",
+    capacity: { concurrentRequests: 128, memoryMb: 4096 },
+    load: { activeRequests: 128 },
+  });
+
+  assert.deepEqual(
+    control.listActiveRuntimeNodes().map((node) => node.id),
+    ["rt_room"],
   );
 });
 
@@ -491,15 +866,17 @@ test("route snapshots can carry weighted rollout targets", () => {
 
   const route = control.createRouteSnapshot().routes[0];
   assert.equal(route?.deploymentId, "dep_v1");
+  assert.equal(route?.worldVersion, MVP_WORKER_WORLD_VERSION);
   assert.deepEqual(
     route?.targets.map((target) => ({
       deploymentId: target.deploymentId,
       weight: target.weight,
+      worldVersion: target.worldVersion,
       digest: target.artifact.digest,
     })),
     [
-      { deploymentId: "dep_v1", weight: 90, digest: digest("v1") },
-      { deploymentId: "dep_v2", weight: 10, digest: digest("v2") },
+      { deploymentId: "dep_v1", weight: 90, worldVersion: MVP_WORKER_WORLD_VERSION, digest: digest("v1") },
+      { deploymentId: "dep_v2", weight: 10, worldVersion: MVP_WORKER_WORLD_VERSION, digest: digest("v2") },
     ],
   );
 });
@@ -535,6 +912,54 @@ test("route canary controller starts canary and rolls back to stable deployment"
   });
 
   assert.deepEqual(rollback.targets, [{ deploymentId: stable.id, weight: 100 }]);
+  assert.equal(control.createRouteSnapshot().routes[0]?.deploymentId, stable.id);
+});
+
+test("route canary analysis rolls back failed candidates and records decisions", () => {
+  const control = createSeededControlPlane();
+  const stable = control.createDeployment(seedDeployment("dep_stable", "art_v1"));
+  const candidate = control.createDeployment(seedDeployment("dep_candidate", "art_v2"));
+  control.pointRoute({
+    id: "rte_canary",
+    projectId: stable.projectId,
+    host: "hello.example.dev",
+    pathPrefix: "/",
+    deploymentId: stable.id,
+  });
+  control.startRouteCanary({
+    projectId: stable.projectId,
+    host: "hello.example.dev",
+    pathPrefix: "/",
+    deploymentId: candidate.id,
+    weight: 10,
+  });
+
+  const result = control.analyzeRouteCanary({
+    projectId: stable.projectId,
+    host: "hello.example.dev",
+    pathPrefix: "/",
+    candidateDeploymentId: candidate.id,
+    thresholds: { minRequests: 3, errorRate: 0.25, p95Ms: 250, rejectCount: 0 },
+    events: [
+      { deploymentId: stable.id, status: 200, durationMs: 50 },
+      { deploymentId: candidate.id, status: 200, durationMs: 100 },
+      { deploymentId: candidate.id, status: 200, durationMs: 200 },
+      { deploymentId: candidate.id, status: 500, durationMs: 300 },
+    ],
+  });
+
+  assert.equal(result.decision.id, "can_1");
+  assert.equal(result.decision.action, "rollback");
+  assert.equal(result.decision.reason, "error_rate");
+  assert.deepEqual(result.decision.metrics, {
+    requests: 3,
+    errors: 1,
+    rejects: 0,
+    errorRate: 1 / 3,
+    p95Ms: 300,
+  });
+  assert.deepEqual(result.route.targets, [{ deploymentId: stable.id, weight: 100 }]);
+  assert.deepEqual(control.listCanaryDecisions(), [result.decision]);
   assert.equal(control.createRouteSnapshot().routes[0]?.deploymentId, stable.id);
 });
 
@@ -594,9 +1019,29 @@ test("sqlite repository records schema migrations and upgrades existing database
     "202606270001_secret_registry",
     "202606270002_kv_namespace_registry",
     "202606300002_route_snapshot_id",
+    "202606300003_runtime_node_placement",
+    "202606300004_canary_decisions",
+    "202606300005_worker_world_version",
+    "202606300006_artifact_metadata",
+    "202607010001_runtime_node_identity",
   ]);
   assert.ok(routeColumns.includes("targets_json"));
+  const artifactColumns = db
+    .prepare("pragma table_info(artifacts)")
+    .all()
+    .map((row: any) => row.name);
+  assert.ok(artifactColumns.includes("signature_json"));
+  assert.ok(artifactColumns.includes("provenance_json"));
+  const deploymentColumns = db
+    .prepare("pragma table_info(deployments)")
+    .all()
+    .map((row: any) => row.name);
+  assert.ok(deploymentColumns.includes("world_version"));
   assert.ok(runtimeNodeColumns.includes("status"));
+  assert.ok(runtimeNodeColumns.includes("region"));
+  assert.ok(runtimeNodeColumns.includes("labels_json"));
+  assert.ok(runtimeNodeColumns.includes("load_json"));
+  assert.ok(runtimeNodeColumns.includes("identity_json"));
   assert.ok(secretColumns.includes("value"));
   assert.ok(kvNamespaceColumns.includes("project_id"));
   assert.equal(db.prepare("select count(*) as count from route_snapshot_publications").get().count, 1);
@@ -605,6 +1050,11 @@ test("sqlite repository records schema migrations and upgrades existing database
     .all()
     .map((row: any) => row.name);
   assert.ok(publicationColumns.includes("snapshot_id"));
+  const canaryDecisionColumns = db
+    .prepare("pragma table_info(canary_decisions)")
+    .all()
+    .map((row: any) => row.name);
+  assert.ok(canaryDecisionColumns.includes("candidate_deployment_id"));
   db.close();
 });
 

@@ -100,14 +100,33 @@ API token は scoped bearer token を使う。legacy `WASMPLANE_API_TOKEN` は�
 production では `WASMPLANE_API_TOKENS` で `read`, `write`, `publish`, `*` を分ける。
 mutation は JSONL audit sink に記録できる。
 
+schema migration は `schema_migrations` で管理する。startup は repository initialization で
+known migrations を apply し、その後 compiled migration catalog と照合して current/latest version を
+検査する。DB が pending migration を持つ場合や、binary が知らない future migration を持つ場合は
+startup/check で検出する。
+
+運用コマンドは `pnpm wasmplane migrate check|apply` と `just db-migrate-check|db-migrate-apply`
+に集約する。production rollout 前は `just pg-backup` で custom-format `pg_dump` を取得し、
+rollback は writer を止めて `just pg-restore` で backup を戻してから前 version の app image を
+再 deploy する。down migration は自動化しない。
+
 ## Artifact Design
 
 artifact は content digest で識別する。local artifact ingestion では component bytes を保存し、
 Rust host で Wasm component として validation する。production では S3/R2 互換 store を使う。
 
-runtime node は `file://`, `http://`, `https://`, private `s3://` の materialize に対応している。
+artifact は optional な signature と provenance を持つ。control plane は deployment 作成時に
+設定済み verifier で signature を検証し、署名がない/不正な artifact から deployment を作らない。
+現実装は digest に対する `sha256-hmac` verifier を内蔵し、将来は KMS-backed signing や Sigstore
+verification に差し替えられる contract にしている。provenance は builder, source, revision,
+build id を保持し、artifact response と route snapshot に露出する。
+
+runtime node は `file://`, `http://`, `https://`, private `s3://`, `oci://` の materialize に対応している。
 private S3/R2 artifact は runtime node が SigV4 GET で取得し、digest 検証後に cache する。
 `WASMPLANE_ARTIFACT_BUCKET` が設定されている場合は、異なる bucket の `s3://` artifact を拒否する。
+OCI artifact は registry v2 API で manifest を取得し、control plane artifact digest と一致する
+layer だけを blob として取得する。`oci://registry/repo@sha256:<digest>` は digest-addressed blob pull
+として扱い、private registry は static bearer token または basic auth で接続する。
 
 `.cwasm` は user artifact ではない。node-local cache artifact であり、次に強く依存する。
 
@@ -133,7 +152,29 @@ runtime node の責務:
 - deployment capability/limits を host invocation に渡す
 - request metrics, structured events, OTLP traces を出す
 - concurrency limit を超える request を拒否する
+- project-specific concurrency budget を超える request を拒否する
 - snapshot warmup の materialize/precompile concurrency を制限する
+
+runtime node registry は node URL/status に加えて region, labels, capacity, current load を持つ。
+heartbeat は capacity と active request load を更新する。operator は control-plane API または Admin UI
+から node status を `active`, `draining`, `offline` に切り替えられる。status update は last heartbeat
+metadata を保持し、maintenance/scale-down 前の drain に使う。control plane は active かつ TTL 内の node
+から、draining/offline/stale/saturated node を publish target から除外する。snapshot publish は project
+placement policy で region/label rule を評価し、snapshot 内 project の rule に合う registered runtime
+nodes の union へ publish できる。
+
+registry の肥大化を避けるため、operator は status と age を指定して古い runtime node entry を GC できる。
+default cleanup は offline node のみを対象にし、active node の削除は明示的な status 指定を必要とする。
+削除判定の時刻は `lastSeenAt ?? registeredAt` を使う。
+
+runtime node identity は registry に公開 metadata として保存する。node は `keyId` と任意の
+transport certificate SHA-256 fingerprint を heartbeat/registration で広告し、control plane は手元の
+runtime identity keyring から対応する secret を選んで snapshot publish を HMAC-SHA256 で署名する。
+runtime node 側に identity keyring が設定されている場合、`PUT /__runtime/snapshots/routes` は bearer
+token だけでなく署名も検証する。key rotation は multi-key keyring 前提で、新 key を両側に追加し、
+node の active `keyId` を切り替え、heartbeat 反映後に旧 key を外す。実際の mTLS は Fly private
+network や edge proxy の TLS 終端で行い、ここでは application-level proof-of-possession と
+certificate fingerprint pinning のための contract を提供する。
 
 `RUNTIME_SNAPSHOT_WARMUP=1` の場合、snapshot ACK 前に target deployments を materialize/precompile
 する。これにより deploy switch 後の初回 request latency を抑える。warmup work は
@@ -201,7 +242,13 @@ redirect も拒否する。
 
 KV は binding name から physical namespace へ解決する。secret は binding name から secret handle
 を開き、`reveal` で host-loaded value を返す。secret value は route snapshot に載せず、API response
-にも出さない。
+にも出さない。control plane は configured secret cipher がある場合、repository persistence 前に
+secret value を AES-256-GCM envelope に暗号化する。runtime が repository-backed secrets を読む場合は、
+同じ KMS key 設定で envelope を復号してから worker binding に渡す。既存 plaintext secret は移行のため
+runtime 側でそのまま読める。envelope には key id を持たせ、復号は configured keyring から key id で
+選ぶ。online rotation では新 primary key で暗号化しつつ、旧 key を decrypt-only keyring に残す。
+external KMS は command provider 契約で接続し、provider は primary key id と decrypt keyring の JSON を
+返す。
 
 ## Limits
 
@@ -215,8 +262,17 @@ deployment limits は runtime と host に渡される。
 - host call count
 - cpuMs
 
-`cpuMs` は contract には存在するが、現時点では精密な CPU-time meter ではない。Wasmtime epoch
-deadline による wall clock interruption が主な実行時間制御である。
+`cpuMs` は Wasmtime epoch interruption で enforce する compute budget である。runtime は
+`wallMs` と `cpuMs` の短い方を epoch deadline として host に渡し、CPU budget 側で止まった場合は
+`cpu_limit` として wall timeout と区別して返す。ただし、これは kernel の CPU time ではなく
+epoch tick ベースの協調的な中断なので、厳密な課金単位にはしない。
+
+control plane は project ごとに artifacts, deployments, routes, secrets, KV namespaces の resource
+quota を write 前に検査できる。runtime node は global `RUNTIME_CONCURRENCY` に加えて
+`RUNTIME_PROJECT_CONCURRENCY_LIMITS=project=count,...` で project ごとの同時実行 budget を持てる。
+project budget を超えた request は `503 overloaded` として即時拒否し、他 project の request は同じ
+node 上で継続して受け付ける。`RUNTIME_PROJECT_RATE_LIMITS=project=rps[:burst],...` は project ごとの
+token bucket request rate limit で、超過 request は `429 rate_limited` として即時拒否する。
 
 ## Deployment And Rollback
 
@@ -236,7 +292,14 @@ rollback flow:
 3. runtime nodes が新 snapshot を反映する
 
 canary は weighted route targets として扱う。control plane は route canary start と rollback を
-route mutation として実装する。
+route mutation として実装する。automatic canary analysis は runtime worker request events を
+deployment id で集計し、candidate deployment の sample count, p95 latency, error rate, reject count を
+threshold と比較する。threshold を超えた場合は stable target へ rollback し、continue/rollback の
+decision を `canary_decisions` history に保存する。
+
+WIT worker world は `world` と明示的な `worldVersion` の両方で deployment と route snapshot に保存する。
+runtime node は snapshot load 前に world と worldVersion を検証し、host が対応しない upgrade/downgrade
+world を拒否する。
 
 ## Observability
 
@@ -244,9 +307,42 @@ runtime node:
 
 - worker request metrics endpoint
 - structured worker request events
+- bounded worker logs by request/project/deployment
+- saturation signals for autoscaling
 - OTLP/HTTP JSON trace exporter
 - heartbeat capacity reporting
 - configured host daemon `/stats` payload embedded under runtime metrics `hostDaemon`
+
+worker logs は runtime node-local の bounded ring buffer に保存する。log entry は timestamp,
+request id, host, path, project id, deployment id, level, message を持つ。runtime は invocation
+response の optional logs を保存する前に、解決済み secret value と `authorization`, `cookie`,
+`token`, `password`, `secret` などの key-value を `[REDACTED]` に置換する。control plane は
+`GET /runtime-nodes/:id/logs` を read-scope API として提供し、runtime management token 付きで
+対象 node の `GET /__runtime/logs` を proxy する。
+
+autoscaling は runtime heartbeat の `capacity.concurrentRequests` と `load.activeRequests` から
+per-node load ratio を計算する。control plane は `GET /autoscaling/signals` で signals を返し、
+policy helper が min/max nodes, scale-up threshold, scale-down threshold から desired node count を
+決める。scale-up では新 node を `draining` として登録し、current route snapshot を直接 publish/warmup
+してから heartbeat で `active` にする。scale-down では低 load node を candidate として選び、route
+snapshot publish target から外してから Fly Machines stop などの provider action を実行する。
+
+Fly Machines controller は provider prototype として分離する。Fly Machines API の public base は
+`https://api.machines.dev/v1` で、scale-up は `POST /apps/{app}/machines`、scale-down は
+`POST /apps/{app}/machines/{id}/stop` を使う。実 production では API rate limit と deploy/update
+競合を避けるため、controller は cooldown, lease, idempotency metadata を追加する必要がある。
+
+## Admin UI
+
+control plane は `GET /admin` で server-rendered HTML の admin UI を提供する。UI は独自の state
+model を持たず、active route snapshot, runtime node registry, route snapshot publications,
+canary decisions, autoscaling signals を既存 API contract から組み立てる。
+
+画面は projects, routes, deployments, canaries, runtime nodes, autoscaling signals を表示する。
+canary start と rollback は HTML form から `POST /admin/routes/canary` と
+`POST /admin/routes/rollback` に送られ、control plane の既存 `startRouteCanary` /
+`rollbackRoute` を呼ぶ。auth boundary は API と同じで、`GET /admin` は `read` scope、
+admin action は `write` scope を要求する。
 
 host daemon:
 
@@ -339,17 +435,17 @@ single-region estimate は README の cost estimator にまとめる。現状の
 ## Current Limitations
 
 - WASIp3/component model 前提だが、guest toolchain と host ABI の安定性には追従が必要
-- `cpuMs` は精密な CPU time enforcement ではない
-- secret value lifecycle は最小実装で、KMS/rotation は未実装
+- `cpuMs` は Wasmtime epoch tick ベースであり、精密な kernel CPU time enforcement ではない
+- secret value は local/env KMS envelope encryption と command-provider keyring に対応したが、cloud KMS SDK 直結 adapter は未実装
 - Store/Instance pooling reuse は未実装
-- multi-region consistency と routing policy は未実装
+- multi-region consistency と cross-region failover policy は未実装
 - daemon は local HTTP interface で、runtime node と同一 trust boundary 前提
 - `.cwasm` cache invalidation は Engine variant hash で分離しているが、Wasmtime upgrade policy は運用手順化が必要
 
 ## Next Implementation Priorities
 
-1. KMS-backed secret store and rotation
-2. deployment switch benchmark を CI/weekly perf job にする
-3. multi-region runtime node registry と region-aware publish
+1. Multi-key secret rotation and external KMS providers
+2. artifact signing and provenance
+3. deployment switch benchmark を CI/weekly perf job にする
 4. Wasmtime upgrade / `.cwasm` cache invalidation playbook
 5. stricter CPU metering strategy

@@ -1,4 +1,8 @@
-import type { RuntimeNodeCapacity } from "../control-plane/contracts.ts";
+import type {
+  RuntimeNodeCapacity,
+  RuntimeNodeIdentity,
+  RuntimeNodeLoad,
+} from "../control-plane/contracts.ts";
 import { RuntimeError } from "./errors.ts";
 
 export interface RuntimeHeartbeatOptions {
@@ -7,6 +11,10 @@ export interface RuntimeHeartbeatOptions {
   publicUrl: string;
   version: string;
   capacity: RuntimeNodeCapacity;
+  region?: string;
+  labels?: Record<string, string>;
+  identity?: RuntimeNodeIdentity;
+  load?: RuntimeNodeLoad | (() => RuntimeNodeLoad);
   token?: string;
   intervalMs?: number;
   fetch?: typeof fetch;
@@ -16,6 +24,9 @@ export interface RuntimeNodeRegistrationInput {
   controlPlaneUrl: string;
   runtimeNodeId: string;
   publicUrl: string;
+  region?: string;
+  labels?: Record<string, string>;
+  identity?: RuntimeNodeIdentity;
   token?: string;
   fetch?: typeof fetch;
 }
@@ -25,6 +36,7 @@ export interface RuntimeNodeHeartbeatInput {
   runtimeNodeId: string;
   version: string;
   capacity: RuntimeNodeCapacity;
+  load?: RuntimeNodeLoad;
   token?: string;
   fetch?: typeof fetch;
 }
@@ -36,6 +48,9 @@ export async function registerRuntimeNode(input: RuntimeNodeRegistrationInput): 
     body: JSON.stringify({
       id: input.runtimeNodeId,
       url: input.publicUrl,
+      region: input.region,
+      labels: input.labels,
+      identity: input.identity,
     }),
   });
   if (response.ok || response.status === 409) {
@@ -57,6 +72,7 @@ export async function sendRuntimeHeartbeat(input: RuntimeNodeHeartbeatInput): Pr
         status: "active",
         version: input.version,
         capacity: input.capacity,
+        load: input.load,
       }),
     },
   );
@@ -74,7 +90,10 @@ export function startRuntimeHeartbeat(options: RuntimeHeartbeatOptions): () => v
   async function tick() {
     try {
       await registerRuntimeNode(options);
-      await sendRuntimeHeartbeat(options);
+      await sendRuntimeHeartbeat({
+        ...options,
+        load: typeof options.load === "function" ? options.load() : options.load,
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error(`runtime heartbeat failed: ${message}`);

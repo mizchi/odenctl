@@ -22,6 +22,8 @@ test("cluster benchmark CLI args parse node counts and concurrency list", () => 
     "3",
     "--concurrency",
     "1,8,32",
+    "--placement",
+    "--autoscaling",
     "--format",
     "json",
   ]);
@@ -32,6 +34,8 @@ test("cluster benchmark CLI args parse node counts and concurrency list", () => 
   assert.equal(options.iterations, 100);
   assert.equal(options.warmup, 3);
   assert.deepEqual(options.concurrency, [1, 8, 32]);
+  assert.equal(options.placement, true);
+  assert.equal(options.autoscaling, true);
   assert.equal(options.format, "json");
 });
 
@@ -154,10 +158,56 @@ test("cluster benchmark markdown includes switch and throughput tables", () => {
         errors: 0,
       },
     ],
+    placements: [
+      {
+        name: "cluster.placement.region",
+        nodes: 2,
+        region: "nrt",
+        selectedNodes: 1,
+        skippedNodes: 1,
+        ok: true,
+        publishMs: 4,
+        selectedVisibleMs: 12,
+        skippedVerifiedMs: 1,
+        totalMs: 17,
+        errors: 0,
+      },
+    ],
+    autoscaling: [
+      {
+        name: "cluster.autoscale.scale_up_warm",
+        action: "scale_up",
+        nodes: 2,
+        fromNodes: 1,
+        toNodes: 2,
+        ok: true,
+        publishMs: 6,
+        visibleMs: 18,
+        totalMs: 24,
+        errors: 0,
+      },
+      {
+        name: "cluster.autoscale.scale_down_exclude",
+        action: "scale_down",
+        nodes: 2,
+        fromNodes: 2,
+        toNodes: 1,
+        ok: true,
+        publishMs: 3,
+        visibleMs: 7,
+        totalMs: 10,
+        errors: 0,
+      },
+    ],
   });
 
   assert.match(markdown, /cluster\.switch\.cold/);
   assert.match(markdown, /cluster\.http\.cwasm/);
+  assert.match(markdown, /cluster\.placement\.region/);
+  assert.match(markdown, /cluster\.autoscale\.scale_up_warm/);
+  assert.match(markdown, /cluster\.autoscale\.scale_down_exclude/);
   assert.match(markdown, /\| operation \| nodes \| publish ms \| visible ms \| total ms \|/);
+  assert.match(markdown, /\| benchmark \| nodes \| region \| selected \| skipped \|/);
+  assert.match(markdown, /\| benchmark \| action \| nodes \| from \| to \|/);
   assert.match(markdown, /\| benchmark \| nodes \| concurrency \| iterations \| rps \|/);
 });

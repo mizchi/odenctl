@@ -1,12 +1,14 @@
 import { DatabaseSync } from "node:sqlite";
 import type {
   Artifact,
+  CanaryDecision,
   Deployment,
   KvNamespace,
   Project,
   RoutePointer,
   RouteSnapshotPublication,
   RuntimeNode,
+  RuntimeNodeStatus,
   Secret,
 } from "./contracts.ts";
 import { ControlPlaneError } from "./errors.ts";
@@ -14,6 +16,7 @@ import { ControlPlaneError } from "./errors.ts";
 export interface ControlPlaneRepository {
   createProject(project: Project): Project;
   getProject(id: string): Project | undefined;
+  getProjectUsage(projectId: string): ProjectResourceUsage;
   createArtifact(artifact: Artifact): Artifact;
   getArtifact(id: string): Artifact | undefined;
   getArtifactByProjectDigest(projectId: string, digest: string): Artifact | undefined;
@@ -35,9 +38,21 @@ export interface ControlPlaneRepository {
   createRuntimeNode(node: RuntimeNode): RuntimeNode;
   getRuntimeNode(id: string): RuntimeNode | undefined;
   updateRuntimeNodeHeartbeat(node: RuntimeNode): RuntimeNode;
+  updateRuntimeNodeStatus(id: string, status: RuntimeNodeStatus): RuntimeNode;
+  deleteRuntimeNode(id: string): RuntimeNode;
   listRuntimeNodes(): RuntimeNode[];
   createRouteSnapshotPublication(publication: RouteSnapshotPublication): RouteSnapshotPublication;
   listRouteSnapshotPublications(): RouteSnapshotPublication[];
+  createCanaryDecision(decision: CanaryDecision): CanaryDecision;
+  listCanaryDecisions(): CanaryDecision[];
+}
+
+export interface ProjectResourceUsage {
+  artifacts: number;
+  deployments: number;
+  routes: number;
+  secrets: number;
+  kvNamespaces: number;
 }
 
 export function createMemoryRepository(): ControlPlaneRepository {
@@ -46,6 +61,15 @@ export function createMemoryRepository(): ControlPlaneRepository {
 
 export function createSqliteRepository(path: string): ControlPlaneRepository {
   return new SqliteControlPlaneRepository(new DatabaseSync(path));
+}
+
+export function applySqliteMigrations(path: string): void {
+  const db = new DatabaseSync(path);
+  try {
+    new SqliteControlPlaneRepository(db);
+  } finally {
+    db.close();
+  }
 }
 
 class SqliteControlPlaneRepository implements ControlPlaneRepository {
@@ -73,11 +97,34 @@ class SqliteControlPlaneRepository implements ControlPlaneRepository {
     return row ? projectFromRow(row) : undefined;
   }
 
+  getProjectUsage(projectId: string): ProjectResourceUsage {
+    const row = this.db
+      .prepare(
+        `select
+          (select count(*) from artifacts where project_id = ?) as artifacts,
+          (select count(*) from deployments where project_id = ?) as deployments,
+          (select count(*) from routes where project_id = ?) as routes,
+          (select count(*) from secrets where project_id = ?) as secrets,
+          (select count(*) from kv_namespaces where project_id = ?) as kv_namespaces`,
+      )
+      .get(projectId, projectId, projectId, projectId, projectId) as any;
+    return usageFromRow(row);
+  }
+
   createArtifact(artifact: Artifact): Artifact {
     try {
       this.db
         .prepare(
-          "insert into artifacts (id, project_id, digest, location, size_bytes, created_at) values (?, ?, ?, ?, ?, ?)",
+          `insert into artifacts (
+            id,
+            project_id,
+            digest,
+            location,
+            size_bytes,
+            signature_json,
+            provenance_json,
+            created_at
+          ) values (?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           artifact.id,
@@ -85,6 +132,8 @@ class SqliteControlPlaneRepository implements ControlPlaneRepository {
           artifact.digest,
           artifact.location,
           artifact.sizeBytes,
+          artifact.signature ? JSON.stringify(artifact.signature) : null,
+          artifact.provenance ? JSON.stringify(artifact.provenance) : null,
           artifact.createdAt,
         );
       return artifact;
@@ -219,19 +268,21 @@ class SqliteControlPlaneRepository implements ControlPlaneRepository {
             project_id,
             artifact_id,
             world,
+            world_version,
             runtime_backend,
             runtime_version,
             wasi_version,
             limits_json,
             capabilities_json,
             created_at
-          ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           deployment.id,
           deployment.projectId,
           deployment.artifactId,
           deployment.world,
+          deployment.worldVersion,
           deployment.runtime.backend,
           deployment.runtime.version,
           deployment.runtime.wasi,
@@ -311,8 +362,12 @@ class SqliteControlPlaneRepository implements ControlPlaneRepository {
             registered_at,
             last_seen_at,
             version,
-            capacity_json
-          ) values (?, ?, ?, ?, ?, ?, ?)`,
+            capacity_json,
+            region,
+            labels_json,
+            load_json,
+            identity_json
+          ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           node.id,
@@ -322,6 +377,10 @@ class SqliteControlPlaneRepository implements ControlPlaneRepository {
           node.lastSeenAt ?? null,
           node.version ?? null,
           node.capacity ? JSON.stringify(node.capacity) : null,
+          node.region ?? null,
+          node.labels ? JSON.stringify(node.labels) : null,
+          node.load ? JSON.stringify(node.load) : null,
+          node.identity ? JSON.stringify(node.identity) : null,
         );
       return node;
     } catch (error) {
@@ -341,7 +400,10 @@ class SqliteControlPlaneRepository implements ControlPlaneRepository {
           status = ?,
           last_seen_at = ?,
           version = ?,
-          capacity_json = ?
+          capacity_json = ?,
+          region = ?,
+          labels_json = ?,
+          load_json = ?
         where id = ?`,
       )
       .run(
@@ -349,12 +411,34 @@ class SqliteControlPlaneRepository implements ControlPlaneRepository {
         node.lastSeenAt ?? null,
         node.version ?? null,
         node.capacity ? JSON.stringify(node.capacity) : null,
+        node.region ?? null,
+        node.labels ? JSON.stringify(node.labels) : null,
+        node.load ? JSON.stringify(node.load) : null,
         node.id,
       );
     if (result.changes === 0) {
       throw new ControlPlaneError("not_found", `runtime node ${node.id} was not found`);
     }
     return this.getRuntimeNode(node.id) as RuntimeNode;
+  }
+
+  updateRuntimeNodeStatus(id: string, status: RuntimeNodeStatus): RuntimeNode {
+    const result = this.db
+      .prepare("update runtime_nodes set status = ? where id = ?")
+      .run(status, id);
+    if (result.changes === 0) {
+      throw new ControlPlaneError("not_found", `runtime node ${id} was not found`);
+    }
+    return this.getRuntimeNode(id) as RuntimeNode;
+  }
+
+  deleteRuntimeNode(id: string): RuntimeNode {
+    const node = this.getRuntimeNode(id);
+    if (!node) {
+      throw new ControlPlaneError("not_found", `runtime node ${id} was not found`);
+    }
+    this.db.prepare("delete from runtime_nodes where id = ?").run(id);
+    return node;
   }
 
   listRuntimeNodes(): RuntimeNode[] {
@@ -400,6 +484,48 @@ class SqliteControlPlaneRepository implements ControlPlaneRepository {
     return rows.map(routeSnapshotPublicationFromRow);
   }
 
+  createCanaryDecision(decision: CanaryDecision): CanaryDecision {
+    try {
+      this.db
+        .prepare(
+          `insert into canary_decisions (
+            id,
+            project_id,
+            host,
+            path_prefix,
+            stable_deployment_id,
+            candidate_deployment_id,
+            action,
+            reason,
+            metrics_json,
+            thresholds_json,
+            created_at
+          ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          decision.id,
+          decision.projectId,
+          decision.host,
+          decision.pathPrefix,
+          decision.stableDeploymentId,
+          decision.candidateDeploymentId,
+          decision.action,
+          decision.reason,
+          JSON.stringify(decision.metrics),
+          JSON.stringify(decision.thresholds),
+          decision.createdAt,
+        );
+      return decision;
+    } catch (error) {
+      throw writeError("canary decision", decision.id, error);
+    }
+  }
+
+  listCanaryDecisions(): CanaryDecision[] {
+    const rows = this.db.prepare("select * from canary_decisions order by created_at desc, id desc").all();
+    return rows.map(canaryDecisionFromRow);
+  }
+
   private runMigrations() {
     for (const migration of migrations) {
       const row = this.db
@@ -431,6 +557,8 @@ function artifactFromRow(row: any): Artifact {
     digest: row.digest,
     location: row.location,
     sizeBytes: row.size_bytes,
+    ...(row.signature_json ? { signature: JSON.parse(row.signature_json) } : {}),
+    ...(row.provenance_json ? { provenance: JSON.parse(row.provenance_json) } : {}),
     createdAt: row.created_at,
   };
 }
@@ -461,6 +589,7 @@ function deploymentFromRow(row: any): Deployment {
     projectId: row.project_id,
     artifactId: row.artifact_id,
     world: row.world,
+    worldVersion: row.world_version ?? "0.1.0",
     runtime: {
       backend: row.runtime_backend,
       version: row.runtime_version,
@@ -502,6 +631,18 @@ function runtimeNodeFromRow(row: any): RuntimeNode {
   if (row.capacity_json) {
     node.capacity = JSON.parse(row.capacity_json);
   }
+  if (row.region) {
+    node.region = row.region;
+  }
+  if (row.labels_json) {
+    node.labels = JSON.parse(row.labels_json);
+  }
+  if (row.load_json) {
+    node.load = JSON.parse(row.load_json);
+  }
+  if (row.identity_json) {
+    node.identity = JSON.parse(row.identity_json);
+  }
   return node;
 }
 
@@ -514,6 +655,32 @@ function routeSnapshotPublicationFromRow(row: any): RouteSnapshotPublication {
     ok: row.ok === 1,
     targets: JSON.parse(row.targets_json),
     createdAt: row.created_at,
+  };
+}
+
+function canaryDecisionFromRow(row: any): CanaryDecision {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    host: row.host,
+    pathPrefix: row.path_prefix,
+    stableDeploymentId: row.stable_deployment_id,
+    candidateDeploymentId: row.candidate_deployment_id,
+    action: row.action,
+    reason: row.reason,
+    metrics: JSON.parse(row.metrics_json),
+    thresholds: JSON.parse(row.thresholds_json),
+    createdAt: row.created_at,
+  };
+}
+
+function usageFromRow(row: any): ProjectResourceUsage {
+  return {
+    artifacts: Number(row.artifacts ?? 0),
+    deployments: Number(row.deployments ?? 0),
+    routes: Number(row.routes ?? 0),
+    secrets: Number(row.secrets ?? 0),
+    kvNamespaces: Number(row.kv_namespaces ?? 0),
   };
 }
 
@@ -548,6 +715,8 @@ create table if not exists artifacts (
   digest text not null unique,
   location text not null,
   size_bytes integer not null,
+  signature_json text,
+  provenance_json text,
   created_at text not null,
   foreign key (project_id) references projects(id)
 );
@@ -578,6 +747,7 @@ create table if not exists deployments (
   project_id text not null,
   artifact_id text not null,
   world text not null,
+  world_version text not null default '0.1.0',
   runtime_backend text not null,
   runtime_version text not null,
   wasi_version text not null,
@@ -608,6 +778,10 @@ create table if not exists runtime_nodes (
   last_seen_at text,
   version text,
   capacity_json text,
+  region text,
+  labels_json text,
+  load_json text,
+  identity_json text,
   registered_at text not null
 );
 
@@ -619,6 +793,21 @@ create table if not exists route_snapshot_publications (
   ok integer not null,
   targets_json text not null,
   created_at text not null
+);
+
+create table if not exists canary_decisions (
+  id text primary key,
+  project_id text not null,
+  host text not null,
+  path_prefix text not null,
+  stable_deployment_id text not null,
+  candidate_deployment_id text not null,
+  action text not null,
+  reason text not null,
+  metrics_json text not null,
+  thresholds_json text not null,
+  created_at text not null,
+  foreign key (project_id) references projects(id)
 );
 `;
 
@@ -704,7 +893,58 @@ const migrations: SchemaMigration[] = [
       ensureColumn(db, "route_snapshot_publications", "snapshot_id", "text");
     },
   },
+  {
+    id: "202606300003_runtime_node_placement",
+    apply(db) {
+      ensureColumn(db, "runtime_nodes", "region", "text");
+      ensureColumn(db, "runtime_nodes", "labels_json", "text");
+      ensureColumn(db, "runtime_nodes", "load_json", "text");
+    },
+  },
+  {
+    id: "202606300004_canary_decisions",
+    apply(db) {
+      db.exec(`
+        create table if not exists canary_decisions (
+          id text primary key,
+          project_id text not null,
+          host text not null,
+          path_prefix text not null,
+          stable_deployment_id text not null,
+          candidate_deployment_id text not null,
+          action text not null,
+          reason text not null,
+          metrics_json text not null,
+          thresholds_json text not null,
+          created_at text not null,
+          foreign key (project_id) references projects(id)
+        )
+      `);
+    },
+  },
+  {
+    id: "202606300005_worker_world_version",
+    apply(db) {
+      ensureColumn(db, "deployments", "world_version", "text not null default '0.1.0'");
+      db.exec("update deployments set world_version = '0.1.0' where world_version is null or world_version = ''");
+    },
+  },
+  {
+    id: "202606300006_artifact_metadata",
+    apply(db) {
+      ensureColumn(db, "artifacts", "signature_json", "text");
+      ensureColumn(db, "artifacts", "provenance_json", "text");
+    },
+  },
+  {
+    id: "202607010001_runtime_node_identity",
+    apply(db) {
+      ensureColumn(db, "runtime_nodes", "identity_json", "text");
+    },
+  },
 ];
+
+export const SQLITE_SCHEMA_MIGRATION_IDS = migrations.map((migration) => migration.id);
 
 function ensureColumn(db: DatabaseSync, table: string, column: string, definition: string) {
   const rows = db.prepare(`pragma table_info(${table})`).all();

@@ -4,9 +4,11 @@ import {
   MVP_RUNTIME_BACKEND,
   MVP_WASI_PROFILE,
   MVP_WORKER_WORLD,
+  MVP_WORKER_WORLD_VERSION,
   type RouteSnapshot,
 } from "../control-plane/contracts.ts";
 import { RuntimeError } from "./errors.ts";
+import { verifyRuntimeIdentityHeaders } from "./identity.ts";
 import { enforceRuntimeCapabilities } from "./policy.ts";
 import { resolveRuntimeCapabilities } from "./secrets.ts";
 import type { RuntimeTelemetry } from "./otel.ts";
@@ -17,6 +19,7 @@ import type {
   RuntimeHeader,
   RuntimeInvoker,
   RuntimeSecretStore,
+  RuntimeWorkerLogLine,
 } from "./types.ts";
 
 export interface RuntimeNodeAppOptions {
@@ -24,10 +27,14 @@ export interface RuntimeNodeAppOptions {
   invoker?: RuntimeInvoker;
   secretStore?: RuntimeSecretStore;
   managementToken?: string;
+  managementIdentityKeys?: Record<string, string>;
   maxConcurrentInvocations?: number;
+  maxConcurrentInvocationsByProject?: Record<string, number>;
+  requestRateLimitsByProject?: Record<string, RuntimeProjectRateLimit>;
   requestIdGenerator?: () => string;
   monotonicNowMs?: () => number;
   eventBufferSize?: number;
+  logBufferSize?: number;
   telemetry?: RuntimeTelemetry;
   warmupOnSnapshot?: boolean;
   hostDaemonMetrics?: RuntimeHostDaemonMetricsOptions;
@@ -37,6 +44,11 @@ export interface RuntimeNodeAppOptions {
 export interface RuntimeHostDaemonMetricsOptions {
   url: string;
   fetch?: typeof fetch;
+}
+
+export interface RuntimeProjectRateLimit {
+  requestsPerSecond: number;
+  burst?: number;
 }
 
 export interface RuntimeNodeSupervisor {
@@ -51,6 +63,9 @@ export function createRuntimeNodeApp(options: RuntimeNodeAppOptions) {
   const requestIdGenerator = options.requestIdGenerator ?? (() => randomUUID());
   const metrics = createRuntimeMetrics(now);
   const events = createRuntimeEvents(options.eventBufferSize ?? 100);
+  const logs = createRuntimeLogs(options.logBufferSize ?? 100);
+  const projectConcurrency = createProjectConcurrencyLimiter(options.maxConcurrentInvocationsByProject);
+  const projectRateLimiter = createProjectRateLimiter(options.requestRateLimitsByProject, monotonicNowMs);
   const server = createServer(async (request, response) => {
     let workerRequest = false;
     let routeMatched = false;
@@ -97,8 +112,23 @@ export function createRuntimeNodeApp(options: RuntimeNodeAppOptions) {
         return;
       }
 
+      if (method === "GET" && url.pathname === "/__runtime/logs") {
+        writeJson(response, 200, logs.snapshot({
+          projectId: url.searchParams.get("projectId") ?? undefined,
+          deploymentId: url.searchParams.get("deploymentId") ?? undefined,
+        }));
+        return;
+      }
+
       if (method === "PUT" && url.pathname === "/__runtime/snapshots/routes") {
-        const snapshot = await readJson<RouteSnapshot>(request);
+        const bodyText = await readText(request);
+        if (!authorizeRuntimeIdentity(options, request.headers, method, url.pathname, bodyText)) {
+          writeJson(response, 401, {
+            error: { code: "unauthorized", message: "missing or invalid runtime identity signature" },
+          });
+          return;
+        }
+        const snapshot = parseJson<RouteSnapshot>(bodyText);
         assertRouteSnapshot(snapshot);
         const warmup = options.warmupOnSnapshot === true;
         if (warmup) {
@@ -141,11 +171,20 @@ export function createRuntimeNodeApp(options: RuntimeNodeAppOptions) {
       eventProjectId = prepared.projectId;
       eventDeploymentId = prepared.deploymentId;
       metrics.recordRouteMatch();
+      if (!projectRateLimiter.tryConsume(prepared.projectId)) {
+        throw new RuntimeError("rate_limited", "runtime node project request rate limit exceeded");
+      }
 
       if (options.invoker) {
         const component = await withResolvedCapabilities(prepared, options.secretStore);
         enforceRuntimeCapabilities(component.capabilities);
+        const projectInvocation = projectConcurrency.tryStart(component.projectId);
+        if (!projectInvocation.acquired) {
+          metrics.recordInvocationRejected();
+          throw new RuntimeError("overloaded", "runtime node project concurrency limit exceeded");
+        }
         if (!metrics.tryStartInvocation(options.maxConcurrentInvocations)) {
+          projectInvocation.release();
           throw new RuntimeError("overloaded", "runtime node concurrency limit exceeded");
         }
         invocationStarted = true;
@@ -162,6 +201,18 @@ export function createRuntimeNodeApp(options: RuntimeNodeAppOptions) {
             component.limits?.wallMs,
           );
           enforceResponseBytes(component, invocation);
+          logs.recordInvocationLogs({
+            timestamp: now(),
+            requestId,
+            host: eventHost,
+            path: eventPath,
+            projectId: component.projectId,
+            deploymentId: component.deploymentId,
+            lines: invocation.logs,
+            secretValues: component.capabilities?.secrets
+              .map((secret) => secret.value)
+              .filter((value): value is string => typeof value === "string" && value.length > 0) ?? [],
+          });
           invocationSettled = true;
           metrics.recordInvocationSuccess();
           metrics.recordResponse(invocation.status);
@@ -169,6 +220,7 @@ export function createRuntimeNodeApp(options: RuntimeNodeAppOptions) {
           writeInvocationResponse(response, component, invocation, requestId);
         } finally {
           metrics.recordInvocationEnd();
+          projectInvocation.release();
         }
         return;
       }
@@ -267,7 +319,32 @@ export function createRuntimeNodeApp(options: RuntimeNodeAppOptions) {
         });
       });
     },
+    metrics() {
+      return metrics.snapshot();
+    },
+    logs() {
+      return logs.snapshot({});
+    },
   };
+}
+
+function authorizeRuntimeIdentity(
+  options: RuntimeNodeAppOptions,
+  headers: Record<string, string | string[] | undefined>,
+  method: string,
+  path: string,
+  body: string,
+): boolean {
+  if (!options.managementIdentityKeys || Object.keys(options.managementIdentityKeys).length === 0) {
+    return true;
+  }
+  return verifyRuntimeIdentityHeaders({
+    method,
+    path,
+    body,
+    headers,
+    keys: options.managementIdentityKeys,
+  }).ok;
 }
 
 function authorizeRuntimeManagement(
@@ -323,6 +400,21 @@ interface RuntimeEventsSnapshot {
   events: RuntimeEvent[];
 }
 
+interface RuntimeLogEntry {
+  timestamp: string;
+  requestId: string;
+  host: string;
+  path: string;
+  projectId?: string;
+  deploymentId?: string;
+  level: "debug" | "info" | "warn" | "error";
+  message: string;
+}
+
+interface RuntimeLogsSnapshot {
+  logs: RuntimeLogEntry[];
+}
+
 function createRuntimeMetrics(now: () => string) {
   const metrics: RuntimeMetricsSnapshot = {
     startedAt: now(),
@@ -357,13 +449,16 @@ function createRuntimeMetrics(now: () => string) {
       if (maxConcurrent !== undefined) {
         metrics.invocations.maxConcurrent = maxConcurrent;
         if (metrics.invocations.active >= maxConcurrent) {
-          metrics.invocations.rejected += 1;
+          this.recordInvocationRejected();
           return false;
         }
       }
       metrics.invocations.total += 1;
       metrics.invocations.active += 1;
       return true;
+    },
+    recordInvocationRejected() {
+      metrics.invocations.rejected += 1;
     },
     recordInvocationEnd() {
       metrics.invocations.active = Math.max(0, metrics.invocations.active - 1);
@@ -390,6 +485,52 @@ function createRuntimeMetrics(now: () => string) {
   };
 }
 
+function createRuntimeLogs(limit: number) {
+  const entries: RuntimeLogEntry[] = [];
+  const boundedLimit = Math.max(1, limit);
+
+  return {
+    snapshot(filter: { projectId?: string; deploymentId?: string }): RuntimeLogsSnapshot {
+      return {
+        logs: entries.filter((entry) =>
+          (!filter.projectId || entry.projectId === filter.projectId)
+          && (!filter.deploymentId || entry.deploymentId === filter.deploymentId)
+        ),
+      };
+    },
+    recordInvocationLogs(input: {
+      timestamp: string;
+      requestId: string;
+      host: string;
+      path: string;
+      projectId?: string;
+      deploymentId?: string;
+      lines?: RuntimeWorkerLogLine[];
+      secretValues: string[];
+    }) {
+      for (const line of input.lines ?? []) {
+        const message = typeof line.message === "string" ? line.message : "";
+        if (message.length === 0) {
+          continue;
+        }
+        entries.push(stripUndefined({
+          timestamp: input.timestamp,
+          requestId: input.requestId,
+          host: input.host,
+          path: input.path,
+          projectId: input.projectId,
+          deploymentId: input.deploymentId,
+          level: normalizeLogLevel(line.level),
+          message: redactLogMessage(message, input.secretValues),
+        }));
+        while (entries.length > boundedLimit) {
+          entries.shift();
+        }
+      }
+    },
+  };
+}
+
 function createRuntimeEvents(limit: number) {
   const events: RuntimeEvent[] = [];
   const boundedLimit = Math.max(1, limit);
@@ -403,6 +544,130 @@ function createRuntimeEvents(limit: number) {
       while (events.length > boundedLimit) {
         events.shift();
       }
+    },
+  };
+}
+
+function normalizeLogLevel(value: RuntimeWorkerLogLine["level"]): RuntimeLogEntry["level"] {
+  return value === "debug" || value === "info" || value === "warn" || value === "error" ? value : "info";
+}
+
+function redactLogMessage(message: string, secretValues: string[]): string {
+  let redacted = message;
+  for (const secret of [...secretValues].sort((left, right) => right.length - left.length)) {
+    redacted = redacted.replaceAll(secret, "[REDACTED]");
+  }
+  return redacted.replace(
+    /\b(authorization|cookie|set-cookie|x-api-key|api[-_]?key|token|password|secret)(\s*[:=]\s*)([^,\r\n]+)/gi,
+    (_match, key: string, separator: string) => `${key}${separator}[REDACTED]`,
+  );
+}
+
+interface ProjectInvocationPermit {
+  acquired: boolean;
+  release(): void;
+}
+
+function createProjectConcurrencyLimiter(
+  limits: Record<string, number> | undefined,
+) {
+  const maxByProject = new Map<string, number>();
+  for (const [projectId, value] of Object.entries(limits ?? {})) {
+    if (projectId.trim().length === 0 || !Number.isFinite(value) || value < 0) {
+      continue;
+    }
+    maxByProject.set(projectId, Math.floor(value));
+  }
+  const activeByProject = new Map<string, number>();
+  const noopPermit: ProjectInvocationPermit = { acquired: true, release() {} };
+
+  return {
+    tryStart(projectId: string | undefined): ProjectInvocationPermit {
+      if (!projectId) {
+        return noopPermit;
+      }
+      const maxConcurrent = maxByProject.get(projectId);
+      if (maxConcurrent === undefined) {
+        return noopPermit;
+      }
+      const active = activeByProject.get(projectId) ?? 0;
+      if (active >= maxConcurrent) {
+        return { acquired: false, release() {} };
+      }
+      activeByProject.set(projectId, active + 1);
+      let released = false;
+      return {
+        acquired: true,
+        release() {
+          if (released) {
+            return;
+          }
+          released = true;
+          const next = Math.max(0, (activeByProject.get(projectId) ?? 1) - 1);
+          if (next === 0) {
+            activeByProject.delete(projectId);
+            return;
+          }
+          activeByProject.set(projectId, next);
+        },
+      };
+    },
+  };
+}
+
+interface ProjectRateBucket {
+  tokens: number;
+  updatedMs: number;
+}
+
+function createProjectRateLimiter(
+  limits: Record<string, RuntimeProjectRateLimit> | undefined,
+  nowMs: () => number,
+) {
+  const maxByProject = new Map<string, { requestsPerSecond: number; burst: number }>();
+  for (const [projectId, limit] of Object.entries(limits ?? {})) {
+    const requestsPerSecond = limit.requestsPerSecond;
+    const burst = limit.burst ?? Math.ceil(requestsPerSecond);
+    if (
+      projectId.trim().length === 0
+      || !Number.isFinite(requestsPerSecond)
+      || requestsPerSecond < 0
+      || !Number.isFinite(burst)
+      || burst < 0
+    ) {
+      continue;
+    }
+    maxByProject.set(projectId, {
+      requestsPerSecond,
+      burst: Math.floor(burst),
+    });
+  }
+  const buckets = new Map<string, ProjectRateBucket>();
+
+  return {
+    tryConsume(projectId: string | undefined): boolean {
+      if (!projectId) {
+        return true;
+      }
+      const limit = maxByProject.get(projectId);
+      if (!limit) {
+        return true;
+      }
+      const now = nowMs();
+      const bucket = buckets.get(projectId) ?? { tokens: limit.burst, updatedMs: now };
+      const elapsedMs = Math.max(0, now - bucket.updatedMs);
+      bucket.tokens = Math.min(
+        limit.burst,
+        bucket.tokens + (elapsedMs * limit.requestsPerSecond) / 1000,
+      );
+      bucket.updatedMs = now;
+      if (bucket.tokens < 1) {
+        buckets.set(projectId, bucket);
+        return false;
+      }
+      bucket.tokens -= 1;
+      buckets.set(projectId, bucket);
+      return true;
     },
   };
 }
@@ -489,12 +754,18 @@ function withWallTimeout<T>(promise: Promise<T>, wallMs: number | undefined): Pr
 }
 
 async function readJson<T>(request: any): Promise<T> {
-  const body = await readBody(request);
-  const text = Buffer.from(body).toString("utf8");
+  return parseJson(await readText(request));
+}
+
+function parseJson<T>(text: string): T {
   if (text.trim().length === 0) {
     throw new RuntimeError("validation", "request body must be JSON");
   }
   return JSON.parse(text) as T;
+}
+
+async function readText(request: any): Promise<string> {
+  return Buffer.from(await readBody(request)).toString("utf8");
 }
 
 async function readBody(request: any, maxBytes?: number): Promise<Buffer> {
@@ -522,11 +793,17 @@ function runtimeErrorResponse(error: unknown): { status: number; code: string; m
   if (error instanceof RuntimeError && error.code === "timeout") {
     return { status: 504, code: error.code, message: error.message };
   }
+  if (error instanceof RuntimeError && error.code === "cpu_limit") {
+    return { status: 503, code: error.code, message: error.message };
+  }
   if (error instanceof RuntimeError && error.code === "validation") {
     return { status: 400, code: error.code, message: error.message };
   }
   if (error instanceof RuntimeError && error.code === "overloaded") {
     return { status: 503, code: error.code, message: error.message };
+  }
+  if (error instanceof RuntimeError && error.code === "rate_limited") {
+    return { status: 429, code: error.code, message: error.message };
   }
   if (error instanceof RuntimeError && isRequestBytesLimit(error)) {
     return { status: 413, code: error.code, message: error.message };
@@ -603,6 +880,7 @@ function assertRouteSnapshotEntry(value: unknown, field: string) {
   nonEmptyString(route.projectId, `${field}.projectId`);
   const deploymentId = nonEmptyString(route.deploymentId, `${field}.deploymentId`);
   assertWorld(route.world, `${field}.world`);
+  assertWorldVersion(route.worldVersion, `${field}.worldVersion`);
   assertRuntime(route.runtime, `${field}.runtime`);
   assertLimits(route.limits, `${field}.limits`);
   assertCapabilities(route.capabilities, `${field}.capabilities`);
@@ -627,6 +905,7 @@ function assertRouteSnapshotTarget(value: unknown, field: string) {
   nonEmptyString(target.deploymentId, `${field}.deploymentId`);
   positiveInteger(target.weight, `${field}.weight`);
   assertWorld(target.world, `${field}.world`);
+  assertWorldVersion(target.worldVersion, `${field}.worldVersion`);
   assertRuntime(target.runtime, `${field}.runtime`);
   assertLimits(target.limits, `${field}.limits`);
   assertCapabilities(target.capabilities, `${field}.capabilities`);
@@ -636,6 +915,12 @@ function assertRouteSnapshotTarget(value: unknown, field: string) {
 function assertWorld(value: unknown, field: string) {
   if (value !== MVP_WORKER_WORLD) {
     throw new RuntimeError("validation", `${field} must be ${MVP_WORKER_WORLD}`);
+  }
+}
+
+function assertWorldVersion(value: unknown, field: string) {
+  if (value !== MVP_WORKER_WORLD_VERSION) {
+    throw new RuntimeError("validation", `${field} must be ${MVP_WORKER_WORLD_VERSION}`);
   }
 }
 

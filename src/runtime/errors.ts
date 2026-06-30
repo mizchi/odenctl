@@ -1,11 +1,13 @@
 export type RuntimeErrorCode =
   | "artifact"
   | "compile"
+  | "cpu_limit"
   | "invoke"
   | "limits"
   | "not_found"
   | "overloaded"
   | "policy"
+  | "rate_limited"
   | "timeout"
   | "unsupported"
   | "validation";

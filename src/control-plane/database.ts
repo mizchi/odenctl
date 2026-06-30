@@ -1,5 +1,12 @@
 import { createControlPlane } from "./service.ts";
 import { createSqliteRepository } from "./repository.ts";
+import { createConfiguredSecretCipher } from "./secret-encryption.ts";
+import { projectQuotasFromEnv } from "./quotas.ts";
+import {
+  applyControlPlaneMigrations,
+  checkControlPlaneMigrations,
+  type ControlPlaneMigrationStatus,
+} from "./migrations.ts";
 
 export type ControlPlaneDatabaseConfig =
   | { kind: "sqlite"; path: string }
@@ -8,6 +15,10 @@ export type ControlPlaneDatabaseConfig =
 export interface CreateConfiguredControlPlaneOptions {
   env?: Record<string, string | undefined>;
   runtimeNodeActiveTtlMs?: number;
+}
+
+export interface ConfiguredControlPlaneMigrationOptions {
+  env?: Record<string, string | undefined>;
 }
 
 export function resolveControlPlaneDatabaseConfig(
@@ -34,6 +45,8 @@ export async function createConfiguredControlPlane(
 ) {
   const env = options.env ?? process.env;
   const config = resolveControlPlaneDatabaseConfig(env);
+  const secretCipher = createConfiguredSecretCipher(env);
+  const projectQuotas = projectQuotasFromEnv(env);
   if (config.kind === "postgres") {
     const [{ createAsyncControlPlane }, { createPostgresRepository }] = await Promise.all([
       import("./async-service.ts"),
@@ -44,15 +57,35 @@ export async function createConfiguredControlPlane(
       ssl: config.ssl,
       max: config.maxConnections,
     });
-    return createAsyncControlPlane({
+    const controlPlane = createAsyncControlPlane({
       repository,
       runtimeNodeActiveTtlMs: options.runtimeNodeActiveTtlMs,
+      secretCipher,
+      projectQuotas,
     });
+    assertMigrationStatus(await checkControlPlaneMigrations(config));
+    return controlPlane;
   }
-  return createControlPlane({
+  const controlPlane = createControlPlane({
     repository: createSqliteRepository(config.path),
     runtimeNodeActiveTtlMs: options.runtimeNodeActiveTtlMs,
+    secretCipher,
+    projectQuotas,
   });
+  assertMigrationStatus(await checkControlPlaneMigrations(config));
+  return controlPlane;
+}
+
+export async function applyConfiguredControlPlaneMigrations(
+  options: ConfiguredControlPlaneMigrationOptions = {},
+): Promise<ControlPlaneMigrationStatus> {
+  return applyControlPlaneMigrations(resolveControlPlaneDatabaseConfig(options.env));
+}
+
+export async function checkConfiguredControlPlaneMigrations(
+  options: ConfiguredControlPlaneMigrationOptions = {},
+): Promise<ControlPlaneMigrationStatus> {
+  return checkControlPlaneMigrations(resolveControlPlaneDatabaseConfig(options.env));
 }
 
 function firstNonEmpty(...values: Array<string | undefined>): string | undefined {
@@ -87,4 +120,15 @@ function positiveInteger(value: string | undefined): number | undefined {
   }
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function assertMigrationStatus(status: ControlPlaneMigrationStatus) {
+  if (status.ok) {
+    return;
+  }
+  const parts = [
+    status.pending.length ? `pending: ${status.pending.join(", ")}` : "",
+    status.unexpected.length ? `unexpected: ${status.unexpected.join(", ")}` : "",
+  ].filter(Boolean);
+  throw new Error(`control-plane schema is not current (${parts.join("; ")})`);
 }

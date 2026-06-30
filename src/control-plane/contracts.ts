@@ -1,6 +1,7 @@
 import { ControlPlaneError } from "./errors.ts";
 
 export const MVP_WORKER_WORLD = "myedge:runtime/worker@0.1.0";
+export const MVP_WORKER_WORLD_VERSION = "0.1.0";
 export const MVP_WASI_PROFILE = "wasip3";
 export const MVP_WASI_VERSION = MVP_WASI_PROFILE;
 export const MVP_RUNTIME_BACKEND = "wasmtime";
@@ -20,7 +21,22 @@ export interface Artifact {
   digest: string;
   location: string;
   sizeBytes: number;
+  signature?: ArtifactSignature;
+  provenance?: ArtifactProvenance;
   createdAt: string;
+}
+
+export interface ArtifactSignature {
+  algorithm: "sha256-hmac";
+  keyId: string;
+  value: string;
+}
+
+export interface ArtifactProvenance {
+  builder?: string;
+  source?: string;
+  revision?: string;
+  buildId?: string;
 }
 
 export interface Secret {
@@ -84,6 +100,7 @@ export interface Deployment {
   projectId: string;
   artifactId: string;
   world: typeof MVP_WORKER_WORLD;
+  worldVersion: typeof MVP_WORKER_WORLD_VERSION;
   runtime: RuntimeSpec;
   limits: RuntimeLimits;
   capabilities: CapabilityPolicy;
@@ -112,6 +129,15 @@ export interface RuntimeNodeCapacity {
   memoryMb: number;
 }
 
+export interface RuntimeNodeLoad {
+  activeRequests: number;
+}
+
+export interface RuntimeNodeIdentity {
+  keyId: string;
+  certificateSha256?: string;
+}
+
 export interface RuntimeNode {
   id: string;
   url: string;
@@ -120,6 +146,10 @@ export interface RuntimeNode {
   lastSeenAt?: string;
   version?: string;
   capacity?: RuntimeNodeCapacity;
+  region?: string;
+  labels?: Record<string, string>;
+  load?: RuntimeNodeLoad;
+  identity?: RuntimeNodeIdentity;
 }
 
 export interface RouteSnapshotPublication {
@@ -142,6 +172,39 @@ export interface RouteSnapshotPublicationTarget {
   error?: string;
 }
 
+export type CanaryDecisionAction = "continue" | "rollback";
+export type CanaryDecisionReason =
+  | "within_thresholds"
+  | "insufficient_samples"
+  | "p95_latency"
+  | "error_rate"
+  | "reject_count";
+
+export interface CanaryDecision {
+  id: string;
+  projectId: string;
+  host: string;
+  pathPrefix: string;
+  stableDeploymentId: string;
+  candidateDeploymentId: string;
+  action: CanaryDecisionAction;
+  reason: CanaryDecisionReason;
+  metrics: {
+    requests: number;
+    errors: number;
+    rejects: number;
+    errorRate: number;
+    p95Ms: number;
+  };
+  thresholds: {
+    minRequests?: number;
+    p95Ms?: number;
+    errorRate?: number;
+    rejectCount?: number;
+  };
+  createdAt: string;
+}
+
 export interface RouteSnapshot {
   id?: string;
   schemaVersion: 1;
@@ -156,6 +219,7 @@ export interface RouteSnapshotEntry {
   deploymentId: string;
   targets: RouteSnapshotTarget[];
   world: typeof MVP_WORKER_WORLD;
+  worldVersion: typeof MVP_WORKER_WORLD_VERSION;
   runtime: RuntimeSpec;
   limits: RuntimeLimits;
   capabilities: CapabilityPolicy;
@@ -163,6 +227,8 @@ export interface RouteSnapshotEntry {
     id: string;
     digest: string;
     location: string;
+    signature?: ArtifactSignature;
+    provenance?: ArtifactProvenance;
   };
 }
 
@@ -170,6 +236,7 @@ export interface RouteSnapshotTarget {
   deploymentId: string;
   weight: number;
   world: typeof MVP_WORKER_WORLD;
+  worldVersion: typeof MVP_WORKER_WORLD_VERSION;
   runtime: RuntimeSpec;
   limits: RuntimeLimits;
   capabilities: CapabilityPolicy;
@@ -177,6 +244,8 @@ export interface RouteSnapshotTarget {
     id: string;
     digest: string;
     location: string;
+    signature?: ArtifactSignature;
+    provenance?: ArtifactProvenance;
   };
 }
 
@@ -213,6 +282,36 @@ export function normalizeLocation(value: unknown): string {
 
 export function normalizeSizeBytes(value: unknown): number {
   return positiveInteger(value, "artifact sizeBytes");
+}
+
+export function normalizeArtifactSignature(value: unknown): ArtifactSignature | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const record = objectRecord(value, "artifact signature");
+  if (record.algorithm !== "sha256-hmac") {
+    throw new ControlPlaneError("validation", "artifact signature algorithm must be sha256-hmac");
+  }
+  const keyId = nonEmptyString(record.keyId, "artifact signature.keyId");
+  const signatureValue = nonEmptyString(record.value, "artifact signature.value");
+  if (!/^[a-f0-9]{64}$/i.test(signatureValue)) {
+    throw new ControlPlaneError("validation", "artifact signature.value must be a sha256 hex digest");
+  }
+  return { algorithm: "sha256-hmac", keyId, value: signatureValue.toLowerCase() };
+}
+
+export function normalizeArtifactProvenance(value: unknown): ArtifactProvenance | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const record = objectRecord(value, "artifact provenance");
+  const provenance: ArtifactProvenance = {};
+  for (const key of ["builder", "source", "revision", "buildId"] as const) {
+    if (record[key] !== undefined) {
+      provenance[key] = nonEmptyString(record[key], `artifact provenance.${key}`);
+    }
+  }
+  return Object.keys(provenance).length > 0 ? provenance : undefined;
 }
 
 export function normalizeSecretName(value: unknown): string {
@@ -252,6 +351,21 @@ export function normalizeWorld(value: unknown): typeof MVP_WORKER_WORLD {
     throw new ControlPlaneError("validation", `deployment world must be ${MVP_WORKER_WORLD}`);
   }
   return MVP_WORKER_WORLD;
+}
+
+export function workerWorldVersion(world: typeof MVP_WORKER_WORLD): typeof MVP_WORKER_WORLD_VERSION {
+  const version = /@([^@]+)$/.exec(world)?.[1];
+  if (version !== MVP_WORKER_WORLD_VERSION) {
+    throw new ControlPlaneError("validation", `deployment world version must be ${MVP_WORKER_WORLD_VERSION}`);
+  }
+  return MVP_WORKER_WORLD_VERSION;
+}
+
+export function normalizeWorkerWorldVersion(value: unknown): typeof MVP_WORKER_WORLD_VERSION {
+  if (value !== MVP_WORKER_WORLD_VERSION) {
+    throw new ControlPlaneError("validation", `deployment worldVersion must be ${MVP_WORKER_WORLD_VERSION}`);
+  }
+  return MVP_WORKER_WORLD_VERSION;
 }
 
 export function normalizeRuntime(value: unknown): RuntimeSpec {
@@ -365,6 +479,72 @@ export function normalizeRuntimeNodeCapacity(value: unknown): RuntimeNodeCapacit
   };
 }
 
+export function normalizeRuntimeNodeRegion(value: unknown): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const region = nonEmptyString(value, "runtime node region").toLowerCase();
+  if (!/^[a-z0-9][a-z0-9_.-]*$/.test(region)) {
+    throw new ControlPlaneError("validation", "runtime node region must be a region id");
+  }
+  return region;
+}
+
+export function normalizeRuntimeNodeLabels(value: unknown): Record<string, string> | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const record = objectRecord(value, "runtime node labels");
+  const labels: Record<string, string> = {};
+  for (const [key, labelValue] of Object.entries(record).sort(([left], [right]) => left.localeCompare(right))) {
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(key)) {
+      throw new ControlPlaneError("validation", "runtime node label keys must be label ids");
+    }
+    if (typeof labelValue !== "string") {
+      throw new ControlPlaneError("validation", `runtime node label ${key} must be a string`);
+    }
+    labels[key] = labelValue;
+  }
+  return labels;
+}
+
+export function normalizeRuntimeNodeLoad(value: unknown): RuntimeNodeLoad | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const record = objectRecord(value, "runtime node load");
+  return {
+    activeRequests: nonnegativeInteger(record.activeRequests, "runtime node load.activeRequests"),
+  };
+}
+
+export function normalizeRuntimeNodeIdentity(value: unknown): RuntimeNodeIdentity | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const record = objectRecord(value, "runtime node identity");
+  const keyId = nonEmptyString(record.keyId, "runtime node identity.keyId");
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9_.:-]*$/.test(keyId)) {
+    throw new ControlPlaneError("validation", "runtime node identity.keyId must be a key id");
+  }
+  const certificateSha256 = optionalSha256(record.certificateSha256, "runtime node identity.certificateSha256");
+  return {
+    keyId,
+    ...(certificateSha256 ? { certificateSha256 } : {}),
+  };
+}
+
+function optionalSha256(value: unknown, field: string): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const digest = nonEmptyString(value, field).toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(digest)) {
+    throw new ControlPlaneError("validation", `${field} must be a sha256 hex digest`);
+  }
+  return digest;
+}
+
 export function normalizeRouteTargets(value: unknown, fallbackDeploymentId?: string): RouteTarget[] {
   if (value === undefined) {
     if (!fallbackDeploymentId) {
@@ -473,6 +653,13 @@ function bindingName(value: unknown, field: string): string {
 function positiveInteger(value: unknown, field: string): number {
   if (!Number.isInteger(value) || (value as number) <= 0) {
     throw new ControlPlaneError("validation", `${field} must be a positive integer`);
+  }
+  return value as number;
+}
+
+function nonnegativeInteger(value: unknown, field: string): number {
+  if (!Number.isInteger(value) || (value as number) < 0) {
+    throw new ControlPlaneError("validation", `${field} must be a non-negative integer`);
   }
   return value as number;
 }

@@ -1,14 +1,17 @@
 import { readFile } from "node:fs/promises";
 import pg from "pg";
 import type { AsyncControlPlaneRepository } from "./async-service.ts";
+import type { ProjectResourceUsage } from "./repository.ts";
 import type {
   Artifact,
+  CanaryDecision,
   Deployment,
   KvNamespace,
   Project,
   RoutePointer,
   RouteSnapshotPublication,
   RuntimeNode,
+  RuntimeNodeStatus,
   Secret,
 } from "./contracts.ts";
 import { ControlPlaneError } from "./errors.ts";
@@ -16,6 +19,7 @@ import { ControlPlaneError } from "./errors.ts";
 const { Pool } = pg;
 const initMigrationId = "202606300001_postgres_init";
 const initMigrationUrl = new URL("../../db/postgres/001_init.sql", import.meta.url);
+export const POSTGRES_SCHEMA_MIGRATION_IDS = [initMigrationId];
 
 export interface PostgresRepositoryOptions {
   connectionString: string;
@@ -34,6 +38,13 @@ export async function createPostgresRepository(
   const repository = new PostgresControlPlaneRepository(pool);
   await repository.migrate();
   return repository;
+}
+
+export async function applyPostgresMigrations(
+  options: PostgresRepositoryOptions,
+): Promise<void> {
+  const repository = await createPostgresRepository(options);
+  await repository.close();
 }
 
 export class PostgresControlPlaneRepository implements AsyncControlPlaneRepository {
@@ -83,17 +94,40 @@ export class PostgresControlPlaneRepository implements AsyncControlPlaneReposito
     return result.rows[0] ? projectFromRow(result.rows[0]) : undefined;
   }
 
+  async getProjectUsage(projectId: string): Promise<ProjectResourceUsage> {
+    const result = await this.pool.query(
+      `select
+        (select count(*) from artifacts where project_id = $1)::int as artifacts,
+        (select count(*) from deployments where project_id = $1)::int as deployments,
+        (select count(*) from routes where project_id = $1)::int as routes,
+        (select count(*) from secrets where project_id = $1)::int as secrets,
+        (select count(*) from kv_namespaces where project_id = $1)::int as kv_namespaces`,
+      [projectId],
+    );
+    return usageFromRow(result.rows[0]);
+  }
+
   async createArtifact(artifact: Artifact): Promise<Artifact> {
     try {
       await this.pool.query(
-        `insert into artifacts (id, project_id, digest, location, size_bytes, created_at)
-         values ($1, $2, $3, $4, $5, $6)`,
+        `insert into artifacts (
+          id,
+          project_id,
+          digest,
+          location,
+          size_bytes,
+          signature_json,
+          provenance_json,
+          created_at
+        ) values ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8)`,
         [
           artifact.id,
           artifact.projectId,
           artifact.digest,
           artifact.location,
           artifact.sizeBytes,
+          artifact.signature ? JSON.stringify(artifact.signature) : null,
+          artifact.provenance ? JSON.stringify(artifact.provenance) : null,
           artifact.createdAt,
         ],
       );
@@ -211,18 +245,20 @@ export class PostgresControlPlaneRepository implements AsyncControlPlaneReposito
           project_id,
           artifact_id,
           world,
+          world_version,
           runtime_backend,
           runtime_version,
           wasi_version,
           limits_json,
           capabilities_json,
           created_at
-        ) values ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10)`,
+        ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11)`,
         [
           deployment.id,
           deployment.projectId,
           deployment.artifactId,
           deployment.world,
+          deployment.worldVersion,
           deployment.runtime.backend,
           deployment.runtime.version,
           deployment.runtime.wasi,
@@ -304,8 +340,12 @@ export class PostgresControlPlaneRepository implements AsyncControlPlaneReposito
           registered_at,
           last_seen_at,
           version,
-          capacity_json
-        ) values ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
+          capacity_json,
+          region,
+          labels_json,
+          load_json,
+          identity_json
+        ) values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10::jsonb, $11::jsonb)`,
         [
           node.id,
           node.url,
@@ -314,6 +354,10 @@ export class PostgresControlPlaneRepository implements AsyncControlPlaneReposito
           node.lastSeenAt ?? null,
           node.version ?? null,
           node.capacity ? JSON.stringify(node.capacity) : null,
+          node.region ?? null,
+          node.labels ? JSON.stringify(node.labels) : null,
+          node.load ? JSON.stringify(node.load) : null,
+          node.identity ? JSON.stringify(node.identity) : null,
         ],
       );
       return node;
@@ -333,19 +377,44 @@ export class PostgresControlPlaneRepository implements AsyncControlPlaneReposito
         status = $1,
         last_seen_at = $2,
         version = $3,
-        capacity_json = $4::jsonb
-      where id = $5
+        capacity_json = $4::jsonb,
+        region = $5,
+        labels_json = $6::jsonb,
+        load_json = $7::jsonb
+      where id = $8
       returning *`,
       [
         node.status,
         node.lastSeenAt ?? null,
         node.version ?? null,
         node.capacity ? JSON.stringify(node.capacity) : null,
+        node.region ?? null,
+        node.labels ? JSON.stringify(node.labels) : null,
+        node.load ? JSON.stringify(node.load) : null,
         node.id,
       ],
     );
     if (result.rowCount === 0) {
       throw new ControlPlaneError("not_found", `runtime node ${node.id} was not found`);
+    }
+    return runtimeNodeFromRow(result.rows[0]);
+  }
+
+  async updateRuntimeNodeStatus(id: string, status: RuntimeNodeStatus): Promise<RuntimeNode> {
+    const result = await this.pool.query(
+      "update runtime_nodes set status = $1 where id = $2 returning *",
+      [status, id],
+    );
+    if (result.rowCount === 0) {
+      throw new ControlPlaneError("not_found", `runtime node ${id} was not found`);
+    }
+    return runtimeNodeFromRow(result.rows[0]);
+  }
+
+  async deleteRuntimeNode(id: string): Promise<RuntimeNode> {
+    const result = await this.pool.query("delete from runtime_nodes where id = $1 returning *", [id]);
+    if (result.rowCount === 0) {
+      throw new ControlPlaneError("not_found", `runtime node ${id} was not found`);
     }
     return runtimeNodeFromRow(result.rows[0]);
   }
@@ -391,6 +460,47 @@ export class PostgresControlPlaneRepository implements AsyncControlPlaneReposito
     );
     return result.rows.map(routeSnapshotPublicationFromRow);
   }
+
+  async createCanaryDecision(decision: CanaryDecision): Promise<CanaryDecision> {
+    try {
+      await this.pool.query(
+        `insert into canary_decisions (
+          id,
+          project_id,
+          host,
+          path_prefix,
+          stable_deployment_id,
+          candidate_deployment_id,
+          action,
+          reason,
+          metrics_json,
+          thresholds_json,
+          created_at
+        ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11)`,
+        [
+          decision.id,
+          decision.projectId,
+          decision.host,
+          decision.pathPrefix,
+          decision.stableDeploymentId,
+          decision.candidateDeploymentId,
+          decision.action,
+          decision.reason,
+          JSON.stringify(decision.metrics),
+          JSON.stringify(decision.thresholds),
+          decision.createdAt,
+        ],
+      );
+      return decision;
+    } catch (error) {
+      throw writeError("canary decision", decision.id, error);
+    }
+  }
+
+  async listCanaryDecisions(): Promise<CanaryDecision[]> {
+    const result = await this.pool.query("select * from canary_decisions order by created_at desc, id desc");
+    return result.rows.map(canaryDecisionFromRow);
+  }
 }
 
 function projectFromRow(row: any): Project {
@@ -408,6 +518,8 @@ function artifactFromRow(row: any): Artifact {
     digest: row.digest,
     location: row.location,
     sizeBytes: Number(row.size_bytes),
+    ...(row.signature_json ? { signature: jsonValue(row.signature_json) } : {}),
+    ...(row.provenance_json ? { provenance: jsonValue(row.provenance_json) } : {}),
     createdAt: row.created_at,
   };
 }
@@ -438,6 +550,7 @@ function deploymentFromRow(row: any): Deployment {
     projectId: row.project_id,
     artifactId: row.artifact_id,
     world: row.world,
+    worldVersion: row.world_version ?? "0.1.0",
     runtime: {
       backend: row.runtime_backend,
       version: row.runtime_version,
@@ -479,6 +592,18 @@ function runtimeNodeFromRow(row: any): RuntimeNode {
   if (row.capacity_json) {
     node.capacity = jsonValue(row.capacity_json);
   }
+  if (row.region) {
+    node.region = row.region;
+  }
+  if (row.labels_json) {
+    node.labels = jsonValue(row.labels_json);
+  }
+  if (row.load_json) {
+    node.load = jsonValue(row.load_json);
+  }
+  if (row.identity_json) {
+    node.identity = jsonValue(row.identity_json);
+  }
   return node;
 }
 
@@ -491,6 +616,32 @@ function routeSnapshotPublicationFromRow(row: any): RouteSnapshotPublication {
     ok: row.ok === true,
     targets: jsonValue(row.targets_json),
     createdAt: row.created_at,
+  };
+}
+
+function canaryDecisionFromRow(row: any): CanaryDecision {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    host: row.host,
+    pathPrefix: row.path_prefix,
+    stableDeploymentId: row.stable_deployment_id,
+    candidateDeploymentId: row.candidate_deployment_id,
+    action: row.action,
+    reason: row.reason,
+    metrics: jsonValue(row.metrics_json),
+    thresholds: jsonValue(row.thresholds_json),
+    createdAt: row.created_at,
+  };
+}
+
+function usageFromRow(row: any): ProjectResourceUsage {
+  return {
+    artifacts: Number(row.artifacts ?? 0),
+    deployments: Number(row.deployments ?? 0),
+    routes: Number(row.routes ?? 0),
+    secrets: Number(row.secrets ?? 0),
+    kvNamespaces: Number(row.kv_namespaces ?? 0),
   };
 }
 

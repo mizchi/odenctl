@@ -56,6 +56,7 @@ test("host invoke args include component, request, limits, and capabilities", ()
     body: "payload",
     headers: [{ name: "content-type", value: "text/plain" }],
     limits: {
+      cpuMs: 50,
       wallMs: 1000,
       memoryMb: 64,
       requestBytes: 1048576,
@@ -87,6 +88,7 @@ test("host invoke args include component, request, limits, and capabilities", ()
     "payload",
   ]);
   assert.ok(args.includes("--capabilities"));
+  assert.ok(args.includes("--cpu-ms"));
   assert.ok(args.includes("--wall-ms"));
 });
 

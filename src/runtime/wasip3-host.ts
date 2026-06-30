@@ -130,11 +130,14 @@ export function createWasip3HostInvoker(options: Wasip3HostInvokerOptions = {}):
         ], { timeoutMs: request.component.limits?.wallMs });
         return parseInvokeResponse(result.stdout);
       } catch (error) {
-        if (error instanceof RuntimeError && (error.code === "invoke" || error.code === "timeout")) {
+        if (
+          error instanceof RuntimeError
+          && (error.code === "invoke" || error.code === "timeout" || error.code === "cpu_limit")
+        ) {
           throw error;
         }
         const message = error instanceof Error ? error.message : String(error);
-        throw new RuntimeError("invoke", message);
+        throw classifyHostInvokeFailure(message);
       }
     },
   };
@@ -158,6 +161,7 @@ export function createWasip3HostDaemonInvoker(options: Wasip3HostDaemonInvokerOp
             limits: request.component.limits
               ? {
                 wallMs: request.component.limits.wallMs,
+                cpuMs: request.component.limits.cpuMs,
                 memoryMb: request.component.limits.memoryMb,
                 requestBytes: request.component.limits.requestBytes,
                 responseBytes: request.component.limits.responseBytes,
@@ -170,15 +174,18 @@ export function createWasip3HostDaemonInvoker(options: Wasip3HostDaemonInvokerOp
         });
         const text = await response.text();
         if (!response.ok) {
-          throw new RuntimeError("invoke", daemonErrorMessage(text, response.status));
+          throw classifyHostInvokeFailure(daemonErrorMessage(text, response.status));
         }
         return parseInvokeResponse(text);
       } catch (error) {
-        if (error instanceof RuntimeError && error.code === "invoke") {
+        if (
+          error instanceof RuntimeError
+          && (error.code === "invoke" || error.code === "timeout" || error.code === "cpu_limit")
+        ) {
           throw error;
         }
         const message = error instanceof Error ? error.message : String(error);
-        throw new RuntimeError("invoke", message);
+        throw classifyHostInvokeFailure(message);
       }
     },
   };
@@ -192,6 +199,7 @@ function invokePolicyArgs(request: InvokeComponentRequest): string[] {
   const args: string[] = [];
   if (request.component.limits) {
     args.push("--wall-ms", String(request.component.limits.wallMs));
+    args.push("--cpu-ms", String(request.component.limits.cpuMs));
     args.push("--memory-mb", String(request.component.limits.memoryMb));
     args.push("--request-bytes", String(request.component.limits.requestBytes));
     args.push("--response-bytes", String(request.component.limits.responseBytes));
@@ -202,6 +210,16 @@ function invokePolicyArgs(request: InvokeComponentRequest): string[] {
     args.push("--capabilities", JSON.stringify(request.component.capabilities));
   }
   return args;
+}
+
+function classifyHostInvokeFailure(message: string): RuntimeError {
+  if (message.includes("cpuMs limit exceeded")) {
+    return new RuntimeError("cpu_limit", message);
+  }
+  if (message.includes("wallMs limit exceeded")) {
+    return new RuntimeError("timeout", message);
+  }
+  return new RuntimeError("invoke", message);
 }
 
 function parseInvokeResponse(stdout: string): InvokeComponentResponse {
@@ -222,7 +240,23 @@ function parseInvokeResponse(stdout: string): InvokeComponentResponse {
     status: record.status as number,
     headers: parseHeaders(record.headers),
     body: Buffer.from(typeof record.body === "string" ? record.body : "", "utf8"),
+    logs: parseLogs(record.logs),
   };
+}
+
+function parseLogs(value: unknown): InvokeComponentResponse["logs"] {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  return value
+    .filter((item): item is Record<string, unknown> => typeof item === "object" && item !== null)
+    .map((item) => ({
+      ...(item.level === "debug" || item.level === "info" || item.level === "warn" || item.level === "error"
+        ? { level: item.level }
+        : {}),
+      message: typeof item.message === "string" ? item.message : String(item.message ?? ""),
+    }))
+    .filter((item) => item.message.length > 0);
 }
 
 function daemonErrorMessage(text: string, status: number): string {

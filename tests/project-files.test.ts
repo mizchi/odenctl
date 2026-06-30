@@ -9,6 +9,8 @@ test("project tooling keeps Wasm E2E portable", async () => {
   await readFile("pnpm-lock.yaml", "utf8");
 
   assert.match(justfile, /node_modules\/@bytecodealliance\/jco\/lib\/wasi_snapshot_preview1\.reactor\.wasm/);
+  assert.match(justfile, /^db-migrate-check:/m);
+  assert.match(justfile, /^db-migrate-apply:/m);
   assert.doesNotMatch(justfile, /\/Users\//);
   assert.equal(packageJson.devDependencies["@bytecodealliance/jco"], "1.15.4");
   assert.match(workflow, /pnpm\/action-setup@v4/);

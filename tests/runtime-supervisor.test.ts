@@ -10,11 +10,13 @@ import { promisify } from "node:util";
 import {
   MVP_WASI_PROFILE,
   MVP_WORKER_WORLD,
+  MVP_WORKER_WORLD_VERSION,
   type RouteSnapshot,
 } from "../src/control-plane/contracts.ts";
 import {
   createFileArtifactStore,
   createRuntimeArtifactStore,
+  runtimeOciArtifactOptionsFromEnv,
   runtimeS3ArtifactOptionsFromEnv,
 } from "../src/runtime/artifacts.ts";
 import { createRouteCache, createRuntimeSupervisor } from "../src/runtime/supervisor.ts";
@@ -444,6 +446,127 @@ test("runtime artifact store materializes private S3 artifacts with SigV4 GET", 
   );
 });
 
+test("runtime artifact store materializes OCI registry artifacts from manifest layers", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "wasmplane-oci-artifact-"));
+  const bytes = Buffer.from("oci component bytes");
+  const artifactDigest = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+  const calls: Array<{ url: string; init: RequestInit }> = [];
+  const store = createRuntimeArtifactStore({
+    cacheDir: join(dir, "cache"),
+    oci: {
+      registries: {
+        "registry.local:5000": { scheme: "http" },
+      },
+    },
+    fetch: async (url, init) => {
+      calls.push({ url, init: init ?? {} });
+      if (url.endsWith("/manifests/v1")) {
+        return new Response(
+          JSON.stringify({
+            schemaVersion: 2,
+            mediaType: "application/vnd.oci.image.manifest.v1+json",
+            layers: [
+              {
+                mediaType: "application/vnd.wasm.content.layer.v1+wasm",
+                digest: artifactDigest,
+                size: bytes.byteLength,
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+      if (url.endsWith(`/blobs/${artifactDigest}`)) {
+        return new Response(bytes, { status: 200 });
+      }
+      return new Response("not found", { status: 404 });
+    },
+  });
+
+  const first = await store.materialize({
+    id: "art_oci",
+    digest: artifactDigest,
+    location: "oci://registry.local:5000/team/worker:v1",
+  });
+  const second = await store.materialize({
+    id: "art_oci",
+    digest: artifactDigest,
+    location: "oci://registry.local:5000/team/worker:v1",
+  });
+
+  assert.equal(first.path, second.path);
+  assert.equal(first.verified, true);
+  assert.equal(first.location, "oci://registry.local:5000/team/worker:v1");
+  assert.equal((await readFile(first.path)).toString("utf8"), "oci component bytes");
+  assert.deepEqual(calls.map((call) => call.url), [
+    "http://registry.local:5000/v2/team/worker/manifests/v1",
+    `http://registry.local:5000/v2/team/worker/blobs/${artifactDigest}`,
+  ]);
+});
+
+test("runtime artifact store materializes digest-addressed OCI blobs with registry auth", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "wasmplane-oci-artifact-auth-"));
+  const bytes = Buffer.from("private oci component bytes");
+  const artifactDigest = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+  const calls: Array<{ url: string; init: RequestInit }> = [];
+  const store = createRuntimeArtifactStore({
+    cacheDir: join(dir, "cache"),
+    oci: {
+      registries: {
+        "registry.example.com": { bearerToken: "registry-token" },
+      },
+    },
+    fetch: async (url, init) => {
+      calls.push({ url, init: init ?? {} });
+      return new Response(bytes, { status: 200 });
+    },
+  });
+
+  const materialized = await store.materialize({
+    id: "art_oci_private",
+    digest: artifactDigest,
+    location: `oci://registry.example.com/team/worker@${artifactDigest}`,
+  });
+
+  assert.equal((await readFile(materialized.path)).toString("utf8"), "private oci component bytes");
+  assert.deepEqual(calls.map((call) => call.url), [
+    `https://registry.example.com/v2/team/worker/blobs/${artifactDigest}`,
+  ]);
+  const headers = new Headers(calls[0].init.headers);
+  assert.equal(headers.get("authorization"), "Bearer registry-token");
+  assert.equal(headers.get("accept"), "application/wasm, application/octet-stream, */*");
+});
+
+test("runtime artifact store rejects OCI manifests without the expected artifact digest", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "wasmplane-oci-artifact-bad-"));
+  const store = createRuntimeArtifactStore({
+    cacheDir: join(dir, "cache"),
+    oci: {
+      registries: {
+        "registry.local:5000": { scheme: "http" },
+      },
+    },
+    fetch: async () =>
+      new Response(
+        JSON.stringify({
+          schemaVersion: 2,
+          layers: [{ digest: digest("other"), size: 1 }],
+        }),
+        { status: 200 },
+      ),
+  });
+
+  await assert.rejects(
+    () =>
+      store.materialize({
+        id: "art_oci_bad",
+        digest: digest("expected"),
+        location: "oci://registry.local:5000/team/worker:v1",
+      }),
+    /OCI artifact manifest does not reference expected digest/,
+  );
+});
+
 test("runtime artifact store rejects S3 artifacts without matching runtime config", async () => {
   const dir = await mkdtemp(join(tmpdir(), "wasmplane-s3-artifact-unconfigured-"));
   const store = createRuntimeArtifactStore({
@@ -500,6 +623,33 @@ test("runtime S3 artifact config reads artifact and AWS environment variables", 
     accessKeyId: "aws-access-key",
     secretAccessKey: "aws-secret-key",
     sessionToken: "aws-session-token",
+  });
+});
+
+test("runtime OCI artifact config reads registry auth environment variables", () => {
+  const config = runtimeOciArtifactOptionsFromEnv({
+    WASMPLANE_OCI_REGISTRIES_JSON: JSON.stringify({
+      "registry.local:5000": {
+        scheme: "http",
+        username: "local-user",
+        password: "local-pass",
+      },
+    }),
+    WASMPLANE_OCI_REGISTRY: "registry.example.com",
+    WASMPLANE_OCI_REGISTRY_TOKEN: "registry-token",
+  });
+
+  assert.deepEqual(config, {
+    registries: {
+      "registry.local:5000": {
+        scheme: "http",
+        username: "local-user",
+        password: "local-pass",
+      },
+      "registry.example.com": {
+        bearerToken: "registry-token",
+      },
+    },
   });
 });
 
@@ -813,6 +963,8 @@ test("wasip3 host invoker delegates HTTP requests to the Rust host invoke comman
     "payload",
     "--wall-ms",
     "1000",
+    "--cpu-ms",
+    "50",
     "--memory-mb",
     "64",
     "--request-bytes",
@@ -896,6 +1048,7 @@ test("wasip3 host daemon invoker sends requests to the embedded host service", a
     headers: [{ name: "content-type", value: "text/plain" }],
     body: "payload",
     limits: {
+      cpuMs: 50,
       wallMs: 1000,
       memoryMb: 64,
       requestBytes: 1048576,
@@ -1089,6 +1242,7 @@ function route(
     projectId: "prj_hello",
     deploymentId,
     world: MVP_WORKER_WORLD,
+    worldVersion: MVP_WORKER_WORLD_VERSION,
     runtime: { backend: "wasmtime", version: "wasmtime-42", wasi: MVP_WASI_PROFILE },
     limits: {
       cpuMs: 50,
@@ -1125,6 +1279,7 @@ function snapshotTarget(
     deploymentId,
     weight,
     world: MVP_WORKER_WORLD,
+    worldVersion: MVP_WORKER_WORLD_VERSION,
     runtime: { backend: "wasmtime", version: "wasmtime-42", wasi: MVP_WASI_PROFILE },
     limits: {
       cpuMs: 50,

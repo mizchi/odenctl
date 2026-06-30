@@ -1,9 +1,16 @@
 import type { RouteSnapshot } from "./contracts.ts";
+import { signRuntimeIdentityHeaders } from "../runtime/identity.ts";
 
 export interface RuntimeNodeTarget {
   id?: string;
   url: string;
   token?: string;
+  identity?: RuntimeNodeTargetIdentity;
+}
+
+export interface RuntimeNodeTargetIdentity {
+  keyId: string;
+  secret: string;
 }
 
 export interface RouteSnapshotPublishReport {
@@ -80,10 +87,11 @@ async function publishToRuntimeNode(
   fetchImpl: FetchLike,
 ): Promise<RouteSnapshotPublishTargetResult> {
   try {
+    const body = JSON.stringify(snapshot);
     const response = await fetchImpl(snapshotEndpoint(target.url), {
       method: "PUT",
-      headers: publishHeaders(target),
-      body: JSON.stringify(snapshot),
+      headers: publishHeaders(target, body),
+      body,
     });
     if (!response.ok) {
       return withTarget(target, {
@@ -108,10 +116,19 @@ async function publishToRuntimeNode(
   }
 }
 
-function publishHeaders(target: RuntimeNodeTarget): Record<string, string> {
+function publishHeaders(target: RuntimeNodeTarget, body: string): Record<string, string> {
   return {
     "content-type": "application/json",
     ...(target.token ? { authorization: `Bearer ${target.token}` } : {}),
+    ...(target.identity
+      ? signRuntimeIdentityHeaders({
+        method: "PUT",
+        path: "/__runtime/snapshots/routes",
+        body,
+        keyId: target.identity.keyId,
+        secret: target.identity.secret,
+      })
+      : {}),
   };
 }
 
