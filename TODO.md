@@ -251,4 +251,4 @@ Production readiness tasks, in implementation order.
 - [x] Add per-tenant runtime packing policy for warm deployments, idle instance pools, and LRU eviction.
 - [x] Add per-tenant memory, CPU, storage, concurrency, and rate enforcement reports.
 - [x] Add forced tenant drain and isolation-pool routing for noisy-neighbor mitigation.
-- [ ] Add billing-ready quota enforcement tied to usage ledgers.
+- [x] Add billing-ready quota enforcement tied to usage ledgers.

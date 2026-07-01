@@ -61,6 +61,7 @@ export interface HttpAppOptions {
     recordUsageEvent(input: any): MaybePromise<unknown>;
     getProjectUsageSummary(input: any): MaybePromise<unknown>;
     getProjectEnforcementReport(input: any): MaybePromise<unknown>;
+    getProjectUsageQuotaReport(input: any): MaybePromise<unknown>;
     createCustomDomain(input: any): MaybePromise<unknown>;
     listProjectCustomDomains(input: any): MaybePromise<unknown>;
     verifyCustomDomainOwnership(input: any): MaybePromise<unknown>;
@@ -396,6 +397,18 @@ export function createHttpApp(options: HttpAppOptions) {
             projectId: projectEnforcementReport.projectId,
             from: url.searchParams.get("from") ?? undefined,
             to: url.searchParams.get("to") ?? undefined,
+          }),
+        );
+        return;
+      }
+      const projectUsageQuotaReport = projectUsageQuotaReportMatch(method, url.pathname);
+      if (projectUsageQuotaReport) {
+        writeJson(
+          response,
+          200,
+          await options.controlPlane.getProjectUsageQuotaReport({
+            projectId: projectUsageQuotaReport.projectId,
+            at: url.searchParams.get("at") ?? undefined,
           }),
         );
         return;
@@ -1364,6 +1377,17 @@ function projectEnforcementReportMatch(method: string, pathname: string): { proj
     return undefined;
   }
   const match = /^\/projects\/([^/]+)\/enforcement-report$/.exec(pathname);
+  if (!match) {
+    return undefined;
+  }
+  return { projectId: decodeURIComponent(match[1]) };
+}
+
+function projectUsageQuotaReportMatch(method: string, pathname: string): { projectId: string } | undefined {
+  if (method !== "GET") {
+    return undefined;
+  }
+  const match = /^\/projects\/([^/]+)\/usage-quota$/.exec(pathname);
   if (!match) {
     return undefined;
   }

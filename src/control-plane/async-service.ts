@@ -91,6 +91,13 @@ import {
   type ProjectEnforcementPolicies,
   type ProjectEnforcementReport,
 } from "./enforcement-report.ts";
+import {
+  createProjectUsageQuotaReport,
+  enforceProjectUsageQuota,
+  usageQuotaPeriodFor,
+  type ProjectUsageQuotaPolicies,
+  type ProjectUsageQuotaReport,
+} from "./usage-quota.ts";
 
 export interface AsyncControlPlaneRepository {
   createOrganization(organization: Organization): Promise<Organization>;
@@ -158,6 +165,7 @@ export interface AsyncControlPlaneOptions {
   secretCipher?: SecretCipher;
   projectQuotas?: ProjectQuotas;
   projectEnforcementPolicies?: ProjectEnforcementPolicies;
+  projectUsageQuotas?: ProjectUsageQuotaPolicies;
   artifactSignatureVerifier?: ArtifactSignatureVerifier;
   admissionPolicy?: ControlPlaneAdmissionPolicy;
 }
@@ -229,6 +237,11 @@ export interface GetProjectEnforcementReportInput {
   projectId: string;
   from?: string;
   to?: string;
+}
+
+export interface GetProjectUsageQuotaReportInput {
+  projectId: string;
+  at?: string;
 }
 
 export interface CreateCustomDomainInput {
@@ -437,6 +450,7 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
   const secretCipher = options.secretCipher;
   const projectQuotas = options.projectQuotas;
   const projectEnforcementPolicies = options.projectEnforcementPolicies;
+  const projectUsageQuotas = options.projectUsageQuotas;
   const artifactSignatureVerifier = options.artifactSignatureVerifier;
   const admissionPolicy = options.admissionPolicy;
 
@@ -546,15 +560,19 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
   async function recordUsageEvent(input: RecordUsageEventInput): Promise<UsageEvent> {
     const project = await requireProject(repository, input.projectId);
     const dimensions = normalizeUsageDimensions(input.dimensions);
+    const metric = normalizeUsageMetricName(input.metric);
+    const quantity = normalizeUsageQuantity(input.quantity);
+    const recordedAt = normalizeUsageTimestamp(input.recordedAt, "usage recordedAt") ?? now();
     const event: UsageEvent = {
       id: optionalId(input.id, "usage event id") ?? idGenerator("use"),
       ...(project.organizationId ? { organizationId: project.organizationId } : {}),
       projectId: project.id,
-      metric: normalizeUsageMetricName(input.metric),
-      quantity: normalizeUsageQuantity(input.quantity),
+      metric,
+      quantity,
       ...(dimensions ? { dimensions } : {}),
-      recordedAt: normalizeUsageTimestamp(input.recordedAt, "usage recordedAt") ?? now(),
+      recordedAt,
     };
+    await enforceUsageQuota(project.id, event);
     return repository.createUsageEvent(event);
   }
 
@@ -587,6 +605,22 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
       summary,
       resources,
       policy: projectEnforcementPolicies?.[input.projectId],
+      generatedAt: now(),
+    });
+  }
+
+  async function getProjectUsageQuotaReport(
+    input: GetProjectUsageQuotaReportInput,
+  ): Promise<ProjectUsageQuotaReport> {
+    await requireProject(repository, input.projectId);
+    const at = normalizeUsageTimestamp(input.at, "usage quota at") ?? now();
+    const policy = projectUsageQuotas?.[input.projectId];
+    const period = usageQuotaPeriodFor(at, policy);
+    const summary = await repository.getProjectUsageSummary(input.projectId, period.from, period.to);
+    return createProjectUsageQuotaReport({
+      summary,
+      period,
+      policy,
       generatedAt: now(),
     });
   }
@@ -1110,6 +1144,7 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
     recordUsageEvent,
     getProjectUsageSummary,
     getProjectEnforcementReport,
+    getProjectUsageQuotaReport,
     createCustomDomain,
     listProjectCustomDomains,
     verifyCustomDomainOwnership,
@@ -1178,6 +1213,22 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
 
   async function enforceQuota(projectId: string, resource: ProjectQuotaResource) {
     enforceProjectQuota(projectId, projectQuotas, await repository.getProjectUsage(projectId), resource);
+  }
+
+  async function enforceUsageQuota(projectId: string, event: UsageEvent) {
+    const policy = projectUsageQuotas?.[projectId];
+    if (!policy) {
+      return;
+    }
+    const period = usageQuotaPeriodFor(event.recordedAt, policy);
+    enforceProjectUsageQuota({
+      projectId,
+      policy,
+      period,
+      summary: await repository.getProjectUsageSummary(projectId, period.from, period.to),
+      metric: event.metric,
+      quantity: event.quantity,
+    });
   }
 }
 

@@ -303,6 +303,117 @@ test("control plane reports per-tenant enforcement status", () => {
   });
 });
 
+test("control plane enforces billing usage quotas from usage ledgers", () => {
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+    projectUsageQuotas: {
+      prj_billing_quota: {
+        period: "calendar_month",
+        invocations: 2,
+        cpuMs: 100,
+      },
+    },
+  });
+  const organization = control.createOrganization({ id: "org_billing_quota", name: "Billing Quota Org" });
+  const project = control.createProject({
+    id: "prj_billing_quota",
+    name: "billing quota",
+    organizationId: organization.id,
+  });
+
+  control.recordUsageEvent({
+    id: "use_billing_old",
+    projectId: project.id,
+    metric: "cpu_ms",
+    quantity: 100,
+    recordedAt: "2026-06-30T23:59:59.000Z",
+  });
+  control.recordUsageEvent({
+    id: "use_billing_cpu",
+    projectId: project.id,
+    metric: "cpu_ms",
+    quantity: 80,
+    recordedAt: "2026-07-01T00:00:00.000Z",
+  });
+  control.recordUsageEvent({
+    id: "use_billing_invocation_1",
+    projectId: project.id,
+    metric: "invocation",
+    quantity: 1,
+    recordedAt: "2026-07-01T00:00:00.000Z",
+  });
+  control.recordUsageEvent({
+    id: "use_billing_invocation_2",
+    projectId: project.id,
+    metric: "invocation",
+    quantity: 1,
+    recordedAt: "2026-07-02T00:00:00.000Z",
+  });
+
+  assert.throws(
+    () =>
+      control.recordUsageEvent({
+        id: "use_billing_cpu_over",
+        projectId: project.id,
+        metric: "cpu_ms",
+        quantity: 21,
+        recordedAt: "2026-07-03T00:00:00.000Z",
+      }),
+    /usage quota exceeded.*cpuMs 101\/100.*2026-07/,
+  );
+  assert.throws(
+    () =>
+      control.recordUsageEvent({
+        id: "use_billing_invocation_over",
+        projectId: project.id,
+        metric: "invocation",
+        quantity: 1,
+        recordedAt: "2026-07-03T00:00:00.000Z",
+      }),
+    /usage quota exceeded.*invocations 3\/2.*2026-07/,
+  );
+
+  assert.deepEqual(control.getProjectUsageQuotaReport({
+    projectId: project.id,
+    at: "2026-07-15T12:00:00.000Z",
+  }), {
+    projectId: project.id,
+    organizationId: organization.id,
+    generatedAt: fixedNow(),
+    period: {
+      kind: "calendar_month",
+      key: "2026-07",
+      from: "2026-07-01T00:00:00.000Z",
+      to: "2026-08-01T00:00:00.000Z",
+    },
+    limits: {
+      period: "calendar_month",
+      invocations: 2,
+      cpuMs: 100,
+    },
+    usage: {
+      invocations: 2,
+      cpuMs: 80,
+      wallMs: 0,
+      memoryMbMs: 0,
+      egressBytes: 0,
+      storageBytes: 0,
+      sqliteUnits: 0,
+    },
+    enforcement: {
+      invocations: { used: 2, limit: 2, remaining: 0, status: "ok" },
+      cpuMs: { used: 80, limit: 100, remaining: 20, status: "ok" },
+      wallMs: { used: 0, status: "unlimited" },
+      memoryMbMs: { used: 0, status: "unlimited" },
+      egressBytes: { used: 0, status: "unlimited" },
+      storageBytes: { used: 0, status: "unlimited" },
+      sqliteUnits: { used: 0, status: "unlimited" },
+    },
+  });
+});
+
 test("async control plane reports per-tenant enforcement status", async () => {
   const control = createAsyncControlPlane({
     repository: asyncRepository(createMemoryRepository()),
@@ -352,6 +463,54 @@ test("async control plane reports per-tenant enforcement status", async () => {
   assert.deepEqual(report.enforcement.storage, { used: 2048, limit: 1024, remaining: 0, status: "exceeded" });
   assert.deepEqual(report.enforcement.concurrency, { limit: 8, status: "configured" });
   assert.deepEqual(report.enforcement.rate, { requestsPerSecond: 50, status: "configured" });
+});
+
+test("async control plane enforces billing usage quotas from usage ledgers", async () => {
+  const control = createAsyncControlPlane({
+    repository: asyncRepository(createMemoryRepository()),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+    projectUsageQuotas: {
+      prj_async_billing_quota: {
+        period: "calendar_month",
+        storageBytes: 1024,
+      },
+    },
+  });
+  const project = await control.createProject({
+    id: "prj_async_billing_quota",
+    name: "async billing quota",
+  });
+
+  await control.recordUsageEvent({
+    id: "use_async_billing_storage",
+    projectId: project.id,
+    metric: "storage_bytes",
+    quantity: 1024,
+    recordedAt: "2026-07-01T00:00:00.000Z",
+  });
+
+  await assert.rejects(
+    () =>
+      control.recordUsageEvent({
+        id: "use_async_billing_storage_over",
+        projectId: project.id,
+        metric: "storage_bytes",
+        quantity: 1,
+        recordedAt: "2026-07-02T00:00:00.000Z",
+      }),
+    /usage quota exceeded.*storageBytes 1025\/1024.*2026-07/,
+  );
+  const report = await control.getProjectUsageQuotaReport({
+    projectId: project.id,
+    at: "2026-07-15T00:00:00.000Z",
+  });
+  assert.deepEqual(report.enforcement.storageBytes, {
+    used: 1024,
+    limit: 1024,
+    remaining: 0,
+    status: "ok",
+  });
 });
 
 test("async control plane manages tenant API keys and usage meters", async () => {

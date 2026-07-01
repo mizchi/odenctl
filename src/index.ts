@@ -82,6 +82,17 @@ export {
   type ProjectEnforcementReport,
 } from "./control-plane/enforcement-report.ts";
 export {
+  createProjectUsageQuotaReport,
+  enforceProjectUsageQuota,
+  projectUsageQuotasFromEnv,
+  usageQuotaPeriodFor,
+  type ProjectUsageQuotaPolicies,
+  type ProjectUsageQuotaPolicy,
+  type ProjectUsageQuotaReport,
+  type UsageQuotaMetric,
+  type UsageQuotaPeriod,
+} from "./control-plane/usage-quota.ts";
+export {
   enforceProjectQuota,
   projectQuotasFromEnv,
 } from "./control-plane/quotas.ts";
