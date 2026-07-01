@@ -582,6 +582,7 @@ Runtime node endpoints:
 - `GET /__runtime/metrics`
 - `GET /__runtime/events`
 - `GET /__runtime/logs`
+- `GET /__runtime/traces`
 - `POST /__runtime/cache/gc`
 - `PUT /__runtime/snapshots/routes`
 - any other path: resolve by `x-forwarded-host` or `host`, prepare the component, then invoke it
@@ -589,9 +590,16 @@ Runtime node endpoints:
 
 `GET /__runtime/metrics` exposes in-memory counters for worker requests, route matches/misses,
 invocations, active/rejected invocation concurrency, response status codes, runtime error codes,
-and loaded route snapshots. `GET /__runtime/events` returns a bounded in-memory list of structured
-worker request events with request id, host/path, project/deployment, status, duration, and error
-code. Worker responses include `x-wasmplane-request-id`.
+and loaded route snapshots. Add `projectId` or `deploymentId` query parameters to return scoped
+metrics for a single project or deployment. `GET /__runtime/events` returns a bounded in-memory list
+of structured worker request events with request id, host/path, project/deployment, status,
+duration, and error code, and accepts the same scope filters. `GET /__runtime/traces` returns recent
+trace contexts for worker requests that carried `traceparent`, also filterable by project or
+deployment. Worker responses include `x-wasmplane-request-id`.
+
+Worker logs can be retained locally through `GET /__runtime/logs?projectId=...&deploymentId=...`
+and streamed to HTTP drains by setting `RUNTIME_LOG_DRAINS` to comma-separated URLs. Optional
+headers use `RUNTIME_LOG_DRAIN_HEADERS` with `name=value` comma-separated entries.
 
 The runtime node enforces `RUNTIME_CONCURRENCY` as the maximum concurrent worker invocations. Extra
 worker requests are rejected with `503 overloaded` and counted in metrics. Set

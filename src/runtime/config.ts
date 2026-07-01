@@ -4,6 +4,8 @@ export interface RuntimeConfigEnv {
   RUNTIME_MEMORY_MB?: string;
   RUNTIME_PROJECT_CONCURRENCY_LIMITS?: string;
   RUNTIME_PROJECT_RATE_LIMITS?: string;
+  RUNTIME_LOG_DRAINS?: string;
+  RUNTIME_LOG_DRAIN_HEADERS?: string;
   RUNTIME_REGION?: string;
   RUNTIME_LABELS?: string;
   RUNTIME_SHUTDOWN_DRAIN_TIMEOUT_MS?: string;
@@ -23,6 +25,11 @@ export interface RuntimeConfigEnv {
 export interface ProjectRateLimitConfig {
   requestsPerSecond: number;
   burst?: number;
+}
+
+export interface RuntimeLogDrainConfig {
+  url: string;
+  headers?: Record<string, string>;
 }
 
 export interface RuntimeAdvertisedIdentity {
@@ -188,6 +195,51 @@ export function parseProjectRateLimits(env: RuntimeConfigEnv): Record<string, Pr
     limits[projectId] = burst === undefined ? { requestsPerSecond } : { requestsPerSecond, burst };
   }
   return Object.keys(limits).length > 0 ? limits : undefined;
+}
+
+export function parseRuntimeLogDrains(env: RuntimeConfigEnv): RuntimeLogDrainConfig[] | undefined {
+  const raw = env.RUNTIME_LOG_DRAINS;
+  if (!raw || raw.trim().length === 0) {
+    return undefined;
+  }
+  const headers = parseHeaderMap(env.RUNTIME_LOG_DRAIN_HEADERS);
+  const drains = raw.split(",")
+    .map((value) => value.trim())
+    .flatMap((url) => runtimeLogDrainUrl(url)
+      ? [{
+        url,
+        ...(Object.keys(headers).length > 0 ? { headers } : {}),
+      }]
+      : []);
+  return drains.length > 0 ? drains : undefined;
+}
+
+function parseHeaderMap(raw: string | undefined): Record<string, string> {
+  if (!raw || raw.trim().length === 0) {
+    return {};
+  }
+  const headers: Record<string, string> = {};
+  for (const item of raw.split(",")) {
+    const separator = item.indexOf("=");
+    if (separator <= 0) {
+      continue;
+    }
+    const key = item.slice(0, separator).trim().toLowerCase();
+    const value = item.slice(separator + 1).trim();
+    if (key.length > 0) {
+      headers[key] = value;
+    }
+  }
+  return headers;
+}
+
+function runtimeLogDrainUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
 }
 
 function positiveInteger(value: string | undefined, fallback: number): number {

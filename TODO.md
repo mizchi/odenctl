@@ -244,7 +244,7 @@ Production readiness tasks, in implementation order.
 - [x] Add `wasmplane dev` with local runtime, WIT validation, log tailing, and route preview.
 - [x] Add worker templates and generated WIT SDK helpers for common languages.
 - [x] Add deployment diff output for routes, capabilities, secrets, KV bindings, and runtime limits.
-- [ ] Add project/deployment scoped metrics, logs, traces, and log drain configuration.
+- [x] Add project/deployment scoped metrics, logs, traces, and log drain configuration.
 
 ## 32. Runtime packing and isolation
 

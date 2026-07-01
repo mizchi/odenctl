@@ -17,6 +17,7 @@ import {
   parseRuntimeCacheRetentionPolicy,
   parseRuntimeIdentityKeys,
   parseRuntimeLabels,
+  parseRuntimeLogDrains,
   parseRuntimeShutdownDrainTimeoutMs,
   resolveRuntimeRouteSnapshotFile,
   resolveRuntimeIdentity,
@@ -67,6 +68,7 @@ const secretCipher = await createConfiguredSecretCipherAsync({ env: process.env 
 const runtimeConcurrency = Number.parseInt(process.env.RUNTIME_CONCURRENCY ?? "128", 10);
 const projectConcurrencyLimits = parseProjectConcurrencyLimits(process.env);
 const projectRateLimits = parseProjectRateLimits(process.env);
+const runtimeLogDrains = parseRuntimeLogDrains(process.env);
 const warmupOnSnapshot = process.env.RUNTIME_SNAPSHOT_WARMUP === "1";
 const warmupConcurrency = Number.parseInt(process.env.RUNTIME_SNAPSHOT_WARMUP_CONCURRENCY ?? "4", 10);
 const otlpTraceEndpoint =
@@ -131,6 +133,7 @@ const app = createRuntimeNodeApp({
   maxConcurrentInvocations: runtimeConcurrency,
   maxConcurrentInvocationsByProject: projectConcurrencyLimits,
   requestRateLimitsByProject: projectRateLimits,
+  logDrains: runtimeLogDrains,
   cacheRetention: {
     artifactCacheDir,
     precompiledCacheDir: cacheDir,

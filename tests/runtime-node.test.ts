@@ -1419,6 +1419,98 @@ test("runtime node stores bounded redacted worker logs", async () => {
   }
 });
 
+test("runtime node exposes scoped metrics events traces and sends log drains", async () => {
+  const apiRoute = route("dep_api", "api.example.dev", "/", digest("api"));
+  apiRoute.projectId = "prj_api";
+  const adminRoute = route("dep_admin", "admin.example.dev", "/", digest("admin"));
+  adminRoute.projectId = "prj_admin";
+  const drainPosts: Array<{ url: string; headers: Record<string, string>; body: any }> = [];
+  let nowMs = 100;
+  const app = createRuntimeNodeApp({
+    supervisor: createRuntimeSupervisor({
+      snapshot: snapshot([apiRoute, adminRoute]),
+      artifactStore: materializedArtifactStore(),
+      backend: compiledBackend(),
+    }),
+    now: fixedNow,
+    monotonicNowMs() {
+      return nowMs;
+    },
+    requestIdGenerator() {
+      return `req_${drainPosts.length + 1}`;
+    },
+    logDrains: [{
+      url: "https://logs.example.dev/ingest",
+      headers: { "x-drain-token": "secret" },
+      fetch: async (url, init) => {
+        drainPosts.push({
+          url,
+          headers: init?.headers as Record<string, string>,
+          body: JSON.parse(String(init?.body)),
+        });
+        return new Response("ok", { status: 202 });
+      },
+    }],
+    invoker: {
+      async invoke(request) {
+        return {
+          status: request.component.deploymentId === "dep_api" ? 200 : 204,
+          headers: [],
+          body: Buffer.from("ok"),
+          logs: [{ level: "info", message: `served ${request.component.deploymentId}` }],
+        };
+      },
+    },
+  });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+    await fetch(`${baseUrl}/api`, {
+      headers: { "x-forwarded-host": "api.example.dev", traceparent },
+    });
+    await fetch(`${baseUrl}/admin`, {
+      headers: { "x-forwarded-host": "admin.example.dev" },
+    });
+
+    const projectMetrics = await (await fetch(`${baseUrl}/__runtime/metrics?projectId=prj_api`)).json();
+    assert.deepEqual(projectMetrics.scope, { projectId: "prj_api" });
+    assert.deepEqual(projectMetrics.requests, { total: 1, matched: 1, missed: 0 });
+    assert.deepEqual(projectMetrics.responses.byStatus, { "200": 1 });
+
+    const deploymentMetrics = await (await fetch(`${baseUrl}/__runtime/metrics?deploymentId=dep_admin`)).json();
+    assert.deepEqual(deploymentMetrics.scope, { deploymentId: "dep_admin" });
+    assert.deepEqual(deploymentMetrics.requests, { total: 1, matched: 1, missed: 0 });
+    assert.deepEqual(deploymentMetrics.responses.byStatus, { "204": 1 });
+
+    const events = await (await fetch(`${baseUrl}/__runtime/events?projectId=prj_api`)).json();
+    assert.deepEqual(events.events.map((event: any) => event.deploymentId), ["dep_api"]);
+
+    const traces = await (await fetch(`${baseUrl}/__runtime/traces?deploymentId=dep_api`)).json();
+    assert.deepEqual(traces.traces, [{
+      timestamp: fixedNow(),
+      requestId: "req_1",
+      projectId: "prj_api",
+      deploymentId: "dep_api",
+      traceparent,
+      status: 200,
+      durationMs: 0,
+    }]);
+
+    assert.equal(drainPosts.length, 2);
+    assert.equal(drainPosts[0].url, "https://logs.example.dev/ingest");
+    assert.equal(drainPosts[0].headers["x-drain-token"], "secret");
+    assert.deepEqual(drainPosts[0].body.logs.map((log: any) => log.deploymentId), ["dep_api"]);
+    assert.deepEqual(drainPosts[1].body.logs.map((log: any) => log.deploymentId), ["dep_admin"]);
+  } finally {
+    await app.close();
+  }
+});
+
 test("runtime node rejects worker invocations over the configured concurrency limit", async () => {
   const supervisor = createRuntimeSupervisor({
     snapshot: snapshot([route("dep_limited", "hello.example.dev", "/", digest("limited"))]),

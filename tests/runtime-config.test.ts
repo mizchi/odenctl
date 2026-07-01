@@ -7,6 +7,7 @@ import {
   parseRuntimeCacheRetentionPolicy,
   parseRuntimeIdentityKeys,
   parseRuntimeLabels,
+  parseRuntimeLogDrains,
   parseRuntimeShutdownDrainTimeoutMs,
   resolveRuntimeRouteSnapshotFile,
   resolveRuntimeIdentity,
@@ -96,6 +97,26 @@ test("runtime config parses per-project request rate limits", () => {
     },
   );
   assert.equal(parseProjectRateLimits({}), undefined);
+});
+
+test("runtime config parses log drain targets", () => {
+  assert.deepEqual(
+    parseRuntimeLogDrains({
+      RUNTIME_LOG_DRAINS: "https://logs.example.dev/ingest, https://backup.example.dev/logs , invalid",
+      RUNTIME_LOG_DRAIN_HEADERS: "authorization=Bearer token,x-scope=runtime,broken",
+    }),
+    [
+      {
+        url: "https://logs.example.dev/ingest",
+        headers: { authorization: "Bearer token", "x-scope": "runtime" },
+      },
+      {
+        url: "https://backup.example.dev/logs",
+        headers: { authorization: "Bearer token", "x-scope": "runtime" },
+      },
+    ],
+  );
+  assert.equal(parseRuntimeLogDrains({}), undefined);
 });
 
 test("runtime config parses cache retention policy", () => {

@@ -48,6 +48,7 @@ export interface RuntimeNodeAppOptions {
   monotonicNowMs?: () => number;
   eventBufferSize?: number;
   logBufferSize?: number;
+  logDrains?: RuntimeLogDrain[];
   telemetry?: RuntimeTelemetry;
   warmupOnSnapshot?: boolean;
   hostDaemonMetrics?: RuntimeHostDaemonMetricsOptions;
@@ -74,6 +75,12 @@ export interface RuntimeHostDaemonMetricsOptions {
 export interface RuntimeProjectRateLimit {
   requestsPerSecond: number;
   burst?: number;
+}
+
+export interface RuntimeLogDrain {
+  url: string;
+  headers?: Record<string, string>;
+  fetch?: typeof fetch;
 }
 
 export interface RuntimeNodeSupervisor {
@@ -148,17 +155,25 @@ export function createRuntimeNodeApp(options: RuntimeNodeAppOptions) {
       }
 
       if (method === "GET" && url.pathname === "/__runtime/metrics") {
-        const snapshot = metrics.snapshot();
-        const hostDaemon = await readHostDaemonMetrics(options.hostDaemonMetrics);
-        if (hostDaemon) {
-          snapshot.hostDaemon = hostDaemon;
+        const filter = runtimeScopeFilter(url);
+        const snapshot = metrics.snapshot(filter);
+        if (!filter.projectId && !filter.deploymentId) {
+          const hostDaemon = await readHostDaemonMetrics(options.hostDaemonMetrics);
+          if (hostDaemon) {
+            snapshot.hostDaemon = hostDaemon;
+          }
         }
         writeJson(response, 200, snapshot);
         return;
       }
 
       if (method === "GET" && url.pathname === "/__runtime/events") {
-        writeJson(response, 200, events.snapshot());
+        writeJson(response, 200, events.snapshot(runtimeScopeFilter(url)));
+        return;
+      }
+
+      if (method === "GET" && url.pathname === "/__runtime/traces") {
+        writeJson(response, 200, events.traceSnapshot(runtimeScopeFilter(url)));
         return;
       }
 
@@ -235,7 +250,7 @@ export function createRuntimeNodeApp(options: RuntimeNodeAppOptions) {
       routeMatched = true;
       eventProjectId = prepared.projectId;
       eventDeploymentId = prepared.deploymentId;
-      metrics.recordRouteMatch();
+      metrics.recordRouteMatch(runtimeScope(eventProjectId, eventDeploymentId));
       if (!projectRateLimiter.tryConsume(prepared.projectId)) {
         throw new RuntimeError("rate_limited", "runtime node project request rate limit exceeded");
       }
@@ -245,10 +260,10 @@ export function createRuntimeNodeApp(options: RuntimeNodeAppOptions) {
         enforceRuntimeCapabilities(component.capabilities);
         const projectInvocation = projectConcurrency.tryStart(component.projectId);
         if (!projectInvocation.acquired) {
-          metrics.recordInvocationRejected();
+          metrics.recordInvocationRejected(runtimeScope(eventProjectId, eventDeploymentId));
           throw new RuntimeError("overloaded", "runtime node project concurrency limit exceeded");
         }
-        if (!metrics.tryStartInvocation(options.maxConcurrentInvocations)) {
+        if (!metrics.tryStartInvocation(options.maxConcurrentInvocations, runtimeScope(eventProjectId, eventDeploymentId))) {
           projectInvocation.release();
           throw new RuntimeError("overloaded", "runtime node concurrency limit exceeded");
         }
@@ -267,7 +282,7 @@ export function createRuntimeNodeApp(options: RuntimeNodeAppOptions) {
             component.limits?.wallMs,
           );
           enforceResponseBytes(component, invocation);
-          logs.recordInvocationLogs({
+          const drainedLogs = logs.recordInvocationLogs({
             timestamp: now(),
             requestId,
             host: eventHost,
@@ -279,21 +294,22 @@ export function createRuntimeNodeApp(options: RuntimeNodeAppOptions) {
               .map((secret) => secret.value)
               .filter((value): value is string => typeof value === "string" && value.length > 0) ?? [],
           });
+          await sendLogDrains(options.logDrains, drainedLogs);
           invocationSettled = true;
-          metrics.recordInvocationSuccess();
-          metrics.recordResponse(invocation.status);
+          metrics.recordInvocationSuccess(runtimeScope(eventProjectId, eventDeploymentId));
+          metrics.recordResponse(invocation.status, runtimeScope(eventProjectId, eventDeploymentId));
           eventStatus = invocation.status;
           writeInvocationResponse(response, component, invocation, requestId);
         } finally {
           finishInvocationDrain();
-          metrics.recordInvocationEnd();
+          metrics.recordInvocationEnd(runtimeScope(eventProjectId, eventDeploymentId));
           projectInvocation.release();
         }
         return;
       }
 
-      metrics.recordError("invoke_not_implemented");
-      metrics.recordResponse(501);
+      metrics.recordError("invoke_not_implemented", runtimeScope(eventProjectId, eventDeploymentId));
+      metrics.recordResponse(501, runtimeScope(eventProjectId, eventDeploymentId));
       eventStatus = 501;
       eventErrorCode = "invoke_not_implemented";
       response.writeHead(501, {
@@ -321,10 +337,10 @@ export function createRuntimeNodeApp(options: RuntimeNodeAppOptions) {
           metrics.recordRouteMiss();
         }
         if (invocationStarted && !invocationSettled) {
-          metrics.recordInvocationFailure();
+          metrics.recordInvocationFailure(runtimeScope(eventProjectId, eventDeploymentId));
         }
-        metrics.recordError(errorResponse.code);
-        metrics.recordResponse(errorResponse.status);
+        metrics.recordError(errorResponse.code, runtimeScope(eventProjectId, eventDeploymentId));
+        metrics.recordResponse(errorResponse.status, runtimeScope(eventProjectId, eventDeploymentId));
       }
       writeJson(response, errorResponse.status, {
         error: { code: errorResponse.code, message: errorResponse.message },
@@ -342,6 +358,7 @@ export function createRuntimeNodeApp(options: RuntimeNodeAppOptions) {
           status: eventStatus,
           durationMs,
           errorCode: eventErrorCode,
+          traceparent: eventTraceparent,
         });
         if (options.telemetry && eventMethod) {
           void options.telemetry.recordWorkerRequest({
@@ -626,6 +643,7 @@ function authorizeRuntimeManagement(
 
 interface RuntimeMetricsSnapshot {
   startedAt: string;
+  scope?: RuntimeMetricScope;
   requests: {
     total: number;
     matched: number;
@@ -651,6 +669,11 @@ interface RuntimeMetricsSnapshot {
   hostDaemon?: unknown;
 }
 
+interface RuntimeMetricScope {
+  projectId?: string;
+  deploymentId?: string;
+}
+
 interface RuntimeEvent {
   timestamp: string;
   requestId: string;
@@ -661,10 +684,26 @@ interface RuntimeEvent {
   status: number;
   durationMs: number;
   errorCode?: string;
+  traceparent?: string;
 }
 
 interface RuntimeEventsSnapshot {
   events: RuntimeEvent[];
+}
+
+interface RuntimeTracesSnapshot {
+  traces: RuntimeTraceEntry[];
+}
+
+interface RuntimeTraceEntry {
+  timestamp: string;
+  requestId: string;
+  projectId?: string;
+  deploymentId?: string;
+  traceparent: string;
+  status: number;
+  durationMs: number;
+  errorCode?: string;
 }
 
 interface RuntimeLogEntry {
@@ -683,64 +722,91 @@ interface RuntimeLogsSnapshot {
 }
 
 function createRuntimeMetrics(now: () => string) {
-  const metrics: RuntimeMetricsSnapshot = {
-    startedAt: now(),
-    requests: { total: 0, matched: 0, missed: 0 },
-    invocations: { total: 0, succeeded: 0, failed: 0, active: 0, rejected: 0 },
-    responses: { byStatus: {} },
-    errors: {},
-    snapshots: { loaded: 0 },
-  };
+  const startedAt = now();
+  const metrics = createMetricCounters(startedAt);
+  const projectMetrics = new Map<string, RuntimeMetricsSnapshot>();
+  const deploymentMetrics = new Map<string, RuntimeMetricsSnapshot>();
 
   return {
-    snapshot(): RuntimeMetricsSnapshot {
-      return {
-        startedAt: metrics.startedAt,
-        requests: { ...metrics.requests },
-        invocations: { ...metrics.invocations },
-        responses: { byStatus: { ...metrics.responses.byStatus } },
-        errors: { ...metrics.errors },
-        snapshots: { ...metrics.snapshots },
-      };
+    snapshot(scope: RuntimeMetricScope = {}): RuntimeMetricsSnapshot {
+      if (scope.deploymentId) {
+        return cloneMetricCounters(
+          deploymentMetrics.get(scope.deploymentId) ?? createMetricCounters(startedAt),
+          stripUndefined({ projectId: scope.projectId, deploymentId: scope.deploymentId }),
+        );
+      }
+      if (scope.projectId) {
+        return cloneMetricCounters(
+          projectMetrics.get(scope.projectId) ?? createMetricCounters(startedAt),
+          { projectId: scope.projectId },
+        );
+      }
+      return cloneMetricCounters(metrics);
     },
     recordRequest() {
       metrics.requests.total += 1;
     },
-    recordRouteMatch() {
+    recordRouteMatch(scope: RuntimeMetricScope = {}) {
       metrics.requests.matched += 1;
+      recordScopedMetric(scope, projectMetrics, deploymentMetrics, startedAt, (scoped) => {
+        scoped.requests.total += 1;
+        scoped.requests.matched += 1;
+      });
     },
     recordRouteMiss() {
       metrics.requests.missed += 1;
     },
-    tryStartInvocation(maxConcurrent: number | undefined): boolean {
+    tryStartInvocation(maxConcurrent: number | undefined, scope: RuntimeMetricScope = {}): boolean {
       if (maxConcurrent !== undefined) {
         metrics.invocations.maxConcurrent = maxConcurrent;
         if (metrics.invocations.active >= maxConcurrent) {
-          this.recordInvocationRejected();
+          this.recordInvocationRejected(scope);
           return false;
         }
       }
       metrics.invocations.total += 1;
       metrics.invocations.active += 1;
+      recordScopedMetric(scope, projectMetrics, deploymentMetrics, startedAt, (scoped) => {
+        scoped.invocations.total += 1;
+        scoped.invocations.active += 1;
+      });
       return true;
     },
-    recordInvocationRejected() {
+    recordInvocationRejected(scope: RuntimeMetricScope = {}) {
       metrics.invocations.rejected += 1;
+      recordScopedMetric(scope, projectMetrics, deploymentMetrics, startedAt, (scoped) => {
+        scoped.invocations.rejected += 1;
+      });
     },
-    recordInvocationEnd() {
+    recordInvocationEnd(scope: RuntimeMetricScope = {}) {
       metrics.invocations.active = Math.max(0, metrics.invocations.active - 1);
+      recordScopedMetric(scope, projectMetrics, deploymentMetrics, startedAt, (scoped) => {
+        scoped.invocations.active = Math.max(0, scoped.invocations.active - 1);
+      });
     },
-    recordInvocationSuccess() {
+    recordInvocationSuccess(scope: RuntimeMetricScope = {}) {
       metrics.invocations.succeeded += 1;
+      recordScopedMetric(scope, projectMetrics, deploymentMetrics, startedAt, (scoped) => {
+        scoped.invocations.succeeded += 1;
+      });
     },
-    recordInvocationFailure() {
+    recordInvocationFailure(scope: RuntimeMetricScope = {}) {
       metrics.invocations.failed += 1;
+      recordScopedMetric(scope, projectMetrics, deploymentMetrics, startedAt, (scoped) => {
+        scoped.invocations.failed += 1;
+      });
     },
-    recordResponse(status: number) {
+    recordResponse(status: number, scope: RuntimeMetricScope = {}) {
       increment(metrics.responses.byStatus, String(status));
+      recordScopedMetric(scope, projectMetrics, deploymentMetrics, startedAt, (scoped) => {
+        increment(scoped.responses.byStatus, String(status));
+      });
     },
-    recordError(code: string) {
+    recordError(code: string, scope: RuntimeMetricScope = {}) {
       increment(metrics.errors, code);
+      recordScopedMetric(scope, projectMetrics, deploymentMetrics, startedAt, (scoped) => {
+        increment(scoped.errors, code);
+      });
     },
     recordSnapshot(snapshot: RouteSnapshot) {
       metrics.snapshots = {
@@ -750,6 +816,58 @@ function createRuntimeMetrics(now: () => string) {
       };
     },
   };
+}
+
+function createMetricCounters(startedAt: string): RuntimeMetricsSnapshot {
+  return {
+    startedAt,
+    requests: { total: 0, matched: 0, missed: 0 },
+    invocations: { total: 0, succeeded: 0, failed: 0, active: 0, rejected: 0 },
+    responses: { byStatus: {} },
+    errors: {},
+    snapshots: { loaded: 0 },
+  };
+}
+
+function cloneMetricCounters(metrics: RuntimeMetricsSnapshot, scope?: RuntimeMetricScope): RuntimeMetricsSnapshot {
+  return stripUndefined({
+    startedAt: metrics.startedAt,
+    scope,
+    requests: { ...metrics.requests },
+    invocations: { ...metrics.invocations },
+    responses: { byStatus: { ...metrics.responses.byStatus } },
+    errors: { ...metrics.errors },
+    snapshots: { ...metrics.snapshots },
+  });
+}
+
+function recordScopedMetric(
+  scope: RuntimeMetricScope,
+  projectMetrics: Map<string, RuntimeMetricsSnapshot>,
+  deploymentMetrics: Map<string, RuntimeMetricsSnapshot>,
+  startedAt: string,
+  update: (metrics: RuntimeMetricsSnapshot) => void,
+) {
+  if (scope.projectId) {
+    update(metricScope(projectMetrics, scope.projectId, startedAt));
+  }
+  if (scope.deploymentId) {
+    update(metricScope(deploymentMetrics, scope.deploymentId, startedAt));
+  }
+}
+
+function metricScope(
+  metrics: Map<string, RuntimeMetricsSnapshot>,
+  id: string,
+  startedAt: string,
+): RuntimeMetricsSnapshot {
+  const existing = metrics.get(id);
+  if (existing) {
+    return existing;
+  }
+  const created = createMetricCounters(startedAt);
+  metrics.set(id, created);
+  return created;
 }
 
 function createRuntimeLogs(limit: number) {
@@ -774,13 +892,14 @@ function createRuntimeLogs(limit: number) {
       deploymentId?: string;
       lines?: RuntimeWorkerLogLine[];
       secretValues: string[];
-    }) {
+    }): RuntimeLogEntry[] {
+      const recorded: RuntimeLogEntry[] = [];
       for (const line of input.lines ?? []) {
         const message = typeof line.message === "string" ? line.message : "";
         if (message.length === 0) {
           continue;
         }
-        entries.push(stripUndefined({
+        const entry = stripUndefined({
           timestamp: input.timestamp,
           requestId: input.requestId,
           host: input.host,
@@ -789,11 +908,14 @@ function createRuntimeLogs(limit: number) {
           deploymentId: input.deploymentId,
           level: normalizeLogLevel(line.level),
           message: redactLogMessage(message, input.secretValues),
-        }));
+        });
+        entries.push(entry);
+        recorded.push(entry);
         while (entries.length > boundedLimit) {
           entries.shift();
         }
       }
+      return recorded;
     },
   };
 }
@@ -803,8 +925,26 @@ function createRuntimeEvents(limit: number) {
   const boundedLimit = Math.max(1, limit);
 
   return {
-    snapshot(): RuntimeEventsSnapshot {
-      return { events: [...events] };
+    snapshot(filter: RuntimeMetricScope = {}): RuntimeEventsSnapshot {
+      return { events: events.filter((event) => matchesRuntimeScope(event, filter)) };
+    },
+    traceSnapshot(filter: RuntimeMetricScope = {}): RuntimeTracesSnapshot {
+      return {
+        traces: events
+          .filter((event) => event.traceparent && matchesRuntimeScope(event, filter))
+          .map((event) =>
+            stripUndefined({
+              timestamp: event.timestamp,
+              requestId: event.requestId,
+              projectId: event.projectId,
+              deploymentId: event.deploymentId,
+              traceparent: event.traceparent as string,
+              status: event.status,
+              durationMs: event.durationMs,
+              errorCode: event.errorCode,
+            })
+          ),
+      };
     },
     record(event: RuntimeEvent) {
       events.push(stripUndefined(event));
@@ -813,6 +953,42 @@ function createRuntimeEvents(limit: number) {
       }
     },
   };
+}
+
+function runtimeScope(projectId: string | undefined, deploymentId: string | undefined): RuntimeMetricScope {
+  return stripUndefined({ projectId, deploymentId });
+}
+
+function runtimeScopeFilter(url: URL): RuntimeMetricScope {
+  return stripUndefined({
+    projectId: url.searchParams.get("projectId") ?? undefined,
+    deploymentId: url.searchParams.get("deploymentId") ?? undefined,
+  });
+}
+
+function matchesRuntimeScope(
+  entry: { projectId?: string; deploymentId?: string },
+  filter: RuntimeMetricScope,
+): boolean {
+  return (!filter.projectId || entry.projectId === filter.projectId)
+    && (!filter.deploymentId || entry.deploymentId === filter.deploymentId);
+}
+
+async function sendLogDrains(drains: RuntimeLogDrain[] | undefined, logs: RuntimeLogEntry[]) {
+  if (!drains || drains.length === 0 || logs.length === 0) {
+    return;
+  }
+  await Promise.allSettled(drains.map(async (drain) => {
+    const fetchImpl = drain.fetch ?? fetch;
+    await fetchImpl(drain.url, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...(drain.headers ?? {}),
+      },
+      body: JSON.stringify({ logs }),
+    });
+  }));
 }
 
 function normalizeLogLevel(value: RuntimeWorkerLogLine["level"]): RuntimeLogEntry["level"] {
