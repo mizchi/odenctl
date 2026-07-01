@@ -22,16 +22,22 @@ export {
 export {
   createAesGcmSecretCipher,
   createAwsKmsSecretKeyProvider,
+  createAzureKeyVaultSecretKeyProvider,
   createCommandSecretKeyProvider,
   createConfiguredSecretCipher,
   createConfiguredSecretCipherAsync,
+  createGcpKmsSecretKeyProvider,
   createKeyringSecretCipher,
   createSecretCipherFromKeyProvider,
   createStaticSecretKeyProvider,
+  type AzureKeyVaultSecretKeyProviderOptions,
+  type AzureKeyVaultWrappedSecretDataKey,
   type AwsKmsCredentials,
   type AwsKmsSecretKeyProviderOptions,
   type AwsKmsWrappedSecretDataKey,
   type ConfiguredSecretCipherOptions,
+  type GcpKmsSecretKeyProviderOptions,
+  type GcpKmsWrappedSecretDataKey,
   isEncryptedSecretValue,
 } from "./control-plane/secret-encryption.ts";
 export {

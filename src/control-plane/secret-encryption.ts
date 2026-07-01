@@ -64,9 +64,50 @@ export interface AwsKmsSecretKeyProviderOptions {
   now?: () => Date;
 }
 
+export interface GcpKmsWrappedSecretDataKey {
+  keyId: string;
+  ciphertext: Buffer | Uint8Array;
+  cryptoKeyName: string;
+  additionalAuthenticatedData?: Buffer | Uint8Array;
+}
+
+export interface GcpKmsSecretKeyProviderOptions {
+  wrappedKeys: GcpKmsWrappedSecretDataKey[];
+  primaryKeyId?: string;
+  endpoint?: string;
+  accessToken?: string;
+  getAccessToken?: () => string | Promise<string>;
+  fetch?: typeof fetch;
+}
+
+export interface AzureKeyVaultWrappedSecretDataKey {
+  keyId: string;
+  ciphertext: Buffer | Uint8Array;
+  vaultUrl: string;
+  keyName: string;
+  keyVersion: string;
+  algorithm: string;
+  aad?: Buffer | Uint8Array;
+  iv?: Buffer | Uint8Array;
+  tag?: Buffer | Uint8Array;
+}
+
+export interface AzureKeyVaultSecretKeyProviderOptions {
+  wrappedKeys: AzureKeyVaultWrappedSecretDataKey[];
+  primaryKeyId?: string;
+  apiVersion?: string;
+  accessToken?: string;
+  getAccessToken?: () => string | Promise<string>;
+  fetch?: typeof fetch;
+}
+
 export interface ConfiguredSecretCipherOptions {
   env?: Record<string, string | undefined>;
   awsKms?: Partial<Pick<AwsKmsSecretKeyProviderOptions, "credentials" | "endpoint" | "fetch" | "now">>;
+  gcpKms?: Partial<Pick<GcpKmsSecretKeyProviderOptions, "accessToken" | "endpoint" | "fetch" | "getAccessToken">>;
+  azureKeyVault?: Partial<
+    Pick<AzureKeyVaultSecretKeyProviderOptions, "accessToken" | "apiVersion" | "fetch" | "getAccessToken">
+  >;
 }
 
 const envelopePrefix = "wasmplane:v1:aes-256-gcm:";
@@ -217,10 +258,99 @@ export async function createAwsKmsSecretKeyProvider(
   return createStaticSecretKeyProvider({ primaryKey, decryptKeys: keys });
 }
 
+export async function createGcpKmsSecretKeyProvider(
+  options: GcpKmsSecretKeyProviderOptions,
+): Promise<SecretKeyProvider> {
+  if (options.wrappedKeys.length === 0) {
+    throw new ControlPlaneError("validation", "GCP KMS secret key provider requires wrapped keys");
+  }
+  const fetchImpl = options.fetch ?? globalThis.fetch;
+  if (!fetchImpl) {
+    throw new ControlPlaneError("validation", "GCP KMS secret key provider requires fetch");
+  }
+  const accessToken = await resolveAccessToken(
+    options.accessToken,
+    options.getAccessToken,
+    "GCP KMS",
+  );
+  const keys: SecretDataKey[] = [];
+  for (const wrappedKey of options.wrappedKeys) {
+    const keyId = nonEmptyString(wrappedKey.keyId, "GCP KMS wrapped key id");
+    const key = await decryptGcpKmsDataKey({
+      endpoint: options.endpoint,
+      accessToken,
+      fetch: fetchImpl,
+      wrappedKey: {
+        keyId,
+        ciphertext: Buffer.from(wrappedKey.ciphertext),
+        cryptoKeyName: nonEmptyString(wrappedKey.cryptoKeyName, `GCP KMS wrapped key ${keyId} cryptoKeyName`),
+        additionalAuthenticatedData: wrappedKey.additionalAuthenticatedData
+          ? Buffer.from(wrappedKey.additionalAuthenticatedData)
+          : undefined,
+      },
+    });
+    keys.push({ keyId, key });
+  }
+  const primaryKeyId = options.primaryKeyId?.trim();
+  const primaryKey = primaryKeyId
+    ? keys.find((key) => key.keyId === primaryKeyId)
+    : keys[0];
+  if (!primaryKey) {
+    throw new ControlPlaneError("validation", `GCP KMS primary key ${primaryKeyId} was not returned`);
+  }
+  return createStaticSecretKeyProvider({ primaryKey, decryptKeys: keys });
+}
+
+export async function createAzureKeyVaultSecretKeyProvider(
+  options: AzureKeyVaultSecretKeyProviderOptions,
+): Promise<SecretKeyProvider> {
+  if (options.wrappedKeys.length === 0) {
+    throw new ControlPlaneError("validation", "Azure Key Vault secret key provider requires wrapped keys");
+  }
+  const fetchImpl = options.fetch ?? globalThis.fetch;
+  if (!fetchImpl) {
+    throw new ControlPlaneError("validation", "Azure Key Vault secret key provider requires fetch");
+  }
+  const accessToken = await resolveAccessToken(
+    options.accessToken,
+    options.getAccessToken,
+    "Azure Key Vault",
+  );
+  const keys: SecretDataKey[] = [];
+  for (const wrappedKey of options.wrappedKeys) {
+    const keyId = nonEmptyString(wrappedKey.keyId, "Azure Key Vault wrapped key id");
+    const key = await decryptAzureKeyVaultDataKey({
+      apiVersion: options.apiVersion ?? "2025-07-01",
+      accessToken,
+      fetch: fetchImpl,
+      wrappedKey: {
+        keyId,
+        ciphertext: Buffer.from(wrappedKey.ciphertext),
+        vaultUrl: nonEmptyString(wrappedKey.vaultUrl, `Azure Key Vault wrapped key ${keyId} vaultUrl`),
+        keyName: nonEmptyString(wrappedKey.keyName, `Azure Key Vault wrapped key ${keyId} keyName`),
+        keyVersion: nonEmptyString(wrappedKey.keyVersion, `Azure Key Vault wrapped key ${keyId} keyVersion`),
+        algorithm: nonEmptyString(wrappedKey.algorithm, `Azure Key Vault wrapped key ${keyId} algorithm`),
+        aad: wrappedKey.aad ? Buffer.from(wrappedKey.aad) : undefined,
+        iv: wrappedKey.iv ? Buffer.from(wrappedKey.iv) : undefined,
+        tag: wrappedKey.tag ? Buffer.from(wrappedKey.tag) : undefined,
+      },
+    });
+    keys.push({ keyId, key });
+  }
+  const primaryKeyId = options.primaryKeyId?.trim();
+  const primaryKey = primaryKeyId
+    ? keys.find((key) => key.keyId === primaryKeyId)
+    : keys[0];
+  if (!primaryKey) {
+    throw new ControlPlaneError("validation", `Azure Key Vault primary key ${primaryKeyId} was not returned`);
+  }
+  return createStaticSecretKeyProvider({ primaryKey, decryptKeys: keys });
+}
+
 export function createConfiguredSecretCipher(
   env: Record<string, string | undefined> = process.env,
 ): SecretCipher | undefined {
-  if (isAwsKmsConfigured(env)) {
+  if (isCloudKmsConfigured(env)) {
     throw new ControlPlaneError(
       "validation",
       "cloud KMS secret providers require createConfiguredSecretCipherAsync",
@@ -246,8 +376,17 @@ export async function createConfiguredSecretCipherAsync(
 ): Promise<SecretCipher | undefined> {
   const resolved = resolveConfiguredSecretCipherOptions(options);
   const env = resolved.env ?? process.env;
-  if (isAwsKmsConfigured(env)) {
+  const cloudProvider = configuredCloudKmsProvider(env);
+  if (cloudProvider === "aws") {
     const provider = await createConfiguredAwsKmsSecretKeyProvider(env, resolved.awsKms);
+    return createSecretCipherFromKeyProvider(provider);
+  }
+  if (cloudProvider === "gcp") {
+    const provider = await createConfiguredGcpKmsSecretKeyProvider(env, resolved.gcpKms);
+    return createSecretCipherFromKeyProvider(provider);
+  }
+  if (cloudProvider === "azure") {
+    const provider = await createConfiguredAzureKeyVaultSecretKeyProvider(env, resolved.azureKeyVault);
     return createSecretCipherFromKeyProvider(provider);
   }
   return createConfiguredSecretCipher(env);
@@ -281,6 +420,36 @@ async function createConfiguredAwsKmsSecretKeyProvider(
     credentials: overrides.credentials ?? awsKmsCredentialsFromEnv(env),
     fetch: overrides.fetch,
     now: overrides.now,
+    wrappedKeys: parsed.keys,
+  });
+}
+
+async function createConfiguredGcpKmsSecretKeyProvider(
+  env: Record<string, string | undefined>,
+  overrides: ConfiguredSecretCipherOptions["gcpKms"] = {},
+): Promise<SecretKeyProvider> {
+  const parsed = parseGcpKmsWrappedKeysEnv(firstNonEmpty(env.WASMPLANE_SECRET_KMS_GCP_WRAPPED_KEYS));
+  return createGcpKmsSecretKeyProvider({
+    primaryKeyId: firstNonEmpty(env.WASMPLANE_SECRET_KMS_KEY_ID, parsed.primaryKeyId),
+    endpoint: overrides.endpoint ?? firstNonEmpty(env.WASMPLANE_SECRET_KMS_GCP_ENDPOINT),
+    accessToken: overrides.accessToken ?? firstNonEmpty(env.WASMPLANE_SECRET_KMS_GCP_ACCESS_TOKEN),
+    getAccessToken: overrides.getAccessToken,
+    fetch: overrides.fetch,
+    wrappedKeys: parsed.keys,
+  });
+}
+
+async function createConfiguredAzureKeyVaultSecretKeyProvider(
+  env: Record<string, string | undefined>,
+  overrides: ConfiguredSecretCipherOptions["azureKeyVault"] = {},
+): Promise<SecretKeyProvider> {
+  const parsed = parseAzureKeyVaultWrappedKeysEnv(firstNonEmpty(env.WASMPLANE_SECRET_KMS_AZURE_WRAPPED_KEYS));
+  return createAzureKeyVaultSecretKeyProvider({
+    primaryKeyId: firstNonEmpty(env.WASMPLANE_SECRET_KMS_KEY_ID, parsed.primaryKeyId),
+    apiVersion: overrides.apiVersion ?? firstNonEmpty(env.WASMPLANE_SECRET_KMS_AZURE_API_VERSION),
+    accessToken: overrides.accessToken ?? firstNonEmpty(env.WASMPLANE_SECRET_KMS_AZURE_ACCESS_TOKEN),
+    getAccessToken: overrides.getAccessToken,
+    fetch: overrides.fetch,
     wrappedKeys: parsed.keys,
   });
 }
@@ -395,18 +564,34 @@ function addDataKey(keys: Map<string, Buffer>, key: { keyId: string; key: Buffer
 function resolveConfiguredSecretCipherOptions(
   options: Record<string, string | undefined> | ConfiguredSecretCipherOptions,
 ): ConfiguredSecretCipherOptions {
-  if ("env" in options || "awsKms" in options) {
+  if ("env" in options || "awsKms" in options || "gcpKms" in options || "azureKeyVault" in options) {
     return options as ConfiguredSecretCipherOptions;
   }
   return { env: options as Record<string, string | undefined> };
 }
 
-function isAwsKmsConfigured(env: Record<string, string | undefined>): boolean {
+function isCloudKmsConfigured(env: Record<string, string | undefined>): boolean {
+  return configuredCloudKmsProvider(env) !== undefined;
+}
+
+function configuredCloudKmsProvider(env: Record<string, string | undefined>): "aws" | "gcp" | "azure" | undefined {
   const provider = firstNonEmpty(env.WASMPLANE_SECRET_KMS_PROVIDER)?.toLowerCase();
-  if (provider && !["aws", "command", "env", "local"].includes(provider)) {
+  const supported = ["aws", "gcp", "azure", "command", "env", "local"];
+  if (provider && !supported.includes(provider)) {
     throw new ControlPlaneError("validation", `unsupported secret KMS provider ${provider}`);
   }
-  return provider === "aws" || Boolean(firstNonEmpty(env.WASMPLANE_SECRET_KMS_AWS_WRAPPED_KEYS));
+  if (provider === "aws" || provider === "gcp" || provider === "azure") {
+    return provider;
+  }
+  const inferred = [
+    firstNonEmpty(env.WASMPLANE_SECRET_KMS_AWS_WRAPPED_KEYS) ? "aws" as const : undefined,
+    firstNonEmpty(env.WASMPLANE_SECRET_KMS_GCP_WRAPPED_KEYS) ? "gcp" as const : undefined,
+    firstNonEmpty(env.WASMPLANE_SECRET_KMS_AZURE_WRAPPED_KEYS) ? "azure" as const : undefined,
+  ].filter((value): value is "aws" | "gcp" | "azure" => value !== undefined);
+  if (inferred.length > 1) {
+    throw new ControlPlaneError("validation", "multiple cloud KMS wrapped key configs are set");
+  }
+  return inferred[0];
 }
 
 function awsKmsCredentialsFromEnv(env: Record<string, string | undefined>): AwsKmsCredentials {
@@ -464,6 +649,109 @@ function parseAwsKmsWrappedKeysEnv(value: string | undefined): {
       ciphertext: fromBase64(key.ciphertextBase64, `AWS KMS wrapped key ${key.keyId} ciphertext`),
       kmsKeyId: typeof key.kmsKeyId === "string" ? key.kmsKeyId : undefined,
       encryptionContext: parseAwsKmsEncryptionContext(key.encryptionContext, `AWS KMS wrapped key ${key.keyId}`),
+    };
+  });
+  return { primaryKeyId, keys };
+}
+
+function parseGcpKmsWrappedKeysEnv(value: string | undefined): {
+  primaryKeyId?: string;
+  keys: GcpKmsWrappedSecretDataKey[];
+} {
+  if (!value) {
+    throw new ControlPlaneError("validation", "GCP KMS secret key provider requires wrapped keys");
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new ControlPlaneError("validation", "WASMPLANE_SECRET_KMS_GCP_WRAPPED_KEYS must be valid JSON");
+  }
+  const record = Array.isArray(parsed)
+    ? { keys: parsed }
+    : objectRecord(parsed, "GCP KMS wrapped key config");
+  if (!Array.isArray(record.keys)) {
+    throw new ControlPlaneError("validation", "GCP KMS wrapped key config must include keys");
+  }
+  const primaryKeyId = typeof record.primaryKeyId === "string" ? record.primaryKeyId.trim() : undefined;
+  const keys = record.keys.map((item, index) => {
+    const key = objectRecord(item, `GCP KMS wrapped key ${index}`);
+    if (
+      typeof key.keyId !== "string" ||
+      typeof key.ciphertextBase64 !== "string" ||
+      typeof key.cryptoKeyName !== "string"
+    ) {
+      throw new ControlPlaneError(
+        "validation",
+        `GCP KMS wrapped key ${index} must include keyId, ciphertextBase64, and cryptoKeyName`,
+      );
+    }
+    return {
+      keyId: key.keyId,
+      ciphertext: fromBase64(key.ciphertextBase64, `GCP KMS wrapped key ${key.keyId} ciphertext`),
+      cryptoKeyName: key.cryptoKeyName,
+      additionalAuthenticatedData: typeof key.additionalAuthenticatedDataBase64 === "string"
+        ? fromBase64(
+          key.additionalAuthenticatedDataBase64,
+          `GCP KMS wrapped key ${key.keyId} additionalAuthenticatedData`,
+        )
+        : undefined,
+    };
+  });
+  return { primaryKeyId, keys };
+}
+
+function parseAzureKeyVaultWrappedKeysEnv(value: string | undefined): {
+  primaryKeyId?: string;
+  keys: AzureKeyVaultWrappedSecretDataKey[];
+} {
+  if (!value) {
+    throw new ControlPlaneError("validation", "Azure Key Vault secret key provider requires wrapped keys");
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new ControlPlaneError("validation", "WASMPLANE_SECRET_KMS_AZURE_WRAPPED_KEYS must be valid JSON");
+  }
+  const record = Array.isArray(parsed)
+    ? { keys: parsed }
+    : objectRecord(parsed, "Azure Key Vault wrapped key config");
+  if (!Array.isArray(record.keys)) {
+    throw new ControlPlaneError("validation", "Azure Key Vault wrapped key config must include keys");
+  }
+  const primaryKeyId = typeof record.primaryKeyId === "string" ? record.primaryKeyId.trim() : undefined;
+  const keys = record.keys.map((item, index) => {
+    const key = objectRecord(item, `Azure Key Vault wrapped key ${index}`);
+    if (
+      typeof key.keyId !== "string" ||
+      typeof key.ciphertextBase64 !== "string" ||
+      typeof key.vaultUrl !== "string" ||
+      typeof key.keyName !== "string" ||
+      typeof key.keyVersion !== "string" ||
+      typeof key.algorithm !== "string"
+    ) {
+      throw new ControlPlaneError(
+        "validation",
+        `Azure Key Vault wrapped key ${index} must include keyId, ciphertextBase64, vaultUrl, keyName, keyVersion, and algorithm`,
+      );
+    }
+    return {
+      keyId: key.keyId,
+      ciphertext: fromBase64(key.ciphertextBase64, `Azure Key Vault wrapped key ${key.keyId} ciphertext`),
+      vaultUrl: key.vaultUrl,
+      keyName: key.keyName,
+      keyVersion: key.keyVersion,
+      algorithm: key.algorithm,
+      aad: typeof key.aadBase64 === "string"
+        ? fromBase64(key.aadBase64, `Azure Key Vault wrapped key ${key.keyId} aad`)
+        : undefined,
+      iv: typeof key.ivBase64 === "string"
+        ? fromBase64(key.ivBase64, `Azure Key Vault wrapped key ${key.keyId} iv`)
+        : undefined,
+      tag: typeof key.tagBase64 === "string"
+        ? fromBase64(key.tagBase64, `Azure Key Vault wrapped key ${key.keyId} tag`)
+        : undefined,
     };
   });
   return { primaryKeyId, keys };
@@ -632,6 +920,145 @@ async function decryptAwsKmsDataKey(options: {
     throw new ControlPlaneError("validation", "AWS KMS decrypt response must include Plaintext");
   }
   return fromBase64(record.Plaintext, `AWS KMS plaintext for secret key ${options.wrappedKey.keyId}`);
+}
+
+async function decryptGcpKmsDataKey(options: {
+  endpoint?: string;
+  accessToken: string;
+  fetch: typeof fetch;
+  wrappedKey: {
+    keyId: string;
+    ciphertext: Buffer;
+    cryptoKeyName: string;
+    additionalAuthenticatedData?: Buffer;
+  };
+}): Promise<Buffer> {
+  const baseUrl = (options.endpoint ?? "https://cloudkms.googleapis.com").replace(/\/+$/, "");
+  const endpoint = new URL(`${baseUrl}/v1/${encodeResourcePath(options.wrappedKey.cryptoKeyName)}:decrypt`);
+  const payload: Record<string, unknown> = {
+    ciphertext: options.wrappedKey.ciphertext.toString("base64"),
+  };
+  if (options.wrappedKey.additionalAuthenticatedData) {
+    payload.additionalAuthenticatedData = options.wrappedKey.additionalAuthenticatedData.toString("base64");
+  }
+  const response = await options.fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${options.accessToken}`,
+    },
+    body: JSON.stringify(payload),
+  });
+  const text = await response.text();
+  if (!response.ok) {
+    const message = text.trim().slice(0, 500);
+    throw new ControlPlaneError(
+      "validation",
+      `GCP KMS decrypt failed for secret key ${options.wrappedKey.keyId}: ${response.status} ${message}`,
+    );
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new ControlPlaneError("validation", "GCP KMS decrypt returned invalid JSON");
+  }
+  const record = objectRecord(parsed, "GCP KMS decrypt response");
+  if (typeof record.plaintext !== "string") {
+    throw new ControlPlaneError("validation", "GCP KMS decrypt response must include plaintext");
+  }
+  return fromBase64(record.plaintext, `GCP KMS plaintext for secret key ${options.wrappedKey.keyId}`);
+}
+
+async function decryptAzureKeyVaultDataKey(options: {
+  apiVersion: string;
+  accessToken: string;
+  fetch: typeof fetch;
+  wrappedKey: {
+    keyId: string;
+    ciphertext: Buffer;
+    vaultUrl: string;
+    keyName: string;
+    keyVersion: string;
+    algorithm: string;
+    aad?: Buffer;
+    iv?: Buffer;
+    tag?: Buffer;
+  };
+}): Promise<Buffer> {
+  const endpoint = azureKeyVaultDecryptUrl(options.wrappedKey, options.apiVersion);
+  const payload: Record<string, unknown> = {
+    alg: options.wrappedKey.algorithm,
+    value: options.wrappedKey.ciphertext.toString("base64url"),
+  };
+  if (options.wrappedKey.aad) {
+    payload.aad = options.wrappedKey.aad.toString("base64url");
+  }
+  if (options.wrappedKey.iv) {
+    payload.iv = options.wrappedKey.iv.toString("base64url");
+  }
+  if (options.wrappedKey.tag) {
+    payload.tag = options.wrappedKey.tag.toString("base64url");
+  }
+  const response = await options.fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${options.accessToken}`,
+    },
+    body: JSON.stringify(payload),
+  });
+  const text = await response.text();
+  if (!response.ok) {
+    const message = text.trim().slice(0, 500);
+    throw new ControlPlaneError(
+      "validation",
+      `Azure Key Vault decrypt failed for secret key ${options.wrappedKey.keyId}: ${response.status} ${message}`,
+    );
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new ControlPlaneError("validation", "Azure Key Vault decrypt returned invalid JSON");
+  }
+  const record = objectRecord(parsed, "Azure Key Vault decrypt response");
+  if (typeof record.value !== "string") {
+    throw new ControlPlaneError("validation", "Azure Key Vault decrypt response must include value");
+  }
+  return fromBase64url(record.value, `Azure Key Vault plaintext for secret key ${options.wrappedKey.keyId}`);
+}
+
+async function resolveAccessToken(
+  accessToken: string | undefined,
+  getAccessToken: (() => string | Promise<string>) | undefined,
+  providerName: string,
+): Promise<string> {
+  const token = accessToken ?? await getAccessToken?.();
+  if (!token || token.trim().length === 0) {
+    throw new ControlPlaneError("validation", `${providerName} secret key provider requires an access token`);
+  }
+  return token.trim();
+}
+
+function encodeResourcePath(value: string): string {
+  return value.split("/").map((part) => encodeRfc3986(part)).join("/");
+}
+
+function azureKeyVaultDecryptUrl(
+  wrappedKey: {
+    vaultUrl: string;
+    keyName: string;
+    keyVersion: string;
+  },
+  apiVersion: string,
+): URL {
+  const baseUrl = wrappedKey.vaultUrl.replace(/\/+$/, "");
+  const url = new URL(
+    `${baseUrl}/keys/${encodeRfc3986(wrappedKey.keyName)}/${encodeRfc3986(wrappedKey.keyVersion)}/decrypt`,
+  );
+  url.searchParams.set("api-version", apiVersion);
+  return url;
 }
 
 function signAwsKmsJsonRequest(options: {

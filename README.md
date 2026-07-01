@@ -340,13 +340,19 @@ all stored envelopes have been rewritten with the new primary key. For external 
 set `WASMPLANE_SECRET_KMS_KEY_PROVIDER_COMMAND` to an executable that prints JSON such as
 `{"primaryKeyId":"kid2","keys":[{"keyId":"kid1","keyBase64":"..."},{"keyId":"kid2","keyBase64":"..."}]}`.
 `WASMPLANE_SECRET_KMS_KEY_PROVIDER_ARGS` may contain a JSON string array of command arguments.
-For AWS KMS, set `WASMPLANE_SECRET_KMS_PROVIDER=aws`, `WASMPLANE_SECRET_KMS_AWS_REGION`,
+For cloud KMS, set `WASMPLANE_SECRET_KMS_PROVIDER` to `aws`, `gcp`, or `azure`. For AWS KMS, set
+`WASMPLANE_SECRET_KMS_AWS_REGION`,
 `WASMPLANE_SECRET_KMS_KEY_ID`, and `WASMPLANE_SECRET_KMS_AWS_WRAPPED_KEYS` to JSON such as
 `{"keys":[{"keyId":"kid2","ciphertextBase64":"...","kmsKeyId":"arn:aws:kms:...","encryptionContext":{"service":"wasmplane"}}]}`.
-The adapter calls AWS KMS `Decrypt` during process startup, then uses the unwrapped 32-byte data
+The AWS adapter calls KMS `Decrypt` during process startup, then uses the unwrapped 32-byte data
 keys as the in-memory AES-GCM keyring. AWS credentials are read from `AWS_ACCESS_KEY_ID`,
 `AWS_SECRET_ACCESS_KEY`, and optional `AWS_SESSION_TOKEN`; `WASMPLANE_SECRET_KMS_AWS_ENDPOINT` can
 point at a KMS-compatible local endpoint.
+For GCP Cloud KMS, set `WASMPLANE_SECRET_KMS_GCP_ACCESS_TOKEN` and
+`WASMPLANE_SECRET_KMS_GCP_WRAPPED_KEYS` with `cryptoKeyName` values such as
+`projects/p/locations/global/keyRings/r/cryptoKeys/k`. For Azure Key Vault, set
+`WASMPLANE_SECRET_KMS_AZURE_ACCESS_TOKEN` and `WASMPLANE_SECRET_KMS_AZURE_WRAPPED_KEYS` with
+`vaultUrl`, `keyName`, `keyVersion`, and `algorithm` values such as `RSA-OAEP-256`.
 Configure the same keyring or provider on runtime nodes when they read `WASMPLANE_SECRET_DB`.
 KV namespaces are also registered in the control plane. Deployments can only reference registered
 secrets and KV namespaces owned by the same project.

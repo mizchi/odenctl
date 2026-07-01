@@ -11,6 +11,8 @@ Production readiness tasks, in implementation order.
 - [x] Document key configuration, rotation constraints, and migration notes.
 - [x] Add external KMS providers and multi-key decrypt support for online rotation.
 - [x] Add AWS KMS wrapped data key adapter for cloud KMS deployments.
+- [x] Add GCP Cloud KMS wrapped data key adapter.
+- [x] Add Azure Key Vault wrapped data key adapter.
 
 ## 2. Project quota and rate limit
 

@@ -268,7 +268,9 @@ runtime 側でそのまま読める。envelope には key id を持たせ、復�
 選ぶ。online rotation では新 primary key で暗号化しつつ、旧 key を decrypt-only keyring に残す。
 external KMS は command provider 契約で接続し、provider は primary key id と decrypt keyring の JSON を
 返す。AWS KMS adapter は KMS ciphertext blob として wrap された data key を起動時に `Decrypt` で
-unwrap し、以後は in-memory data keyring で AES-GCM envelope を処理する。
+unwrap し、以後は in-memory data keyring で AES-GCM envelope を処理する。GCP Cloud KMS adapter は
+`cryptoKeys.decrypt`、Azure Key Vault adapter は `keys/{name}/{version}/decrypt` を使って同じ data key
+unwrap contract に接続する。
 
 ## Limits
 
@@ -467,7 +469,8 @@ single-region estimate は README の cost estimator にまとめる。現状の
 
 - WASIp3/component model 前提だが、guest toolchain と host ABI の安定性には追従が必要
 - `cpuMs` は Wasmtime epoch tick ベースであり、精密な kernel CPU time enforcement ではない
-- secret value は local/env KMS envelope encryption、command-provider keyring、AWS KMS wrapped data key adapter に対応したが、GCP/Azure KMS adapter は未実装
+- secret value は local/env KMS envelope encryption、command-provider keyring、AWS/GCP/Azure wrapped
+  data key adapter に対応した
 - multi-region は route snapshot replication と ACK consistency check に対応したが、durable replica
   snapshot store と DB multi-writer consistency は未実装
 - daemon は local HTTP interface で、runtime node と同一 trust boundary 前提
@@ -482,8 +485,8 @@ single-region estimate は README の cost estimator にまとめる。現状の
 
 ## Next Implementation Priorities
 
-1. GCP/Azure KMS adapter
-2. Historical perf trend analysis
-3. Safe guest reset contract for instance reuse
-4. Provider idempotency metadata for autoscaling
-5. Durable route snapshot replica store
+1. Historical perf trend analysis
+2. Safe guest reset contract for instance reuse
+3. Provider idempotency metadata for autoscaling
+4. Durable route snapshot replica store
+5. Managed identity token providers for GCP/Azure KMS
