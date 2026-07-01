@@ -22,7 +22,7 @@ test("project tooling keeps Wasm E2E portable", async () => {
   assert.match(workflow, /just test/);
   assert.match(workflow, /just e2e/);
   assert.match(flyControl, /WASMPLANE_SNAPSHOT_PUBLISH_INTERVAL_MS = "5000"/);
-  assert.match(flyRuntime, /RUNTIME_HOST = "0\.0\.0\.0"/);
+  assert.match(flyRuntime, /RUNTIME_HOST = "::"/);
   assert.match(flyRuntime, /RUNTIME_ROUTE_SNAPSHOT_FILE = "\/data\/route-snapshot\.json"/);
-  assert.match(flyRuntime, /path = "\/__runtime\/readyz"/);
+  assert.match(flyRuntime, /path = "\/__runtime\/healthz"/);
 });

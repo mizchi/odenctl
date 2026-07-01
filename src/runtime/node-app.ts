@@ -61,6 +61,11 @@ export interface RuntimeNodeCloseOptions {
   drainTimeoutMs?: number;
 }
 
+export interface RuntimeNodeListenOptions {
+  port: number;
+  host?: string;
+}
+
 export interface RuntimeHostDaemonMetricsOptions {
   url: string;
   fetch?: typeof fetch;
@@ -357,10 +362,10 @@ export function createRuntimeNodeApp(options: RuntimeNodeAppOptions) {
   });
 
   return {
-    listen(options: { port: number; host?: string }) {
+    listen(options: RuntimeNodeListenOptions) {
       return new Promise<typeof server>((resolve, reject) => {
         server.once("error", reject);
-        server.listen(options.port, options.host ?? "127.0.0.1", () => {
+        server.listen(runtimeNodeHttpListenOptions(options), () => {
           server.off("error", reject);
           cacheRetentionJob.start();
           resolve(server);
@@ -383,6 +388,13 @@ export function createRuntimeNodeApp(options: RuntimeNodeAppOptions) {
       return lifecycleStatus;
     },
   };
+}
+
+export function runtimeNodeHttpListenOptions(options: RuntimeNodeListenOptions) {
+  const host = options.host ?? "127.0.0.1";
+  return host === "::"
+    ? { port: options.port, host, ipv6Only: false }
+    : { port: options.port, host };
 }
 
 function closeServer(server: ReturnType<typeof createServer>): Promise<void> {

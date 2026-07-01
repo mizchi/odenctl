@@ -12,12 +12,24 @@ import {
   type RouteSnapshot,
 } from "../src/control-plane/contracts.ts";
 import { createAesGcmSecretCipher } from "../src/control-plane/secret-encryption.ts";
-import { createRuntimeNodeApp } from "../src/runtime/node-app.ts";
+import { createRuntimeNodeApp, runtimeNodeHttpListenOptions } from "../src/runtime/node-app.ts";
 import { RuntimeError } from "../src/runtime/errors.ts";
 import { registerRuntimeNode, sendRuntimeHeartbeat } from "../src/runtime/heartbeat.ts";
 import { signRuntimeIdentityHeaders } from "../src/runtime/identity.ts";
 import { createEnvSecretStore, createRepositorySecretStore } from "../src/runtime/secrets.ts";
 import { createRuntimeSupervisor } from "../src/runtime/supervisor.ts";
+
+test("runtime node binds IPv6 wildcard as dual-stack for Fly private networking", () => {
+  assert.deepEqual(runtimeNodeHttpListenOptions({ port: 8080, host: "::" }), {
+    port: 8080,
+    host: "::",
+    ipv6Only: false,
+  });
+  assert.deepEqual(runtimeNodeHttpListenOptions({ port: 8080, host: "0.0.0.0" }), {
+    port: 8080,
+    host: "0.0.0.0",
+  });
+});
 
 test("runtime node accepts route snapshots and invokes matched deployments", async () => {
   const preparedDeployments: string[] = [];
