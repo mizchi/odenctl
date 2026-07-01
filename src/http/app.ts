@@ -31,6 +31,10 @@ import {
 } from "../control-plane/snapshot-replication.ts";
 import { selectRuntimeNodesForSnapshot, type RuntimePlacementPolicy } from "../control-plane/placement.ts";
 import { runtimeSaturationSignals } from "../control-plane/autoscaling.ts";
+import type {
+  EnsureVolumeSqliteDatabaseInput,
+  VolumeSqliteDatabaseRecord,
+} from "../control-plane/volume-sqlite.ts";
 
 type MaybePromise<T> = T | Promise<T>;
 
@@ -72,6 +76,7 @@ export interface HttpAppOptions {
   routeSnapshotReplicaStore?: RouteSnapshotReplicaStore;
   routeSnapshotReplicas?: RouteSnapshotReplicaTarget[];
   snapshotReplication?: RouteSnapshotReplicationOptions;
+  volumeSqliteRegistry?: VolumeSqliteRegistryApi;
   artifactStore?: ControlPlaneArtifactStore;
   artifactStoreDir?: string;
   artifactPublicBaseUrl?: string;
@@ -82,6 +87,13 @@ export interface HttpAppOptions {
   now?: () => string;
   fetch?: FetchLike;
   snapshotPublish?: RouteSnapshotPublishOptions;
+}
+
+export interface VolumeSqliteRegistryApi {
+  ensureDatabase(input: EnsureVolumeSqliteDatabaseInput): MaybePromise<VolumeSqliteDatabaseRecord>;
+  getDatabase(id: string): MaybePromise<VolumeSqliteDatabaseRecord | undefined>;
+  listDatabases(): MaybePromise<VolumeSqliteDatabaseRecord[]>;
+  stats?(): MaybePromise<unknown>;
 }
 
 export function createHttpApp(options: HttpAppOptions) {
@@ -161,6 +173,24 @@ export function createHttpApp(options: HttpAppOptions) {
       }
       if (method === "POST" && url.pathname === "/projects") {
         writeJson(response, 201, await options.controlPlane.createProject(await readJson(request)));
+        return;
+      }
+      const projectSqliteDatabases = projectSqliteDatabasesMatch(method, url.pathname);
+      if (projectSqliteDatabases && method === "POST") {
+        writeJson(response, 201, await ensureProjectSqliteDatabase(options, projectSqliteDatabases.projectId, request));
+        return;
+      }
+      if (projectSqliteDatabases && method === "GET") {
+        writeJson(response, 200, await listProjectSqliteDatabases(options, projectSqliteDatabases.projectId));
+        return;
+      }
+      const sqliteDatabase = sqliteDatabaseMatch(method, url.pathname);
+      if (sqliteDatabase) {
+        writeJson(response, 200, await getSqliteDatabase(options, sqliteDatabase.id));
+        return;
+      }
+      if (method === "GET" && url.pathname === "/sqlite-databases") {
+        writeJson(response, 200, await listSqliteDatabases(options));
         return;
       }
       const projectQuotaUsage = projectQuotaUsageMatch(method, url.pathname);
@@ -400,6 +430,51 @@ export function createHttpApp(options: HttpAppOptions) {
       });
     },
   };
+}
+
+async function ensureProjectSqliteDatabase(
+  options: HttpAppOptions,
+  projectId: string,
+  request: any,
+) {
+  const registry = requiredVolumeSqliteRegistry(options);
+  const input = objectRecord(await readJson(request));
+  return registry.ensureDatabase({
+    id: typeof input.id === "string" ? input.id : projectId,
+    kind: typeof input.kind === "string" ? input.kind : "project",
+    ownerId: projectId,
+    schemaVersion: typeof input.schemaVersion === "number" ? input.schemaVersion : undefined,
+  });
+}
+
+async function listProjectSqliteDatabases(options: HttpAppOptions, projectId: string) {
+  const databases = await requiredVolumeSqliteRegistry(options).listDatabases();
+  return {
+    databases: databases.filter((database) => database.ownerId === projectId),
+  };
+}
+
+async function getSqliteDatabase(options: HttpAppOptions, id: string) {
+  const database = await requiredVolumeSqliteRegistry(options).getDatabase(id);
+  if (!database) {
+    throw new ControlPlaneError("not_found", `volume sqlite database ${id} was not found`);
+  }
+  return database;
+}
+
+async function listSqliteDatabases(options: HttpAppOptions) {
+  const registry = requiredVolumeSqliteRegistry(options);
+  return {
+    databases: await registry.listDatabases(),
+    stats: await registry.stats?.(),
+  };
+}
+
+function requiredVolumeSqliteRegistry(options: HttpAppOptions): VolumeSqliteRegistryApi {
+  if (!options.volumeSqliteRegistry) {
+    throw new ControlPlaneError("validation", "volume sqlite registry is not configured");
+  }
+  return options.volumeSqliteRegistry;
 }
 
 export async function publishCurrentRouteSnapshot(options: HttpAppOptions) {
@@ -1023,6 +1098,28 @@ function projectQuotaUsageMatch(method: string, pathname: string): { projectId: 
     return undefined;
   }
   return { projectId: decodeURIComponent(match[1]) };
+}
+
+function projectSqliteDatabasesMatch(method: string, pathname: string): { projectId: string } | undefined {
+  if (method !== "GET" && method !== "POST") {
+    return undefined;
+  }
+  const match = /^\/projects\/([^/]+)\/sqlite-databases$/.exec(pathname);
+  if (!match) {
+    return undefined;
+  }
+  return { projectId: decodeURIComponent(match[1]) };
+}
+
+function sqliteDatabaseMatch(method: string, pathname: string): { id: string } | undefined {
+  if (method !== "GET") {
+    return undefined;
+  }
+  const match = /^\/sqlite-databases\/([^/]+)$/.exec(pathname);
+  if (!match) {
+    return undefined;
+  }
+  return { id: decodeURIComponent(match[1]) };
 }
 
 function secretMatch(method: string, pathname: string): { id: string } | undefined {

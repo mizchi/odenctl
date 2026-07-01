@@ -8,6 +8,7 @@ import { parseApiTokens } from "./control-plane/authz.ts";
 import { createSnapshotPublishJob } from "./control-plane/snapshot-publish-job.ts";
 import { createWasip3HostArtifactValidator } from "./control-plane/artifact-validation.ts";
 import { runtimeNodeTargetsFromEnv, type RouteSnapshotPublishOptions } from "./control-plane/snapshot-publisher.ts";
+import { createVolumeSqliteRegistry } from "./control-plane/volume-sqlite.ts";
 import {
   createInMemoryRouteSnapshotReplicaStore,
   routeSnapshotReplicaTargetsFromEnv,
@@ -19,6 +20,7 @@ import { parseRuntimeIdentityKeys } from "./runtime/config.ts";
 const port = Number.parseInt(process.env.PORT ?? "8787", 10);
 const host = process.env.HOST ?? "127.0.0.1";
 const artifactPublicBaseUrl = process.env.WASMPLANE_ARTIFACT_PUBLIC_BASE_URL;
+const volumeSqliteRoot = process.env.WASMPLANE_VOLUME_SQLITE_ROOT;
 const apiTokens = parseApiTokens(process.env);
 const runtimeNodeToken = process.env.WASMPLANE_RUNTIME_TOKEN;
 const runtimeIdentityKeys = parseRuntimeIdentityKeys(process.env);
@@ -48,6 +50,13 @@ const controlPlane = await createConfiguredControlPlane({
   runtimeNodeActiveTtlMs,
 });
 const artifactStore = createConfiguredControlPlaneArtifactStore(process.env);
+const volumeSqliteRegistry = volumeSqliteRoot
+  ? createVolumeSqliteRegistry({
+    rootDir: volumeSqliteRoot,
+    maxOpenDatabases: positiveInteger(process.env.WASMPLANE_VOLUME_SQLITE_MAX_OPEN, 64),
+    busyTimeoutMs: positiveInteger(process.env.WASMPLANE_VOLUME_SQLITE_BUSY_TIMEOUT_MS, 5000),
+  })
+  : undefined;
 const routeSnapshotReplicaStore = createInMemoryRouteSnapshotReplicaStore();
 const appOptions = {
   controlPlane,
@@ -65,6 +74,7 @@ const appOptions = {
   runtimeIdentityKeys,
   runtimeNodes: runtimeNodeTargetsFromEnv(process.env.WASMPLANE_RUNTIME_NODES),
   snapshotPublish: snapshotPublishOptions,
+  volumeSqliteRegistry,
   routeSnapshotReplicaStore,
   routeSnapshotReplicas: routeSnapshotReplicaTargetsFromEnv(
     process.env.WASMPLANE_ROUTE_SNAPSHOT_REPLICAS,

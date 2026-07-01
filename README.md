@@ -289,6 +289,14 @@ The control app stores SQLite state and uploaded local artifacts on `/data`. For
 are recorded as `https://<control-app>/artifacts/local/<digest>.wasm`, so the separate runtime app can
 materialize them over HTTP. The runtime app stores `.cwasm`, artifact, and KV cache under `/data`.
 For multiple runtime Machines, create one `wasmplane_runtime_data` volume per Machine region.
+The control plane also includes a volume-backed high-density SQLite registry for Turso-style
+file-per-project or file-per-tenant state. `createVolumeSqliteRegistry({ rootDir: "/data/sqlite" })`
+stores a `catalog.sqlite` plus per-database files under `/data/sqlite/dbs`, applies WAL-oriented
+SQLite pragmas, tracks schema version and ownership metadata, and uses an LRU `SqliteDatabasePool`
+to cap open handles. This is intended for local-first project state on a single attached volume;
+multi-machine writers still need a managed primary such as Postgres or Turso/libSQL. Set
+`WASMPLANE_VOLUME_SQLITE_ROOT=/data/sqlite` to enable the registry in the control API, and tune the
+open handle cap with `WASMPLANE_VOLUME_SQLITE_MAX_OPEN`.
 To move the control plane state to managed Postgres, create a Postgres database and set
 `DATABASE_URL` on the control app. To remove the control app volume dependency, also set the
 S3/R2 artifact store variables above so local uploads are persisted outside `/data`.
@@ -593,6 +601,10 @@ Available endpoints:
 - `POST /admin/routes/rollback`
 - `POST /projects`
 - `GET /projects/:id/quota-usage`
+- `POST /projects/:id/sqlite-databases`
+- `GET /projects/:id/sqlite-databases`
+- `GET /sqlite-databases`
+- `GET /sqlite-databases/:id`
 - `POST /artifacts`
 - `POST /artifacts/local`
 - `POST /secrets`

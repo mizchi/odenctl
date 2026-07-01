@@ -84,6 +84,16 @@ export {
 export { createSnapshotPublishJob } from "./control-plane/snapshot-publish-job.ts";
 export { createMemoryRepository, createSqliteRepository } from "./control-plane/repository.ts";
 export { createPostgresRepository } from "./control-plane/postgres-repository.ts";
+export {
+  createVolumeSqliteRegistry,
+  SqliteDatabasePool,
+  VolumeSqliteRegistry,
+  type EnsureVolumeSqliteDatabaseInput,
+  type SqliteDatabasePoolEntry,
+  type SqliteDatabasePoolOptions,
+  type VolumeSqliteDatabaseRecord,
+  type VolumeSqliteRegistryOptions,
+} from "./control-plane/volume-sqlite.ts";
 export { createWasip3HostArtifactValidator } from "./control-plane/artifact-validation.ts";
 export { ingestLocalArtifact } from "./control-plane/local-artifacts.ts";
 export {

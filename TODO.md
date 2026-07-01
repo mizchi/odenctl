@@ -214,3 +214,12 @@ Production readiness tasks, in implementation order.
 - [x] Quarantine malformed persisted route snapshot files instead of failing startup.
 - [x] Use runtime readiness, not process liveness, for the Fly runtime service check.
 - [x] Document persisted snapshot quarantine behavior.
+
+## 29. Volume-backed high-density SQLite
+
+- [x] Add a cataloged file-per-project/tenant SQLite registry for Fly volumes.
+- [x] Add an LRU-bounded SQLite handle pool.
+- [x] Apply WAL-oriented SQLite pragmas and track per-database schema versions.
+- [x] Wire project state APIs to the volume SQLite registry.
+- [ ] Add backup/export and restore commands for individual database files.
+- [ ] Add density benchmarks for database count, open handles, migration time, and write contention.

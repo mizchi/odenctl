@@ -11,6 +11,7 @@ import { createJsonlAuditSink } from "../src/control-plane/audit.ts";
 import { createInMemoryRouteSnapshotReplicaStore } from "../src/control-plane/snapshot-replication.ts";
 import { createMemoryRepository } from "../src/control-plane/repository.ts";
 import { createControlPlane } from "../src/control-plane/service.ts";
+import { createVolumeSqliteRegistry } from "../src/control-plane/volume-sqlite.ts";
 import { createHttpApp, publishCurrentRouteSnapshot } from "../src/http/app.ts";
 import { verifyRuntimeIdentityHeaders } from "../src/runtime/identity.ts";
 
@@ -215,6 +216,59 @@ test("HTTP API exposes project quota usage", async () => {
     });
   } finally {
     await app.close();
+  }
+});
+
+test("HTTP API provisions project volume sqlite database units", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "wasmplane-http-volume-sqlite-"));
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+  });
+  const registry = createVolumeSqliteRegistry({
+    rootDir: dir,
+    maxOpenDatabases: 1,
+    now: fixedNow,
+  });
+  const app = createHttpApp({ controlPlane: control, volumeSqliteRegistry: registry });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const project = await postJson(baseUrl, "/projects", { id: "prj_state", name: "stateful" });
+    const created = await postJson(baseUrl, `/projects/${project.id}/sqlite-databases`, {
+      schemaVersion: 2,
+    });
+
+    assert.deepEqual(created, {
+      id: "prj_state",
+      path: join(dir, "dbs", "prj_state.sqlite"),
+      kind: "project",
+      ownerId: "prj_state",
+      schemaVersion: 2,
+      createdAt: fixedNow(),
+      lastUsedAt: fixedNow(),
+    });
+
+    const projectList = await (await fetch(`${baseUrl}/projects/${project.id}/sqlite-databases`)).json();
+    assert.deepEqual(projectList.databases.map((database: any) => database.id), ["prj_state"]);
+
+    const direct = await (await fetch(`${baseUrl}/sqlite-databases/prj_state`)).json();
+    assert.equal(direct.ownerId, "prj_state");
+
+    const all = await (await fetch(`${baseUrl}/sqlite-databases`)).json();
+    assert.deepEqual(all.databases.map((database: any) => database.id), ["prj_state"]);
+    assert.deepEqual(all.stats.pool, { maxOpen: 1, open: 1, openIds: ["prj_state"] });
+
+    const missing = await fetch(`${baseUrl}/sqlite-databases/missing`);
+    assert.equal(missing.status, 404);
+  } finally {
+    await app.close();
+    registry.close();
   }
 });
 

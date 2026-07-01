@@ -14,6 +14,8 @@ primary_region = "nrt"
   WASMPLANE_AUDIT_LOG = "/data/audit.jsonl"
   WASMPLANE_ARTIFACT_DIR = "/data/artifacts"
   WASMPLANE_ARTIFACT_PUBLIC_BASE_URL = "auto"
+  WASMPLANE_VOLUME_SQLITE_ROOT = "/data/sqlite"
+  WASMPLANE_VOLUME_SQLITE_MAX_OPEN = "64"
   WASMPLANE_WASIP3_HOST_BIN = "/usr/local/bin/wasmplane-wasip3-host"
   WASMPLANE_SNAPSHOT_PUBLISH_INTERVAL_MS = "5000"
 
