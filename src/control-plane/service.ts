@@ -197,6 +197,7 @@ export interface RecordRuntimeNodeHeartbeatInput {
   version?: string;
   capacity?: RuntimeNodeCapacity;
   load?: RuntimeNode["load"];
+  identity?: unknown;
   host?: unknown;
 }
 
@@ -519,6 +520,7 @@ export function createControlPlane(options: ControlPlaneOptions) {
       version: input.version ?? existing.version,
       capacity: normalizeRuntimeNodeCapacity(input.capacity) ?? existing.capacity,
       load: normalizeRuntimeNodeLoad(input.load) ?? existing.load,
+      identity: normalizeRuntimeNodeIdentity(input.identity) ?? existing.identity,
       host: normalizeRuntimeNodeHostInfo(input.host) ?? existing.host,
     };
     return repository.updateRuntimeNodeHeartbeat(node);

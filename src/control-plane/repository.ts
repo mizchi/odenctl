@@ -406,6 +406,7 @@ class SqliteControlPlaneRepository implements ControlPlaneRepository {
           region = ?,
           labels_json = ?,
           load_json = ?,
+          identity_json = ?,
           host_json = ?
         where id = ?`,
       )
@@ -417,6 +418,7 @@ class SqliteControlPlaneRepository implements ControlPlaneRepository {
         node.region ?? null,
         node.labels ? JSON.stringify(node.labels) : null,
         node.load ? JSON.stringify(node.load) : null,
+        node.identity ? JSON.stringify(node.identity) : null,
         node.host ? JSON.stringify(node.host) : null,
         node.id,
       );

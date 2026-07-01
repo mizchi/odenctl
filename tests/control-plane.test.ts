@@ -691,6 +691,7 @@ test("tracks runtime node heartbeat and excludes inactive nodes from publish tar
     version: "wasmplane-runtime/0.1.0",
     capacity: { concurrentRequests: 128, memoryMb: 4096 },
     load: { activeRequests: 64 },
+    identity: { keyId: "rt-key", certificateSha256: "a".repeat(64) },
     host: {
       backend: "wasmtime",
       wasi: "wasip3",
@@ -706,6 +707,7 @@ test("tracks runtime node heartbeat and excludes inactive nodes from publish tar
   assert.equal(heartbeat.version, "wasmplane-runtime/0.1.0");
   assert.deepEqual(heartbeat.capacity, { concurrentRequests: 128, memoryMb: 4096 });
   assert.deepEqual(heartbeat.load, { activeRequests: 64 });
+  assert.deepEqual(heartbeat.identity, { keyId: "rt-key", certificateSha256: "a".repeat(64) });
   assert.deepEqual(heartbeat.host, {
     backend: "wasmtime",
     wasi: "wasip3",

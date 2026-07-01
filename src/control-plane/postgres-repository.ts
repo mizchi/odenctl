@@ -383,8 +383,9 @@ export class PostgresControlPlaneRepository implements AsyncControlPlaneReposito
         region = $5,
         labels_json = $6::jsonb,
         load_json = $7::jsonb,
-        host_json = $8::jsonb
-      where id = $9
+        identity_json = $8::jsonb,
+        host_json = $9::jsonb
+      where id = $10
       returning *`,
       [
         node.status,
@@ -394,6 +395,7 @@ export class PostgresControlPlaneRepository implements AsyncControlPlaneReposito
         node.region ?? null,
         node.labels ? JSON.stringify(node.labels) : null,
         node.load ? JSON.stringify(node.load) : null,
+        node.identity ? JSON.stringify(node.identity) : null,
         node.host ? JSON.stringify(node.host) : null,
         node.id,
       ],
