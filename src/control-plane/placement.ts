@@ -4,6 +4,13 @@ export interface RuntimePlacementRule {
   regions?: string[];
   labels?: Record<string, string>;
   maxTargets?: number;
+  failover?: RuntimePlacementFailoverRule[];
+}
+
+export interface RuntimePlacementFailoverRule {
+  regions?: string[];
+  labels?: Record<string, string>;
+  maxTargets?: number;
 }
 
 export interface RuntimePlacementPolicy {
@@ -42,6 +49,20 @@ export function selectRuntimeNodesForSnapshot(
 }
 
 function selectByRule(nodes: RuntimeNode[], rule: RuntimePlacementRule): RuntimeNode[] {
+  const primary = selectByTier(nodes, rule);
+  if (primary.length > 0 || !rule.failover || rule.failover.length === 0) {
+    return primary;
+  }
+  for (const failover of rule.failover) {
+    const selected = selectByTier(nodes, failover);
+    if (selected.length > 0) {
+      return selected;
+    }
+  }
+  return [];
+}
+
+function selectByTier(nodes: RuntimeNode[], rule: RuntimePlacementFailoverRule): RuntimeNode[] {
   const regions = new Set((rule.regions ?? []).map((region) => region.toLowerCase()));
   const labels = rule.labels ?? {};
   const filtered = nodes.filter((node) => {

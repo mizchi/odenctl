@@ -163,6 +163,9 @@ metadata を保持し、maintenance/scale-down 前の drain に使う。control 
 から、draining/offline/stale/saturated node を publish target から除外する。snapshot publish は project
 placement policy で region/label rule を評価し、snapshot 内 project の rule に合う registered runtime
 nodes の union へ publish できる。
+placement rule は ordered `failover` tiers を持てる。primary tier が active target を返す限り fallback
+region には publish しない。primary region の node が offline/stale/saturated などで target にならない
+場合のみ、failover tiers を順に評価して最初に target を持つ tier へ publish する。
 runtime node は Wasmtime backend, WASI profile, runtime version, host version, Engine variant も
 registration/heartbeat で広告する。Admin UI はこの metadata を表示し、Wasmtime upgrade 時に
 新旧 Engine variant が混在していないか確認できる。
@@ -454,7 +457,7 @@ single-region estimate は README の cost estimator にまとめる。現状の
 - WASIp3/component model 前提だが、guest toolchain と host ABI の安定性には追従が必要
 - `cpuMs` は Wasmtime epoch tick ベースであり、精密な kernel CPU time enforcement ではない
 - secret value は local/env KMS envelope encryption と command-provider keyring に対応したが、cloud KMS SDK 直結 adapter は未実装
-- multi-region consistency と cross-region failover policy は未実装
+- multi-region failover は placement publish target selection までで、cross-region state consistency は未実装
 - daemon は local HTTP interface で、runtime node と同一 trust boundary 前提
 - Wasmtime upgrade は Engine variant hash と runtime cache invalidation で分離するが、multi-node
   rolling upgrade の自動 orchestration は未実装
@@ -466,8 +469,8 @@ single-region estimate は README の cost estimator にまとめる。現状の
 
 ## Next Implementation Priorities
 
-1. Multi-region failover
-2. Cloud KMS adapter
-3. CI/weekly perf regression
-4. Store/Instance reuse experiment
-5. Durable autoscaler coordination store
+1. Cloud KMS adapter
+2. CI/weekly perf regression
+3. Store/Instance reuse experiment
+4. Durable autoscaler coordination store
+5. Cross-region state consistency

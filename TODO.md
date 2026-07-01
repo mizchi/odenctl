@@ -136,3 +136,11 @@ Production readiness tasks, in implementation order.
 - [x] Skip provider actions when another controller holds the lease.
 - [x] Record cooldown after successful scale actions.
 - [x] Skip provider actions while cooldown is active.
+
+## 20. Multi-region failover
+
+- [x] Add ordered failover tiers to runtime placement rules.
+- [x] Use failover only when the primary region/label rule has no active targets.
+- [x] Keep primary targets preferred even when fallback regions are less loaded.
+- [x] Apply failover policy to HTTP snapshot publish target selection.
+- [x] Document placement failover behavior and remaining cross-region state limits.

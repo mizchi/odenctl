@@ -59,7 +59,12 @@ export {
   type FlyAutoscalerReport,
   type FlyMachine,
 } from "./control-plane/fly-autoscaler.ts";
-export { selectRuntimeNodesForSnapshot } from "./control-plane/placement.ts";
+export {
+  selectRuntimeNodesForSnapshot,
+  type RuntimePlacementFailoverRule,
+  type RuntimePlacementPolicy,
+  type RuntimePlacementRule,
+} from "./control-plane/placement.ts";
 export { createSnapshotPublishJob } from "./control-plane/snapshot-publish-job.ts";
 export { createMemoryRepository, createSqliteRepository } from "./control-plane/repository.ts";
 export { createPostgresRepository } from "./control-plane/postgres-repository.ts";

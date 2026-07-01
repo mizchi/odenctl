@@ -1485,6 +1485,105 @@ test("HTTP API applies project placement policy to snapshot publish targets", as
   }
 });
 
+test("HTTP API fails over placement targets to fallback regions", async () => {
+  const nrtSnapshots: RouteSnapshot[] = [];
+  const iadSnapshots: RouteSnapshot[] = [];
+  const nrtRuntime = await listenRuntimeSnapshotSink(nrtSnapshots);
+  const iadRuntime = await listenRuntimeSnapshotSink(iadSnapshots);
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+  });
+  const app = createHttpApp({
+    controlPlane: control,
+    runtimePlacement: {
+      projects: {
+        prj_failover: {
+          regions: ["nrt"],
+          labels: { pool: "default" },
+          failover: [
+            { regions: ["iad"], labels: { pool: "default" } },
+          ],
+        },
+      },
+    },
+  });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    await postJson(baseUrl, "/runtime-nodes", {
+      id: "rt_nrt",
+      url: nrtRuntime.baseUrl,
+      region: "nrt",
+      labels: { pool: "default" },
+    });
+    await postJson(baseUrl, "/runtime-nodes", {
+      id: "rt_iad",
+      url: iadRuntime.baseUrl,
+      region: "iad",
+      labels: { pool: "default" },
+    });
+    await postJsonOk(baseUrl, "/runtime-nodes/rt_nrt/heartbeat", {
+      status: "offline",
+      capacity: { concurrentRequests: 128, memoryMb: 4096 },
+      load: { activeRequests: 0 },
+    });
+    await postJsonOk(baseUrl, "/runtime-nodes/rt_iad/heartbeat", {
+      capacity: { concurrentRequests: 128, memoryMb: 4096 },
+      load: { activeRequests: 1 },
+    });
+
+    const project = await postJson(baseUrl, "/projects", { id: "prj_failover", name: "failover" });
+    const artifact = await postJson(baseUrl, "/artifacts", {
+      projectId: project.id,
+      digest: digest("failover"),
+      location: "oci://registry.example.com/mizchi/failover:v1",
+      sizeBytes: 42,
+    });
+    const deployment = await postJson(baseUrl, "/deployments", {
+      projectId: project.id,
+      artifactId: artifact.id,
+      world: "myedge:runtime/worker@0.1.0",
+      runtime: { backend: "wasmtime", version: "wasmtime-43", wasi: "wasip3" },
+      limits: {
+        cpuMs: 50,
+        memoryMb: 64,
+        wallMs: 1000,
+        requestBytes: 1048576,
+        subrequests: 20,
+        hostCalls: 100,
+        responseBytes: 1048576,
+      },
+      capabilities: { outboundHttp: { enabled: false, allow: [] }, kv: [], secrets: [] },
+    });
+    await putJson(baseUrl, "/routes", {
+      projectId: project.id,
+      host: "failover.example.dev",
+      pathPrefix: "/",
+      deploymentId: deployment.id,
+    });
+
+    const publishResponse = await fetch(`${baseUrl}/snapshots/routes/publish`, { method: "POST" });
+    if (publishResponse.status !== 200) {
+      assert.fail(await publishResponse.text());
+    }
+    const publish = await publishResponse.json();
+
+    assert.deepEqual(publish.targets.map((target: any) => target.id), ["rt_iad"]);
+    assert.equal(nrtSnapshots.length, 0);
+    assert.equal(iadSnapshots.length, 1);
+  } finally {
+    await app.close();
+    await nrtRuntime.close();
+    await iadRuntime.close();
+  }
+});
+
 test("HTTP API records runtime node heartbeat and skips inactive nodes when publishing", async () => {
   const activeSnapshots: RouteSnapshot[] = [];
   const offlineSnapshots: RouteSnapshot[] = [];

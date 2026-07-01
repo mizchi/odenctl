@@ -41,6 +41,52 @@ test("placement policy keeps all nodes for projects without a rule", () => {
   );
 });
 
+test("placement policy fails over to fallback regions when primary has no targets", () => {
+  const nodes = [
+    runtimeNode("rt_iad_busy", "iad", { pool: "default" }, 80),
+    runtimeNode("rt_iad_room", "iad", { pool: "default" }, 5),
+    runtimeNode("rt_lhr", "lhr", { pool: "default" }, 0),
+    runtimeNode("rt_other_pool", "iad", { pool: "canary" }, 0),
+  ];
+
+  assert.deepEqual(
+    selectRuntimeNodesForSnapshot(nodes, snapshot(["prj_a"]), {
+      projects: {
+        prj_a: {
+          regions: ["nrt"],
+          labels: { pool: "default" },
+          maxTargets: 1,
+          failover: [
+            { regions: ["iad"], labels: { pool: "default" }, maxTargets: 1 },
+            { regions: ["lhr"], labels: { pool: "default" }, maxTargets: 1 },
+          ],
+        },
+      },
+    }).map((node) => node.id),
+    ["rt_iad_room"],
+  );
+});
+
+test("placement policy keeps primary targets before using failover", () => {
+  const nodes = [
+    runtimeNode("rt_nrt", "nrt", { pool: "default" }, 50),
+    runtimeNode("rt_iad", "iad", { pool: "default" }, 0),
+  ];
+
+  assert.deepEqual(
+    selectRuntimeNodesForSnapshot(nodes, snapshot(["prj_a"]), {
+      projects: {
+        prj_a: {
+          regions: ["nrt"],
+          labels: { pool: "default" },
+          failover: [{ regions: ["iad"], labels: { pool: "default" } }],
+        },
+      },
+    }).map((node) => node.id),
+    ["rt_nrt"],
+  );
+});
+
 test("placement policy publishes empty snapshots to every node", () => {
   const nodes = [
     runtimeNode("rt_a", "nrt", { pool: "default" }, 0),

@@ -445,6 +445,9 @@ node, so it includes lazy materialization and `.cwasm` precompile for that deplo
 `cluster.http.cwasm` rows report aggregate worker HTTP throughput across the emulated runtime nodes.
 With `--placement`, `cluster.placement.region` publishes a new deployment only to the emulated `nrt`
 region nodes and verifies that skipped-region nodes keep serving the previous deployment.
+Placement rules can define ordered `failover` tiers. A failover tier is used only when the primary
+region/label rule has no active publish targets, so healthy primary regions are not widened
+unnecessarily.
 With `--autoscaling`, the report also includes `cluster.autoscale.scale_up_warm` and
 `cluster.autoscale.scale_down_exclude` rows for new-node warmup and target exclusion timing.
 Pass `--host-daemon-url` to use the embedded Wasmtime daemon instead of spawning the host CLI for
