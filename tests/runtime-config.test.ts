@@ -8,6 +8,7 @@ import {
   parseRuntimeIdentityKeys,
   parseRuntimeLabels,
   parseRuntimeShutdownDrainTimeoutMs,
+  resolveRuntimeRouteSnapshotFile,
   resolveRuntimeIdentity,
   resolveRuntimeMemoryMb,
   resolveRuntimeNodeId,
@@ -140,4 +141,13 @@ test("runtime config parses shutdown drain timeout", () => {
     parseRuntimeShutdownDrainTimeoutMs({ RUNTIME_SHUTDOWN_DRAIN_TIMEOUT_MS: "bad" }, 30000),
     30000,
   );
+});
+
+test("runtime config resolves route snapshot file", () => {
+  assert.equal(resolveRuntimeRouteSnapshotFile({}), undefined);
+  assert.equal(
+    resolveRuntimeRouteSnapshotFile({ RUNTIME_ROUTE_SNAPSHOT_FILE: "  .wasmplane/runtime-snapshot.json  " }),
+    ".wasmplane/runtime-snapshot.json",
+  );
+  assert.equal(resolveRuntimeRouteSnapshotFile({ RUNTIME_ROUTE_SNAPSHOT_FILE: "   " }), undefined);
 });

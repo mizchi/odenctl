@@ -7,6 +7,7 @@ export interface RuntimeConfigEnv {
   RUNTIME_REGION?: string;
   RUNTIME_LABELS?: string;
   RUNTIME_SHUTDOWN_DRAIN_TIMEOUT_MS?: string;
+  RUNTIME_ROUTE_SNAPSHOT_FILE?: string;
   WASMPLANE_RUNTIME_IDENTITY_KEY_ID?: string;
   WASMPLANE_RUNTIME_IDENTITY_KEYS?: string;
   WASMPLANE_RUNTIME_IDENTITY_CERT_SHA256?: string;
@@ -134,6 +135,10 @@ export function parseRuntimeCacheGcIntervalMs(env: RuntimeConfigEnv): number | u
 
 export function parseRuntimeShutdownDrainTimeoutMs(env: RuntimeConfigEnv, fallback: number): number {
   return positiveInteger(env.RUNTIME_SHUTDOWN_DRAIN_TIMEOUT_MS, fallback);
+}
+
+export function resolveRuntimeRouteSnapshotFile(env: RuntimeConfigEnv): string | undefined {
+  return firstNonEmpty(env.RUNTIME_ROUTE_SNAPSHOT_FILE);
 }
 
 export function parseProjectConcurrencyLimits(env: RuntimeConfigEnv): Record<string, number> | undefined {

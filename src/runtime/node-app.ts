@@ -18,6 +18,7 @@ import {
 import { enforceRuntimeCapabilities } from "./policy.ts";
 import { resolveRuntimeCapabilities } from "./secrets.ts";
 import type { RuntimeTelemetry } from "./otel.ts";
+import type { RuntimeRouteSnapshotStore } from "./snapshot-store.ts";
 import type {
   CompiledComponent,
   InvokeComponentResponse,
@@ -51,6 +52,8 @@ export interface RuntimeNodeAppOptions {
   warmupOnSnapshot?: boolean;
   hostDaemonMetrics?: RuntimeHostDaemonMetricsOptions;
   initialLifecycleStatus?: RuntimeNodeStatus;
+  initialRouteSnapshot?: RouteSnapshot;
+  snapshotStore?: RuntimeRouteSnapshotStore;
   now?: () => string;
 }
 
@@ -80,6 +83,9 @@ export function createRuntimeNodeApp(options: RuntimeNodeAppOptions) {
   const monotonicNowMs = options.monotonicNowMs ?? (() => Date.now());
   const requestIdGenerator = options.requestIdGenerator ?? (() => randomUUID());
   const metrics = createRuntimeMetrics(now);
+  if (options.initialRouteSnapshot) {
+    metrics.recordSnapshot(options.initialRouteSnapshot);
+  }
   const events = createRuntimeEvents(options.eventBufferSize ?? 100);
   const logs = createRuntimeLogs(options.logBufferSize ?? 100);
   const projectConcurrency = createProjectConcurrencyLimiter(options.maxConcurrentInvocationsByProject);
@@ -188,6 +194,7 @@ export function createRuntimeNodeApp(options: RuntimeNodeAppOptions) {
         } else {
           options.supervisor.loadSnapshot(snapshot);
         }
+        await options.snapshotStore?.save(snapshot);
         metrics.recordSnapshot(snapshot);
         writeJson(response, 200, {
           ok: true,

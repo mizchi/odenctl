@@ -202,4 +202,4 @@ Production readiness tasks, in implementation order.
 - [x] Fail readiness when a configured embedded host daemon is unavailable.
 - [x] Document readiness and local drain operations.
 - [x] Add graceful shutdown that drains, rejects new requests, and waits for active invocations.
-- [ ] Add a startup option to restore the latest accepted route snapshot from disk.
+- [x] Add a startup option to restore the latest accepted route snapshot from disk.

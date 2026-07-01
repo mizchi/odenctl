@@ -18,6 +18,7 @@ import {
   parseRuntimeIdentityKeys,
   parseRuntimeLabels,
   parseRuntimeShutdownDrainTimeoutMs,
+  resolveRuntimeRouteSnapshotFile,
   resolveRuntimeIdentity,
   resolveRuntimeMemoryMb,
   resolveRuntimeNodeId,
@@ -28,6 +29,7 @@ import { createRuntimeNodeApp } from "./node-app.ts";
 import { createOtlpHttpTraceExporter, parseOtlpHeaders } from "./otel.ts";
 import { createEnvSecretStore, createRepositorySecretStore } from "./secrets.ts";
 import { installRuntimeShutdownHandlers } from "./shutdown.ts";
+import { createFileRouteSnapshotStore, loadRouteSnapshotFile } from "./snapshot-store.ts";
 import { createRuntimeSupervisor } from "./supervisor.ts";
 import {
   createWasip3HostBackend,
@@ -56,6 +58,7 @@ const runtimeIdentityKeys = parseRuntimeIdentityKeys(process.env);
 const runtimeCacheRetention = parseRuntimeCacheRetentionPolicy(process.env);
 const runtimeCacheGcIntervalMs = parseRuntimeCacheGcIntervalMs(process.env);
 const shutdownDrainTimeoutMs = parseRuntimeShutdownDrainTimeoutMs(process.env, 30_000);
+const routeSnapshotFile = resolveRuntimeRouteSnapshotFile(process.env);
 const controlPlaneUrl = process.env.CONTROL_PLANE_URL ?? process.env.WASMPLANE_CONTROL_PLANE_URL;
 const controlPlaneToken = process.env.CONTROL_PLANE_TOKEN ?? process.env.WASMPLANE_CONTROL_PLANE_TOKEN;
 const runtimeManagementToken = process.env.WASMPLANE_RUNTIME_TOKEN;
@@ -85,9 +88,10 @@ const runtimeHostInfo: RuntimeNodeHostInfo = {
   hostVersion: runtimeHostVersion,
   engineVariant: runtimeEngineVariant,
 };
+const restoredRouteSnapshot = routeSnapshotFile ? await loadRouteSnapshotFile(routeSnapshotFile) : undefined;
 
 const supervisor = createRuntimeSupervisor({
-  snapshot: {
+  snapshot: restoredRouteSnapshot ?? {
     schemaVersion: 1,
     generatedAt: new Date().toISOString(),
     routes: [],
@@ -133,6 +137,8 @@ const app = createRuntimeNodeApp({
   precompiledCacheEngineVariant: runtimeEngineVariant,
   cacheRetentionIntervalMs: runtimeCacheGcIntervalMs,
   warmupOnSnapshot,
+  initialRouteSnapshot: restoredRouteSnapshot,
+  snapshotStore: routeSnapshotFile ? createFileRouteSnapshotStore(routeSnapshotFile) : undefined,
   telemetry: otlpTraceEndpoint
     ? createOtlpHttpTraceExporter({
       endpoint: otlpTraceEndpoint,

@@ -158,6 +158,10 @@ future snapshot publish target selection by the control plane. While draining, n
 are rejected with `503`; active invocations are allowed to finish. On `SIGTERM` or `SIGINT`, the
 runtime enters the same drain path before process exit. Tune the wait with
 `RUNTIME_SHUTDOWN_DRAIN_TIMEOUT_MS`, which defaults to `30000`.
+Set `RUNTIME_ROUTE_SNAPSHOT_FILE` to persist the latest accepted route snapshot and restore it on
+runtime restart. When a snapshot is restored, `GET /__runtime/readyz` can become ready before the
+control plane republishes, while later `PUT /__runtime/snapshots/routes` calls atomically replace
+the file before ACK.
 Autoscalers can read `GET /autoscaling/signals` from the control plane to get per-runtime
 `activeRequests`, `concurrentRequests`, `loadRatio`, and saturation state. The autoscaling helpers
 turn these signals into scale-up/scale-down decisions, and the Fly Machines prototype reconciler can

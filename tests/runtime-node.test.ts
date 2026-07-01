@@ -270,6 +270,79 @@ test("runtime node close drains active invocation and rejects new worker request
   }
 });
 
+test("runtime node saves accepted route snapshots before acknowledging publish", async () => {
+  const savedSnapshots: RouteSnapshot[] = [];
+  const app = createRuntimeNodeApp({
+    supervisor: {
+      loadSnapshot() {},
+      async prepareRoute() {
+        throw new Error("not used");
+      },
+    },
+    snapshotStore: {
+      async save(routeSnapshot) {
+        savedSnapshots.push(routeSnapshot);
+      },
+    },
+  });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+  const routeSnapshot = snapshot([route("dep_persist", "hello.example.dev", "/", digest("persist"))]);
+
+  try {
+    const update = await fetch(`${baseUrl}/__runtime/snapshots/routes`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(routeSnapshot),
+    });
+    assert.equal(update.status, 200, await update.text());
+    assert.deepEqual(savedSnapshots, [routeSnapshot]);
+  } finally {
+    await app.close();
+  }
+});
+
+test("runtime readiness treats restored initial route snapshot as loaded", async () => {
+  const restored = snapshot([route("dep_restored", "hello.example.dev", "/", digest("restored"))]);
+  const app = createRuntimeNodeApp({
+    supervisor: createRuntimeSupervisor({
+      snapshot: restored,
+      artifactStore: materializedArtifactStore(),
+      backend: compiledBackend(),
+    }),
+    initialRouteSnapshot: restored,
+  });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const ready = await fetch(`${baseUrl}/__runtime/readyz`);
+    assert.equal(ready.status, 200);
+    assert.deepEqual(await ready.json(), {
+      ok: true,
+      status: "active",
+      checks: {
+        lifecycle: { ok: true, status: "active" },
+        snapshot: {
+          ok: true,
+          loaded: 1,
+          routes: 1,
+          generatedAt: "2026-06-26T10:00:00.000Z",
+        },
+        hostDaemon: { ok: true },
+      },
+    });
+  } finally {
+    await app.close();
+  }
+});
+
 test("runtime node can warm snapshot deployments before acknowledging publish", async () => {
   const preparedDeployments: string[] = [];
   const supervisor = createRuntimeSupervisor({
