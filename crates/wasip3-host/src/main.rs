@@ -10,9 +10,10 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, bail};
 use serde_json::Value;
 use wasmplane_wasip3_host::{
-    HostPolicy, HttpRequestInput, InvocationLimits, KvBindingPolicy, OutboundHttpPolicy,
-    SecretBindingPolicy, Wasip3PoolingConfig, Wasip3Runtime, Wasip3RuntimeOptions,
-    invoke_component_handle_with_limits_and_policy, invoke_component_handle_with_persistent_kv,
+    HostPolicy, HttpRequestInput, InstanceReuseContract, InvocationLimits, KvBindingPolicy,
+    OutboundHttpPolicy, SecretBindingPolicy, Wasip3PoolingConfig, Wasip3Runtime,
+    Wasip3RuntimeOptions, invoke_component_handle_with_limits_and_policy,
+    invoke_component_handle_with_persistent_kv,
     invoke_precompiled_component_handle_with_limits_and_policy,
     invoke_precompiled_component_handle_with_persistent_kv, precompile_component_with_pooling,
 };
@@ -388,6 +389,7 @@ fn parse_serve_args(args: &mut impl Iterator<Item = String>) -> Result<ServeArgs
     let mut max_prepared_components = Wasip3RuntimeOptions::default().max_prepared_components;
     let mut max_reusable_instances_per_component =
         Wasip3RuntimeOptions::default().max_reusable_instances_per_component;
+    let mut instance_reuse_contract = Wasip3RuntimeOptions::default().instance_reuse_contract;
     let mut max_concurrent_invocations = DEFAULT_MAX_CONCURRENT_INVOCATIONS;
     let mut pooling = PoolingArgs::default();
 
@@ -409,6 +411,9 @@ fn parse_serve_args(args: &mut impl Iterator<Item = String>) -> Result<ServeArgs
                 max_reusable_instances_per_component =
                     parse_usize(&value, "--experimental-instance-reuse")?
             }
+            "--instance-reuse-contract" => {
+                instance_reuse_contract = parse_instance_reuse_contract(&value)?
+            }
             _ if pooling.set(flag.as_str(), &value)? => {}
             _ => bail!("unexpected argument {flag}"),
         }
@@ -421,6 +426,7 @@ fn parse_serve_args(args: &mut impl Iterator<Item = String>) -> Result<ServeArgs
         runtime_options: Wasip3RuntimeOptions {
             max_prepared_components,
             max_reusable_instances_per_component,
+            instance_reuse_contract,
             pooling: pooling.finish(),
         },
         max_concurrent_invocations,
@@ -846,6 +852,14 @@ fn parse_u16(value: &str, name: &str) -> Result<u16> {
     Ok(value)
 }
 
+fn parse_instance_reuse_contract(value: &str) -> Result<InstanceReuseContract> {
+    match value {
+        "disabled" => Ok(InstanceReuseContract::Disabled),
+        "stateless-v1" => Ok(InstanceReuseContract::StatelessV1),
+        _ => bail!("--instance-reuse-contract must be one of: disabled, stateless-v1"),
+    }
+}
+
 fn parse_usize(value: &str, name: &str) -> Result<usize> {
     let value = value
         .parse::<usize>()
@@ -1053,7 +1067,7 @@ fn print_usage() {
         "  wasmplane-wasip3-host invoke (--component <component.wasm> | --precompiled <component.cwasm>) --method <METHOD> --uri <URI> [--headers <JSON>] [--body <TEXT>] [--wall-ms <MS>] [--cpu-ms <MS>] [--memory-mb <MB>] [--request-bytes <BYTES>] [--response-bytes <BYTES>] [--subrequests <COUNT>] [--host-calls <COUNT>] [--capabilities <JSON>] [--kv-store-dir <DIR>]"
     );
     eprintln!(
-        "  wasmplane-wasip3-host serve [--host <HOST>] [--port <PORT>] [--kv-store-dir <DIR>] [--max-prepared-components <COUNT>] [--max-concurrent-invocations <COUNT>] [--experimental-instance-reuse <COUNT>] [--pooling-total-component-instances <COUNT>] [--pooling-memory-mb <MB>]"
+        "  wasmplane-wasip3-host serve [--host <HOST>] [--port <PORT>] [--kv-store-dir <DIR>] [--max-prepared-components <COUNT>] [--max-concurrent-invocations <COUNT>] [--experimental-instance-reuse <COUNT>] [--instance-reuse-contract <disabled|stateless-v1>] [--pooling-total-component-instances <COUNT>] [--pooling-memory-mb <MB>]"
     );
 }
 
@@ -1236,6 +1250,8 @@ mod tests {
             "3",
             "--experimental-instance-reuse",
             "2",
+            "--instance-reuse-contract",
+            "stateless-v1",
         ]
         .into_iter()
         .map(String::from);
@@ -1246,6 +1262,10 @@ mod tests {
         assert_eq!(
             parsed.runtime_options.max_reusable_instances_per_component,
             2
+        );
+        assert_eq!(
+            parsed.runtime_options.instance_reuse_contract,
+            InstanceReuseContract::StatelessV1
         );
         assert_eq!(parsed.max_concurrent_invocations, 64);
         assert_eq!(
@@ -1260,6 +1280,20 @@ mod tests {
                 max_component_instance_size: mb_to_usize(2),
                 max_core_instance_size: mb_to_usize(3),
             })
+        );
+    }
+
+    #[test]
+    fn parse_serve_args_rejects_unknown_instance_reuse_contract() {
+        let mut args = vec!["--instance-reuse-contract", "reset-export"]
+            .into_iter()
+            .map(String::from);
+
+        let error = parse_serve_args(&mut args).expect_err("unknown contract should fail");
+
+        assert!(
+            format!("{error:?}")
+                .contains("--instance-reuse-contract must be one of: disabled, stateless-v1")
         );
     }
 

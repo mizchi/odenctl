@@ -25,6 +25,7 @@ import {
   createWasip3HostBackend,
   createWasip3HostDaemonInvoker,
   createWasip3HostInvoker,
+  wasip3HostDaemonRuntimeArgsFromEnv,
 } from "../src/runtime/wasip3-host.ts";
 import { createWasmtimeCliBackend } from "../src/runtime/wasmtime.ts";
 
@@ -962,6 +963,28 @@ test("wasip3 host backend includes engine variant in cache path and compile args
     "--pooling-total-component-instances",
     "64",
     "--pooling-memory-mb",
+    "64",
+  ]);
+});
+
+test("wasip3 host daemon args include explicit instance reuse contract", () => {
+  const args = wasip3HostDaemonRuntimeArgsFromEnv({
+    WASMPLANE_WASIP3_HOST_MAX_PREPARED_COMPONENTS: "512",
+    WASMPLANE_WASIP3_HOST_MAX_CONCURRENT_INVOCATIONS: "64",
+    WASMPLANE_WASIP3_EXPERIMENTAL_INSTANCE_REUSE: "2",
+    WASMPLANE_WASIP3_INSTANCE_REUSE_CONTRACT: " stateless-v1 ",
+  }, ["--pooling-total-component-instances", "64"]);
+
+  assert.deepEqual(args, [
+    "--max-prepared-components",
+    "512",
+    "--max-concurrent-invocations",
+    "64",
+    "--experimental-instance-reuse",
+    "2",
+    "--instance-reuse-contract",
+    "stateless-v1",
+    "--pooling-total-component-instances",
     "64",
   ]);
 });

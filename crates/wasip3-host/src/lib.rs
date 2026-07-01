@@ -58,12 +58,26 @@ pub struct Wasip3Runtime {
     engine: Engine,
     prepared: Mutex<PreparedComponentCache>,
     max_reusable_instances_per_component: usize,
+    instance_reuse_contract: InstanceReuseContract,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InstanceReuseContract {
+    Disabled,
+    StatelessV1,
+}
+
+impl InstanceReuseContract {
+    fn allows_idle_instance_reuse(self) -> bool {
+        matches!(self, Self::StatelessV1)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Wasip3RuntimeOptions {
     pub max_prepared_components: usize,
     pub max_reusable_instances_per_component: usize,
+    pub instance_reuse_contract: InstanceReuseContract,
     pub pooling: Option<Wasip3PoolingConfig>,
 }
 
@@ -72,6 +86,7 @@ impl Default for Wasip3RuntimeOptions {
         Self {
             max_prepared_components: 256,
             max_reusable_instances_per_component: 0,
+            instance_reuse_contract: InstanceReuseContract::Disabled,
             pooling: None,
         }
     }
@@ -1436,6 +1451,7 @@ impl Wasip3Runtime {
             engine,
             prepared: Mutex::new(PreparedComponentCache::new(options.max_prepared_components)),
             max_reusable_instances_per_component: options.max_reusable_instances_per_component,
+            instance_reuse_contract: options.instance_reuse_contract,
         })
     }
 
@@ -1520,7 +1536,7 @@ impl Wasip3Runtime {
         let limits = host.invocation_limits;
         enforce_request_body_limit(&request, limits)?;
         let worker_pre = self.prepare_worker(component_key.clone())?;
-        if self.max_reusable_instances_per_component > 0 {
+        if self.instance_reuse_enabled() {
             if let Some(mut reusable) = self.take_reusable_worker(&component_key) {
                 *reusable.store.data_mut() = host;
                 return self.invoke_reusable_worker(component_key, reusable, request, limits);
@@ -1597,6 +1613,11 @@ impl Wasip3Runtime {
             );
     }
 
+    fn instance_reuse_enabled(&self) -> bool {
+        self.max_reusable_instances_per_component > 0
+            && self.instance_reuse_contract.allows_idle_instance_reuse()
+    }
+
     fn invoke_reusable_worker(
         &self,
         component_key: PreparedComponentKey,
@@ -1606,7 +1627,7 @@ impl Wasip3Runtime {
     ) -> Result<HttpResponseOutput> {
         let response =
             invoke_prepared_worker(&mut reusable.store, &reusable.worker, request, limits)?;
-        if self.max_reusable_instances_per_component > 0 {
+        if self.instance_reuse_enabled() {
             *reusable.store.data_mut() = WorkerHost::new();
             self.return_reusable_worker(component_key, reusable);
         }
@@ -2078,6 +2099,7 @@ mod tests {
         let runtime = Wasip3Runtime::with_options(Wasip3RuntimeOptions {
             max_prepared_components: 1,
             max_reusable_instances_per_component: 0,
+            instance_reuse_contract: InstanceReuseContract::Disabled,
             pooling: None,
         })
         .expect("runtime");
@@ -2106,6 +2128,7 @@ mod tests {
         let runtime = Wasip3Runtime::with_options(Wasip3RuntimeOptions {
             max_prepared_components: 4,
             max_reusable_instances_per_component: 0,
+            instance_reuse_contract: InstanceReuseContract::Disabled,
             pooling: Some(Wasip3PoolingConfig::for_component_slots(4, 64)),
         })
         .expect("runtime");
@@ -2127,6 +2150,7 @@ mod tests {
         let runtime = Wasip3Runtime::with_options(Wasip3RuntimeOptions {
             max_prepared_components: 4,
             max_reusable_instances_per_component: 1,
+            instance_reuse_contract: InstanceReuseContract::StatelessV1,
             pooling: None,
         })
         .expect("runtime");
@@ -2143,6 +2167,27 @@ mod tests {
         assert!(format!("{error:?}").contains("wasm trap"));
         assert_eq!(runtime.prepared_component_count(), 1);
         assert_eq!(runtime.reusable_instance_count(), 0);
+    }
+
+    #[test]
+    fn runtime_requires_explicit_contract_before_instance_reuse() {
+        let without_contract = Wasip3Runtime::with_options(Wasip3RuntimeOptions {
+            max_prepared_components: 4,
+            max_reusable_instances_per_component: 1,
+            instance_reuse_contract: InstanceReuseContract::Disabled,
+            pooling: None,
+        })
+        .expect("runtime");
+        let with_contract = Wasip3Runtime::with_options(Wasip3RuntimeOptions {
+            max_prepared_components: 4,
+            max_reusable_instances_per_component: 1,
+            instance_reuse_contract: InstanceReuseContract::StatelessV1,
+            pooling: None,
+        })
+        .expect("runtime");
+
+        assert!(!without_contract.instance_reuse_enabled());
+        assert!(with_contract.instance_reuse_enabled());
     }
 
     #[test]

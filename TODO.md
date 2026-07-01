@@ -162,7 +162,10 @@ Production readiness tasks, in implementation order.
 - [x] Return only successful invocations to the reuse pool; drop trapped or timed-out instances.
 - [x] Expose reusable instance counts through daemon `/stats` and `/metrics`.
 - [x] Wire the Node runtime daemon launcher through `WASMPLANE_WASIP3_EXPERIMENTAL_INSTANCE_REUSE`.
-- [x] Document that reuse is for stateless-worker benchmarking until a guest reset contract exists.
+- [x] Require an explicit `stateless-v1` instance reuse contract before reusing idle guest instances.
+- [x] Wire the Node runtime daemon launcher through `WASMPLANE_WASIP3_INSTANCE_REUSE_CONTRACT`.
+- [x] Document that reuse is for stateless-worker benchmarking until a guest reset export exists.
+- [ ] Add a real guest reset export contract and reject reuse for components that do not implement it.
 
 ## 23. Durable autoscaler coordination store
 

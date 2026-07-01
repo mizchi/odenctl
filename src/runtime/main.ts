@@ -31,6 +31,8 @@ import {
   createWasip3HostBackend,
   createWasip3HostDaemonInvoker,
   createWasip3HostInvoker,
+  wasip3HostDaemonPoolingRuntimeArgsFromEnv,
+  wasip3HostDaemonRuntimeArgsFromEnv,
 } from "./wasip3-host.ts";
 
 const port = Number.parseInt(process.env.RUNTIME_PORT ?? "8788", 10);
@@ -63,8 +65,8 @@ const warmupOnSnapshot = process.env.RUNTIME_SNAPSHOT_WARMUP === "1";
 const warmupConcurrency = Number.parseInt(process.env.RUNTIME_SNAPSHOT_WARMUP_CONCURRENCY ?? "4", 10);
 const otlpTraceEndpoint =
   process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT ?? process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
-const hostDaemonPoolingArgs = hostDaemonPoolingRuntimeArgs(process.env);
-const hostDaemonServeArgs = hostDaemonRuntimeArgs(process.env, hostDaemonPoolingArgs);
+const hostDaemonPoolingArgs = wasip3HostDaemonPoolingRuntimeArgsFromEnv(process.env);
+const hostDaemonServeArgs = wasip3HostDaemonRuntimeArgsFromEnv(process.env, hostDaemonPoolingArgs);
 const precompiledCompileArgs = hostDaemonUrl ? hostDaemonPoolingArgs : [];
 const runtimeVersion = "wasmplane-runtime/0.1.0";
 const runtimeHostVersion = process.env.WASMPLANE_WASIP3_HOST_VERSION ?? "wasmplane-wasip3-host";
@@ -184,40 +186,6 @@ async function startWasip3HostDaemon(input: {
   return child;
 }
 
-function hostDaemonRuntimeArgs(env: Record<string, string | undefined>, poolingArgs: string[]): string[] {
-  const args: string[] = [];
-  appendOptionalArg(args, "--max-prepared-components", env.WASMPLANE_WASIP3_HOST_MAX_PREPARED_COMPONENTS);
-  appendOptionalArg(args, "--max-concurrent-invocations", env.WASMPLANE_WASIP3_HOST_MAX_CONCURRENT_INVOCATIONS);
-  appendOptionalArg(args, "--experimental-instance-reuse", env.WASMPLANE_WASIP3_EXPERIMENTAL_INSTANCE_REUSE);
-  args.push(...poolingArgs);
-  return args;
-}
-
-function hostDaemonPoolingRuntimeArgs(env: Record<string, string | undefined>): string[] {
-  const args: string[] = [];
-  appendOptionalArg(
-    args,
-    "--pooling-total-component-instances",
-    env.WASMPLANE_WASIP3_POOLING_TOTAL_COMPONENT_INSTANCES,
-  );
-  appendOptionalArg(args, "--pooling-memory-mb", env.WASMPLANE_WASIP3_POOLING_MEMORY_MB);
-  appendOptionalArg(
-    args,
-    "--pooling-total-core-instances",
-    env.WASMPLANE_WASIP3_POOLING_TOTAL_CORE_INSTANCES,
-  );
-  appendOptionalArg(args, "--pooling-total-memories", env.WASMPLANE_WASIP3_POOLING_TOTAL_MEMORIES);
-  appendOptionalArg(args, "--pooling-total-tables", env.WASMPLANE_WASIP3_POOLING_TOTAL_TABLES);
-  appendOptionalArg(args, "--pooling-table-elements", env.WASMPLANE_WASIP3_POOLING_TABLE_ELEMENTS);
-  appendOptionalArg(
-    args,
-    "--pooling-component-instance-mb",
-    env.WASMPLANE_WASIP3_POOLING_COMPONENT_INSTANCE_MB,
-  );
-  appendOptionalArg(args, "--pooling-core-instance-mb", env.WASMPLANE_WASIP3_POOLING_CORE_INSTANCE_MB);
-  return args;
-}
-
 function engineCacheVariant(args: string[]): string {
   const digest = createHash("sha256").update(args.join("\0")).digest("hex").slice(0, 16);
   return `engine-${digest}`;
@@ -229,12 +197,6 @@ async function hostBinaryCacheKey(hostBin: string): Promise<string> {
     return `${hostBin}:${info.size}:${Math.trunc(info.mtimeMs)}`;
   } catch {
     return hostBin;
-  }
-}
-
-function appendOptionalArg(args: string[], flag: string, value: string | undefined) {
-  if (value && value.trim().length > 0) {
-    args.push(flag, value.trim());
   }
 }
 

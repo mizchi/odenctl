@@ -42,6 +42,44 @@ export interface Wasip3HostDaemonInvokerOptions {
   fetch?: typeof fetch;
 }
 
+export function wasip3HostDaemonRuntimeArgsFromEnv(
+  env: Record<string, string | undefined>,
+  poolingArgs: string[] = wasip3HostDaemonPoolingRuntimeArgsFromEnv(env),
+): string[] {
+  const args: string[] = [];
+  appendOptionalArg(args, "--max-prepared-components", env.WASMPLANE_WASIP3_HOST_MAX_PREPARED_COMPONENTS);
+  appendOptionalArg(args, "--max-concurrent-invocations", env.WASMPLANE_WASIP3_HOST_MAX_CONCURRENT_INVOCATIONS);
+  appendOptionalArg(args, "--experimental-instance-reuse", env.WASMPLANE_WASIP3_EXPERIMENTAL_INSTANCE_REUSE);
+  appendOptionalArg(args, "--instance-reuse-contract", env.WASMPLANE_WASIP3_INSTANCE_REUSE_CONTRACT);
+  args.push(...poolingArgs);
+  return args;
+}
+
+export function wasip3HostDaemonPoolingRuntimeArgsFromEnv(env: Record<string, string | undefined>): string[] {
+  const args: string[] = [];
+  appendOptionalArg(
+    args,
+    "--pooling-total-component-instances",
+    env.WASMPLANE_WASIP3_POOLING_TOTAL_COMPONENT_INSTANCES,
+  );
+  appendOptionalArg(args, "--pooling-memory-mb", env.WASMPLANE_WASIP3_POOLING_MEMORY_MB);
+  appendOptionalArg(
+    args,
+    "--pooling-total-core-instances",
+    env.WASMPLANE_WASIP3_POOLING_TOTAL_CORE_INSTANCES,
+  );
+  appendOptionalArg(args, "--pooling-total-memories", env.WASMPLANE_WASIP3_POOLING_TOTAL_MEMORIES);
+  appendOptionalArg(args, "--pooling-total-tables", env.WASMPLANE_WASIP3_POOLING_TOTAL_TABLES);
+  appendOptionalArg(args, "--pooling-table-elements", env.WASMPLANE_WASIP3_POOLING_TABLE_ELEMENTS);
+  appendOptionalArg(
+    args,
+    "--pooling-component-instance-mb",
+    env.WASMPLANE_WASIP3_POOLING_COMPONENT_INSTANCE_MB,
+  );
+  appendOptionalArg(args, "--pooling-core-instance-mb", env.WASMPLANE_WASIP3_POOLING_CORE_INSTANCE_MB);
+  return args;
+}
+
 export function createWasip3HostBackend(options: Wasip3HostBackendOptions): RuntimeBackend {
   const hostBin = options.hostBin ?? "wasmplane-wasip3-host";
   const hostArgsPrefix = options.hostArgsPrefix ?? [];
@@ -332,5 +370,11 @@ async function exists(path: string): Promise<boolean> {
     return true;
   } catch {
     return false;
+  }
+}
+
+function appendOptionalArg(args: string[], flag: string, value: string | undefined) {
+  if (value && value.trim().length > 0) {
+    args.push(flag, value.trim());
   }
 }
