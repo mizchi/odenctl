@@ -66,6 +66,9 @@ Set `WASMPLANE_USAGE_QUOTA_INVOCATION_LIMITS`, `WASMPLANE_USAGE_QUOTA_CPU_MS_LIM
 `WASMPLANE_USAGE_QUOTA_EGRESS_BYTES_LIMITS`, `WASMPLANE_USAGE_QUOTA_STORAGE_BYTES_LIMITS`, and
 `WASMPLANE_USAGE_QUOTA_SQLITE_UNIT_LIMITS` to enforce calendar-month billing quotas from usage
 ledgers before accepting new usage events. Values are comma-separated `project=value` pairs.
+Usage event ids are idempotency keys: retrying the same event payload with the same id returns the
+existing event without incrementing ledger totals, while reusing an id for different payloads is a
+conflict.
 Set `WASMPLANE_SNAPSHOT_PUBLISH_INTERVAL_MS` to run a background publish job that periodically
 generates the current route snapshot and publishes it to configured/registered active runtime
 nodes. Each generated route snapshot includes a content-derived `snap_<hash>` id, and publish

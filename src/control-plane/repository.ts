@@ -33,6 +33,7 @@ export interface ControlPlaneRepository {
   listProjectApiKeys(projectId: string): ApiKey[];
   updateApiKeyLastUsed(id: string, lastUsedAt: string): ApiKey;
   createUsageEvent(event: UsageEvent): UsageEvent;
+  getUsageEvent(id: string): UsageEvent | undefined;
   getProjectUsageSummary(projectId: string, from?: string, to?: string): ProjectUsageSummary;
   createCustomDomain(domain: CustomDomain): CustomDomain;
   getCustomDomain(id: string): CustomDomain | undefined;
@@ -255,6 +256,11 @@ class SqliteControlPlaneRepository implements ControlPlaneRepository {
     } catch (error) {
       throw writeError("usage event", event.id, error);
     }
+  }
+
+  getUsageEvent(id: string): UsageEvent | undefined {
+    const row = this.db.prepare("select * from usage_events where id = ?").get(id);
+    return row ? usageEventFromRow(row) : undefined;
   }
 
   getProjectUsageSummary(projectId: string, from?: string, to?: string): ProjectUsageSummary {

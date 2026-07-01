@@ -111,6 +111,7 @@ export interface AsyncControlPlaneRepository {
   listProjectApiKeys(projectId: string): Promise<ApiKey[]>;
   updateApiKeyLastUsed(id: string, lastUsedAt: string): Promise<ApiKey>;
   createUsageEvent(event: UsageEvent): Promise<UsageEvent>;
+  getUsageEvent(id: string): Promise<UsageEvent | undefined>;
   getProjectUsageSummary(projectId: string, from?: string, to?: string): Promise<ProjectUsageSummary>;
   createCustomDomain(domain: CustomDomain): Promise<CustomDomain>;
   getCustomDomain(id: string): Promise<CustomDomain | undefined>;
@@ -572,8 +573,22 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
       ...(dimensions ? { dimensions } : {}),
       recordedAt,
     };
+    const existing = await repository.getUsageEvent(event.id);
+    if (existing) {
+      return resolveUsageEventReplay(event, existing);
+    }
     await enforceUsageQuota(project.id, event);
-    return repository.createUsageEvent(event);
+    try {
+      return await repository.createUsageEvent(event);
+    } catch (error) {
+      if (isConflictError(error)) {
+        const raced = await repository.getUsageEvent(event.id);
+        if (raced) {
+          return resolveUsageEventReplay(event, raced);
+        }
+      }
+      throw error;
+    }
   }
 
   async function getProjectUsageSummary(
@@ -1230,6 +1245,30 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
       quantity: event.quantity,
     });
   }
+}
+
+function resolveUsageEventReplay(event: UsageEvent, existing: UsageEvent): UsageEvent {
+  if (sameUsageEvent(event, existing)) {
+    return existing;
+  }
+  throw new ControlPlaneError(
+    "conflict",
+    `usage event ${event.id} already exists with different payload`,
+  );
+}
+
+function sameUsageEvent(left: UsageEvent, right: UsageEvent): boolean {
+  return left.id === right.id
+    && left.organizationId === right.organizationId
+    && left.projectId === right.projectId
+    && left.metric === right.metric
+    && left.quantity === right.quantity
+    && left.recordedAt === right.recordedAt
+    && JSON.stringify(left.dimensions ?? {}) === JSON.stringify(right.dimensions ?? {});
+}
+
+function isConflictError(error: unknown): boolean {
+  return error instanceof ControlPlaneError && error.code === "conflict";
 }
 
 function isActiveRuntimeNode(

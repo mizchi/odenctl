@@ -229,6 +229,11 @@ export class PostgresControlPlaneRepository implements AsyncControlPlaneReposito
     }
   }
 
+  async getUsageEvent(id: string): Promise<UsageEvent | undefined> {
+    const result = await this.pool.query("select * from usage_events where id = $1", [id]);
+    return result.rows[0] ? usageEventFromRow(result.rows[0]) : undefined;
+  }
+
   async getProjectUsageSummary(
     projectId: string,
     from?: string,
@@ -1007,6 +1012,18 @@ function routeFromRow(row: any): RoutePointer {
       ? jsonValue(row.targets_json)
       : [{ deploymentId: row.deployment_id, weight: 100 }],
     updatedAt: row.updated_at,
+  };
+}
+
+function usageEventFromRow(row: any): UsageEvent {
+  return {
+    id: row.id,
+    ...(row.organization_id ? { organizationId: row.organization_id } : {}),
+    projectId: row.project_id,
+    metric: row.metric,
+    quantity: Number(row.quantity),
+    ...(row.dimensions_json ? { dimensions: jsonValue(row.dimensions_json) } : {}),
+    recordedAt: row.recorded_at,
   };
 }
 

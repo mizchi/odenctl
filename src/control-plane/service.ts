@@ -508,8 +508,22 @@ export function createControlPlane(options: ControlPlaneOptions) {
       ...(dimensions ? { dimensions } : {}),
       recordedAt,
     };
+    const existing = repository.getUsageEvent(event.id);
+    if (existing) {
+      return resolveUsageEventReplay(event, existing);
+    }
     enforceUsageQuota(project.id, event);
-    return repository.createUsageEvent(event);
+    try {
+      return repository.createUsageEvent(event);
+    } catch (error) {
+      if (isConflictError(error)) {
+        const raced = repository.getUsageEvent(event.id);
+        if (raced) {
+          return resolveUsageEventReplay(event, raced);
+        }
+      }
+      throw error;
+    }
   }
 
   function getProjectUsageSummary(input: GetProjectUsageSummaryInput): ProjectUsageSummary {
@@ -1144,6 +1158,30 @@ export function createControlPlane(options: ControlPlaneOptions) {
       quantity: event.quantity,
     });
   }
+}
+
+function resolveUsageEventReplay(event: UsageEvent, existing: UsageEvent): UsageEvent {
+  if (sameUsageEvent(event, existing)) {
+    return existing;
+  }
+  throw new ControlPlaneError(
+    "conflict",
+    `usage event ${event.id} already exists with different payload`,
+  );
+}
+
+function sameUsageEvent(left: UsageEvent, right: UsageEvent): boolean {
+  return left.id === right.id
+    && left.organizationId === right.organizationId
+    && left.projectId === right.projectId
+    && left.metric === right.metric
+    && left.quantity === right.quantity
+    && left.recordedAt === right.recordedAt
+    && JSON.stringify(left.dimensions ?? {}) === JSON.stringify(right.dimensions ?? {});
+}
+
+function isConflictError(error: unknown): boolean {
+  return error instanceof ControlPlaneError && error.code === "conflict";
 }
 
 function isActiveRuntimeNode(

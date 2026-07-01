@@ -223,6 +223,44 @@ test("control plane records project usage metering events", () => {
   );
 });
 
+test("control plane records usage events idempotently by event id", () => {
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+    projectUsageQuotas: {
+      prj_usage_idempotent: {
+        period: "calendar_month",
+        invocations: 1,
+      },
+    },
+  });
+  const project = control.createProject({ id: "prj_usage_idempotent", name: "usage idempotent" });
+  const event = {
+    id: "use_idempotent",
+    projectId: project.id,
+    metric: "invocation" as const,
+    quantity: 1,
+    dimensions: { deploymentId: "dep_idempotent", status: 200 },
+    recordedAt: "2026-07-01T00:00:00.000Z",
+  };
+
+  assert.deepEqual(control.recordUsageEvent(event), control.recordUsageEvent(event));
+  assert.deepEqual(control.getProjectUsageSummary({ projectId: project.id }).totals, {
+    invocations: 1,
+    cpuMs: 0,
+    wallMs: 0,
+    memoryMbMs: 0,
+    egressBytes: 0,
+    storageBytes: 0,
+    sqliteUnits: 0,
+  });
+  assert.throws(
+    () => control.recordUsageEvent({ ...event, quantity: 2 }),
+    /usage event use_idempotent already exists with different payload/,
+  );
+});
+
 test("control plane reports per-tenant enforcement status", () => {
   const control = createControlPlane({
     repository: createMemoryRepository(),
@@ -533,6 +571,12 @@ test("async control plane manages tenant API keys and usage meters", async () =>
     projectId: project.id,
     name: "Async key",
     scopes: ["read", "write"],
+  });
+  await control.recordUsageEvent({
+    id: "use_async",
+    projectId: project.id,
+    metric: "sqlite_unit",
+    quantity: 3,
   });
   await control.recordUsageEvent({
     id: "use_async",

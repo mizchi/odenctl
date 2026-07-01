@@ -297,6 +297,57 @@ test("HTTP API records and reads project usage metering", async () => {
   }
 });
 
+test("HTTP API records usage events idempotently by event id", async () => {
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+    projectUsageQuotas: {
+      prj_http_usage_idempotent: {
+        period: "calendar_month",
+        invocations: 1,
+      },
+    },
+  });
+  const app = createHttpApp({ controlPlane: control });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const project = await postJson(baseUrl, "/projects", {
+      id: "prj_http_usage_idempotent",
+      name: "http usage idempotent",
+    });
+    const event = {
+      id: "use_http_idempotent",
+      projectId: project.id,
+      metric: "invocation",
+      quantity: 1,
+      recordedAt: "2026-07-01T00:00:00.000Z",
+    };
+    assert.deepEqual(
+      await postJson(baseUrl, "/usage/events", event),
+      await postJson(baseUrl, "/usage/events", event),
+    );
+    const summaryResponse = await fetch(`${baseUrl}/projects/${project.id}/usage`);
+    assert.equal(summaryResponse.status, 200);
+    assert.equal((await summaryResponse.json()).totals.invocations, 1);
+
+    const conflict = await fetch(`${baseUrl}/usage/events`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ...event, quantity: 2 }),
+    });
+    assert.equal(conflict.status, 409);
+    assert.match((await conflict.json()).error.message, /already exists with different payload/);
+  } finally {
+    await app.close();
+  }
+});
+
 test("HTTP API exposes project enforcement report", async () => {
   const control = createControlPlane({
     repository: createMemoryRepository(),
