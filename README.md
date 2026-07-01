@@ -160,6 +160,10 @@ Wasmtime daemon and invoke warmed `.cwasm` components over `POST /invoke` instea
 Use `WASMPLANE_WASIP3_HOST_MAX_CONCURRENT_INVOCATIONS` to cap in-flight host invocations before
 Wasmtime instantiation; the default is 128. The daemon also exposes `GET /stats` for compact JSON
 pressure counters and `GET /metrics` for Prometheus-format host metrics.
+`WASMPLANE_WASIP3_EXPERIMENTAL_INSTANCE_REUSE` enables a disabled-by-default idle Store/Instance
+reuse pool per prepared component. This is only for stateless-worker benchmarking: guest memory and
+globals are not reset by the component model, so stateful or untrusted workloads should keep the
+default isolated-per-request instantiation path.
 When the runtime is configured with `WASMPLANE_WASIP3_HOST_DAEMON=1` or
 `WASMPLANE_WASIP3_HOST_DAEMON_URL`, `GET /__runtime/metrics` includes the daemon `/stats` payload
 under `hostDaemon`.

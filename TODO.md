@@ -152,3 +152,11 @@ Production readiness tasks, in implementation order.
 - [x] Add checked-in perf budgets for latency, throughput, errors, and cluster rollout timing.
 - [x] Add a reproducible `just perf-regression` command that emits JSON and Markdown artifacts.
 - [x] Add a scheduled GitHub Actions workflow with artifact upload and step summary.
+
+## 22. Store / Instance reuse experiment
+
+- [x] Add a disabled-by-default Rust host daemon flag for per-component idle Store/Instance reuse.
+- [x] Return only successful invocations to the reuse pool; drop trapped or timed-out instances.
+- [x] Expose reusable instance counts through daemon `/stats` and `/metrics`.
+- [x] Wire the Node runtime daemon launcher through `WASMPLANE_WASIP3_EXPERIMENTAL_INSTANCE_REUSE`.
+- [x] Document that reuse is for stateless-worker benchmarking until a guest reset contract exists.

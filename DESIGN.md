@@ -209,14 +209,16 @@ daemon の責務:
 - shared Wasmtime `Engine` を保持する
 - LRU-bounded prepared component cache を保持する
 - `.cwasm` を deserialize して instantiate する
-- request ごとに fresh `Store` を作る
+- default では request ごとに fresh `Store` / Instance を作る
 - WIT host imports を提供する
 - admission control で in-flight invoke 数を制御する
 - `/stats` と `/metrics` を公開する
 
-意図的に Store/Instance の再利用はまだしない。guest state の漏れを避けるため、
-まずは `WorkerPre` cache + fresh Store/Instance per request を基準にしている。
-高密度化は Wasmtime pooling allocator で行う。
+Store/Instance reuse は `--experimental-instance-reuse` / `WASMPLANE_WASIP3_EXPERIMENTAL_INSTANCE_REUSE`
+で明示的に有効化する実験機能である。成功した invocation の Store/Instance だけを idle pool に戻し、
+trap/timeout/error した instance は破棄する。component model は guest memory/global state を自動 reset
+しないため、production default は `WorkerPre` cache + fresh Store/Instance per request のままとし、
+reuse は stateless worker benchmark 用に限定する。高密度化の標準 path は Wasmtime pooling allocator で行う。
 
 daemon endpoints:
 
@@ -466,13 +468,13 @@ single-region estimate は README の cost estimator にまとめる。現状の
   dead-letter/replay UI は未実装
 - Fly autoscaler lease/cooldown は coordination interface と in-memory store までで、durable store と
   provider idempotency metadata は未実装
-- Store/Instance pooling reuse は未実装
+- Store/Instance reuse は experimental flag のみで、guest state reset contract は未実装
 - weekly perf regression は fixed budget check で、履歴ベースの trend/regression 分析は未実装
 
 ## Next Implementation Priorities
 
-1. Store/Instance reuse experiment
-2. Durable autoscaler coordination store
-3. Cross-region state consistency
-4. GCP/Azure KMS adapter
-5. Historical perf trend analysis
+1. Durable autoscaler coordination store
+2. Cross-region state consistency
+3. GCP/Azure KMS adapter
+4. Historical perf trend analysis
+5. Safe guest reset contract for instance reuse

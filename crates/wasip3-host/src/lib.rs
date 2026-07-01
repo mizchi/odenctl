@@ -57,11 +57,13 @@ pub struct HttpResponseOutput {
 pub struct Wasip3Runtime {
     engine: Engine,
     prepared: Mutex<PreparedComponentCache>,
+    max_reusable_instances_per_component: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Wasip3RuntimeOptions {
     pub max_prepared_components: usize,
+    pub max_reusable_instances_per_component: usize,
     pub pooling: Option<Wasip3PoolingConfig>,
 }
 
@@ -69,6 +71,7 @@ impl Default for Wasip3RuntimeOptions {
     fn default() -> Self {
         Self {
             max_prepared_components: 256,
+            max_reusable_instances_per_component: 0,
             pooling: None,
         }
     }
@@ -104,8 +107,18 @@ impl Wasip3PoolingConfig {
 
 struct PreparedComponentCache {
     max: usize,
-    entries: HashMap<PreparedComponentKey, WorkerPre<WorkerHost>>,
+    entries: HashMap<PreparedComponentKey, PreparedComponentEntry>,
     lru: VecDeque<PreparedComponentKey>,
+}
+
+struct PreparedComponentEntry {
+    worker_pre: WorkerPre<WorkerHost>,
+    idle: Vec<ReusableWorkerInstance>,
+}
+
+struct ReusableWorkerInstance {
+    store: Store<WorkerHost>,
+    worker: Worker,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -1422,6 +1435,7 @@ impl Wasip3Runtime {
         Ok(Self {
             engine,
             prepared: Mutex::new(PreparedComponentCache::new(options.max_prepared_components)),
+            max_reusable_instances_per_component: options.max_reusable_instances_per_component,
         })
     }
 
@@ -1490,6 +1504,13 @@ impl Wasip3Runtime {
             .len()
     }
 
+    pub fn reusable_instance_count(&self) -> usize {
+        self.prepared
+            .lock()
+            .expect("prepared component cache poisoned")
+            .reusable_len()
+    }
+
     fn invoke_component_handle_with_host(
         &self,
         component_key: PreparedComponentKey,
@@ -1498,51 +1519,25 @@ impl Wasip3Runtime {
     ) -> Result<HttpResponseOutput> {
         let limits = host.invocation_limits;
         enforce_request_body_limit(&request, limits)?;
-        let worker_pre = self.prepare_worker(component_key)?;
+        let worker_pre = self.prepare_worker(component_key.clone())?;
+        if self.max_reusable_instances_per_component > 0 {
+            if let Some(mut reusable) = self.take_reusable_worker(&component_key) {
+                *reusable.store.data_mut() = host;
+                return self.invoke_reusable_worker(component_key, reusable, request, limits);
+            }
+        }
+
         let mut store = Store::new(&self.engine, host);
         store.limiter(|host| &mut host.store_limits);
         let epoch_deadline = configure_ticker_epoch_deadline(&mut store, limits);
         let worker = futures::executor::block_on(worker_pre.instantiate_async(&mut store))
             .map_err(|error| map_epoch_deadline_error(error, epoch_deadline))?;
-
-        let response = futures::executor::block_on(async {
-            store
-                .run_concurrent(async |accessor| -> wasmtime::Result<_> {
-                    let body = accessor.with(|mut access| {
-                        access.get().table.push(IncomingBody {
-                            bytes: request.body,
-                            offset: 0,
-                        })
-                    })?;
-                    let request = Request {
-                        head: myedge::runtime::types::RequestHead {
-                            method: request.method,
-                            uri: request.uri,
-                            headers: request
-                                .headers
-                                .into_iter()
-                                .map(|(name, value)| myedge::runtime::types::Header { name, value })
-                                .collect(),
-                        },
-                        body,
-                    };
-                    worker.call_handle(accessor, request).await
-                })
-                .await?
-        })
-        .map_err(|error| map_epoch_deadline_error(error, epoch_deadline))?;
-
-        let response_body = store.data().outgoing_body_bytes(&response.body)?;
-        Ok(HttpResponseOutput {
-            status: response.head.status,
-            headers: response
-                .head
-                .headers
-                .into_iter()
-                .map(|header| (header.name, header.value))
-                .collect(),
-            body: response_body,
-        })
+        self.invoke_reusable_worker(
+            component_key,
+            ReusableWorkerInstance { store, worker },
+            request,
+            limits,
+        )
     }
 
     fn prepare_worker(&self, component_key: PreparedComponentKey) -> Result<WorkerPre<WorkerHost>> {
@@ -1576,6 +1571,94 @@ impl Wasip3Runtime {
             .expect("prepared component cache poisoned");
         Ok(cache.insert(component_key, prepared))
     }
+
+    fn take_reusable_worker(
+        &self,
+        component_key: &PreparedComponentKey,
+    ) -> Option<ReusableWorkerInstance> {
+        self.prepared
+            .lock()
+            .expect("prepared component cache poisoned")
+            .take_reusable(component_key)
+    }
+
+    fn return_reusable_worker(
+        &self,
+        component_key: PreparedComponentKey,
+        reusable: ReusableWorkerInstance,
+    ) {
+        self.prepared
+            .lock()
+            .expect("prepared component cache poisoned")
+            .return_reusable(
+                component_key,
+                reusable,
+                self.max_reusable_instances_per_component,
+            );
+    }
+
+    fn invoke_reusable_worker(
+        &self,
+        component_key: PreparedComponentKey,
+        mut reusable: ReusableWorkerInstance,
+        request: HttpRequestInput,
+        limits: InvocationLimits,
+    ) -> Result<HttpResponseOutput> {
+        let response =
+            invoke_prepared_worker(&mut reusable.store, &reusable.worker, request, limits)?;
+        if self.max_reusable_instances_per_component > 0 {
+            *reusable.store.data_mut() = WorkerHost::new();
+            self.return_reusable_worker(component_key, reusable);
+        }
+        Ok(response)
+    }
+}
+
+fn invoke_prepared_worker(
+    store: &mut Store<WorkerHost>,
+    worker: &Worker,
+    request: HttpRequestInput,
+    limits: InvocationLimits,
+) -> Result<HttpResponseOutput> {
+    let epoch_deadline = configure_ticker_epoch_deadline(store, limits);
+    let response = futures::executor::block_on(async {
+        store
+            .run_concurrent(async |accessor| -> wasmtime::Result<_> {
+                let body = accessor.with(|mut access| {
+                    access.get().table.push(IncomingBody {
+                        bytes: request.body,
+                        offset: 0,
+                    })
+                })?;
+                let request = Request {
+                    head: myedge::runtime::types::RequestHead {
+                        method: request.method,
+                        uri: request.uri,
+                        headers: request
+                            .headers
+                            .into_iter()
+                            .map(|(name, value)| myedge::runtime::types::Header { name, value })
+                            .collect(),
+                    },
+                    body,
+                };
+                worker.call_handle(accessor, request).await
+            })
+            .await?
+    })
+    .map_err(|error| map_epoch_deadline_error(error, epoch_deadline))?;
+
+    let response_body = store.data().outgoing_body_bytes(&response.body)?;
+    Ok(HttpResponseOutput {
+        status: response.head.status,
+        headers: response
+            .head
+            .headers
+            .into_iter()
+            .map(|header| (header.name, header.value))
+            .collect(),
+        body: response_body,
+    })
 }
 
 impl PreparedComponentCache {
@@ -1591,8 +1674,12 @@ impl PreparedComponentCache {
         self.entries.len()
     }
 
+    fn reusable_len(&self) -> usize {
+        self.entries.values().map(|entry| entry.idle.len()).sum()
+    }
+
     fn get(&mut self, key: &PreparedComponentKey) -> Option<WorkerPre<WorkerHost>> {
-        let prepared = self.entries.get(key).cloned()?;
+        let prepared = self.entries.get(key)?.worker_pre.clone();
         self.touch(key);
         Some(prepared)
     }
@@ -1602,7 +1689,13 @@ impl PreparedComponentCache {
         key: PreparedComponentKey,
         prepared: WorkerPre<WorkerHost>,
     ) -> WorkerPre<WorkerHost> {
-        self.entries.insert(key.clone(), prepared.clone());
+        self.entries.insert(
+            key.clone(),
+            PreparedComponentEntry {
+                worker_pre: prepared.clone(),
+                idle: Vec::new(),
+            },
+        );
         self.touch(&key);
         while self.entries.len() > self.max {
             let Some(evicted) = self.lru.pop_front() else {
@@ -1611,6 +1704,30 @@ impl PreparedComponentCache {
             self.entries.remove(&evicted);
         }
         prepared
+    }
+
+    fn take_reusable(&mut self, key: &PreparedComponentKey) -> Option<ReusableWorkerInstance> {
+        let reusable = self.entries.get_mut(key)?.idle.pop()?;
+        self.touch(key);
+        Some(reusable)
+    }
+
+    fn return_reusable(
+        &mut self,
+        key: PreparedComponentKey,
+        reusable: ReusableWorkerInstance,
+        max_reusable_instances_per_component: usize,
+    ) {
+        if max_reusable_instances_per_component == 0 {
+            return;
+        }
+        let Some(entry) = self.entries.get_mut(&key) else {
+            return;
+        };
+        if entry.idle.len() < max_reusable_instances_per_component {
+            entry.idle.push(reusable);
+            self.touch(&key);
+        }
     }
 
     fn touch(&mut self, key: &PreparedComponentKey) {
@@ -1960,6 +2077,7 @@ mod tests {
         std::fs::copy(&component_path, &second_component_path).expect("copy component");
         let runtime = Wasip3Runtime::with_options(Wasip3RuntimeOptions {
             max_prepared_components: 1,
+            max_reusable_instances_per_component: 0,
             pooling: None,
         })
         .expect("runtime");
@@ -1987,6 +2105,7 @@ mod tests {
         let component_path = build_async_worker_component(&dir);
         let runtime = Wasip3Runtime::with_options(Wasip3RuntimeOptions {
             max_prepared_components: 4,
+            max_reusable_instances_per_component: 0,
             pooling: Some(Wasip3PoolingConfig::for_component_slots(4, 64)),
         })
         .expect("runtime");
@@ -1999,6 +2118,31 @@ mod tests {
         );
 
         assert_eq!(runtime.prepared_component_count(), 1);
+    }
+
+    #[test]
+    fn runtime_drops_reusable_instance_after_guest_trap() {
+        let dir = temp_dir("runtime-reuse-trap");
+        let component_path = build_async_worker_component(&dir);
+        let runtime = Wasip3Runtime::with_options(Wasip3RuntimeOptions {
+            max_prepared_components: 4,
+            max_reusable_instances_per_component: 1,
+            pooling: None,
+        })
+        .expect("runtime");
+
+        let error = runtime
+            .invoke_component_handle_with_limits_and_policy(
+                &component_path,
+                hello_request(),
+                InvocationLimits::default(),
+                HostPolicy::deny_all(),
+            )
+            .expect_err("dummy component should trap");
+
+        assert!(format!("{error:?}").contains("wasm trap"));
+        assert_eq!(runtime.prepared_component_count(), 1);
+        assert_eq!(runtime.reusable_instance_count(), 0);
     }
 
     #[test]

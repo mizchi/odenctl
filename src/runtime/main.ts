@@ -188,6 +188,7 @@ function hostDaemonRuntimeArgs(env: Record<string, string | undefined>, poolingA
   const args: string[] = [];
   appendOptionalArg(args, "--max-prepared-components", env.WASMPLANE_WASIP3_HOST_MAX_PREPARED_COMPONENTS);
   appendOptionalArg(args, "--max-concurrent-invocations", env.WASMPLANE_WASIP3_HOST_MAX_CONCURRENT_INVOCATIONS);
+  appendOptionalArg(args, "--experimental-instance-reuse", env.WASMPLANE_WASIP3_EXPERIMENTAL_INSTANCE_REUSE);
   args.push(...poolingArgs);
   return args;
 }

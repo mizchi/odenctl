@@ -901,6 +901,7 @@ test("runtime node includes host daemon stats in metrics when configured", async
         return new Response(JSON.stringify({
           ok: true,
           preparedComponents: 3,
+          reusableInstances: 2,
           activeInvocations: 1,
           maxConcurrentInvocations: 64,
           totalInvocations: 10,
@@ -925,6 +926,7 @@ test("runtime node includes host daemon stats in metrics when configured", async
     assert.deepEqual(metrics.hostDaemon, {
       ok: true,
       preparedComponents: 3,
+      reusableInstances: 2,
       activeInvocations: 1,
       maxConcurrentInvocations: 64,
       totalInvocations: 10,

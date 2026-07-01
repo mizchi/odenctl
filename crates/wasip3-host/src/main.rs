@@ -386,6 +386,8 @@ fn parse_serve_args(args: &mut impl Iterator<Item = String>) -> Result<ServeArgs
     let mut port = 8789;
     let mut kv_store_dir = None;
     let mut max_prepared_components = Wasip3RuntimeOptions::default().max_prepared_components;
+    let mut max_reusable_instances_per_component =
+        Wasip3RuntimeOptions::default().max_reusable_instances_per_component;
     let mut max_concurrent_invocations = DEFAULT_MAX_CONCURRENT_INVOCATIONS;
     let mut pooling = PoolingArgs::default();
 
@@ -403,6 +405,10 @@ fn parse_serve_args(args: &mut impl Iterator<Item = String>) -> Result<ServeArgs
             "--max-concurrent-invocations" => {
                 max_concurrent_invocations = parse_usize(&value, "--max-concurrent-invocations")?
             }
+            "--experimental-instance-reuse" => {
+                max_reusable_instances_per_component =
+                    parse_usize(&value, "--experimental-instance-reuse")?
+            }
             _ if pooling.set(flag.as_str(), &value)? => {}
             _ => bail!("unexpected argument {flag}"),
         }
@@ -414,6 +420,7 @@ fn parse_serve_args(args: &mut impl Iterator<Item = String>) -> Result<ServeArgs
         kv_store_dir,
         runtime_options: Wasip3RuntimeOptions {
             max_prepared_components,
+            max_reusable_instances_per_component,
             pooling: pooling.finish(),
         },
         max_concurrent_invocations,
@@ -761,8 +768,9 @@ fn write_http_response(
 
 fn daemon_stats_json(state: &DaemonState) -> String {
     format!(
-        "{{\"ok\":true,\"preparedComponents\":{},\"activeInvocations\":{},\"maxConcurrentInvocations\":{},\"totalInvocations\":{},\"failedInvocations\":{},\"rejectedInvocations\":{},\"avgInvokeMs\":{:.3}}}",
+        "{{\"ok\":true,\"preparedComponents\":{},\"reusableInstances\":{},\"activeInvocations\":{},\"maxConcurrentInvocations\":{},\"totalInvocations\":{},\"failedInvocations\":{},\"rejectedInvocations\":{},\"avgInvokeMs\":{:.3}}}",
         state.runtime.prepared_component_count(),
+        state.runtime.reusable_instance_count(),
         state.admission.active(),
         state.admission.max(),
         state.metrics.total_invocations(),
@@ -777,6 +785,8 @@ fn daemon_metrics_text(state: &DaemonState) -> String {
         concat!(
             "# TYPE wasmplane_host_prepared_components gauge\n",
             "wasmplane_host_prepared_components {}\n",
+            "# TYPE wasmplane_host_reusable_instances gauge\n",
+            "wasmplane_host_reusable_instances {}\n",
             "# TYPE wasmplane_host_active_invocations gauge\n",
             "wasmplane_host_active_invocations {}\n",
             "# TYPE wasmplane_host_max_concurrent_invocations gauge\n",
@@ -791,6 +801,7 @@ fn daemon_metrics_text(state: &DaemonState) -> String {
             "wasmplane_host_invocation_duration_seconds_sum {:.6}\n",
         ),
         state.runtime.prepared_component_count(),
+        state.runtime.reusable_instance_count(),
         state.admission.active(),
         state.admission.max(),
         state.metrics.ok_invocations(),
@@ -1042,7 +1053,7 @@ fn print_usage() {
         "  wasmplane-wasip3-host invoke (--component <component.wasm> | --precompiled <component.cwasm>) --method <METHOD> --uri <URI> [--headers <JSON>] [--body <TEXT>] [--wall-ms <MS>] [--cpu-ms <MS>] [--memory-mb <MB>] [--request-bytes <BYTES>] [--response-bytes <BYTES>] [--subrequests <COUNT>] [--host-calls <COUNT>] [--capabilities <JSON>] [--kv-store-dir <DIR>]"
     );
     eprintln!(
-        "  wasmplane-wasip3-host serve [--host <HOST>] [--port <PORT>] [--kv-store-dir <DIR>] [--max-prepared-components <COUNT>] [--max-concurrent-invocations <COUNT>] [--pooling-total-component-instances <COUNT>] [--pooling-memory-mb <MB>]"
+        "  wasmplane-wasip3-host serve [--host <HOST>] [--port <PORT>] [--kv-store-dir <DIR>] [--max-prepared-components <COUNT>] [--max-concurrent-invocations <COUNT>] [--experimental-instance-reuse <COUNT>] [--pooling-total-component-instances <COUNT>] [--pooling-memory-mb <MB>]"
     );
 }
 
@@ -1223,6 +1234,8 @@ mod tests {
             "2",
             "--pooling-core-instance-mb",
             "3",
+            "--experimental-instance-reuse",
+            "2",
         ]
         .into_iter()
         .map(String::from);
@@ -1230,6 +1243,10 @@ mod tests {
         let parsed = parse_serve_args(&mut args).expect("serve args");
 
         assert_eq!(parsed.runtime_options.max_prepared_components, 512);
+        assert_eq!(
+            parsed.runtime_options.max_reusable_instances_per_component,
+            2
+        );
         assert_eq!(parsed.max_concurrent_invocations, 64);
         assert_eq!(
             parsed.runtime_options.pooling,
@@ -1413,6 +1430,7 @@ mod tests {
 
         let stats: Value = serde_json::from_str(&daemon_stats_json(&state)).expect("stats json");
         assert_eq!(stats["preparedComponents"], 0);
+        assert_eq!(stats["reusableInstances"], 0);
         assert_eq!(stats["activeInvocations"], 1);
         assert_eq!(stats["maxConcurrentInvocations"], 2);
         assert_eq!(stats["totalInvocations"], 2);
@@ -1422,6 +1440,7 @@ mod tests {
 
         let metrics = daemon_metrics_text(&state);
         assert!(metrics.contains("wasmplane_host_prepared_components 0"));
+        assert!(metrics.contains("wasmplane_host_reusable_instances 0"));
         assert!(metrics.contains("wasmplane_host_active_invocations 1"));
         assert!(metrics.contains("wasmplane_host_max_concurrent_invocations 2"));
         assert!(metrics.contains("wasmplane_host_invocations_total{status=\"ok\"} 1"));
