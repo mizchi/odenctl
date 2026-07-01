@@ -1,5 +1,11 @@
 import { execFileSync } from "node:child_process";
-import { createCipheriv, createDecipheriv, createHash, randomBytes as nodeRandomBytes } from "node:crypto";
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  createHmac,
+  randomBytes as nodeRandomBytes,
+} from "node:crypto";
 import { ControlPlaneError } from "./errors.ts";
 
 export interface SecretCipher {
@@ -33,6 +39,34 @@ export interface CommandSecretKeyProviderOptions {
   command: string;
   args?: string[];
   runCommand?: (command: string, args: string[]) => string | Buffer;
+}
+
+export interface AwsKmsCredentials {
+  accessKeyId: string;
+  secretAccessKey: string;
+  sessionToken?: string;
+}
+
+export interface AwsKmsWrappedSecretDataKey {
+  keyId: string;
+  ciphertext: Buffer | Uint8Array;
+  kmsKeyId?: string;
+  encryptionContext?: Record<string, string>;
+}
+
+export interface AwsKmsSecretKeyProviderOptions {
+  region: string;
+  wrappedKeys: AwsKmsWrappedSecretDataKey[];
+  primaryKeyId?: string;
+  endpoint?: string;
+  credentials?: AwsKmsCredentials;
+  fetch?: typeof fetch;
+  now?: () => Date;
+}
+
+export interface ConfiguredSecretCipherOptions {
+  env?: Record<string, string | undefined>;
+  awsKms?: Partial<Pick<AwsKmsSecretKeyProviderOptions, "credentials" | "endpoint" | "fetch" | "now">>;
 }
 
 const envelopePrefix = "wasmplane:v1:aes-256-gcm:";
@@ -103,16 +137,17 @@ export function createKeyringSecretCipher(options: KeyringSecretCipherOptions): 
 
 export function createStaticSecretKeyProvider(options: KeyringSecretCipherOptions): SecretKeyProvider {
   const primaryKey = normalizeDataKey(options.primaryKey, "primary secret key");
-  const decryptKeys = (options.decryptKeys ?? []).map((key) => normalizeDataKey(key, "decrypt secret key"));
+  const keys = new Map<string, Buffer>();
+  addDataKey(keys, primaryKey, "primary secret key");
+  for (const key of options.decryptKeys ?? []) {
+    addDataKey(keys, normalizeDataKey(key, "decrypt secret key"), "decrypt secret key");
+  }
   return {
     current() {
       return { keyId: primaryKey.keyId, key: Buffer.from(primaryKey.key) };
     },
     keys() {
-      return [
-        { keyId: primaryKey.keyId, key: Buffer.from(primaryKey.key) },
-        ...decryptKeys.map((key) => ({ keyId: key.keyId, key: Buffer.from(key.key) })),
-      ];
+      return [...keys.entries()].map(([keyId, key]) => ({ keyId, key: Buffer.from(key) }));
     },
   };
 }
@@ -142,9 +177,55 @@ export function createCommandSecretKeyProvider(options: CommandSecretKeyProvider
   return createStaticSecretKeyProvider(parseCommandSecretKeyProviderOutput(stdout));
 }
 
+export async function createAwsKmsSecretKeyProvider(
+  options: AwsKmsSecretKeyProviderOptions,
+): Promise<SecretKeyProvider> {
+  const region = nonEmptyString(options.region, "AWS KMS region");
+  if (options.wrappedKeys.length === 0) {
+    throw new ControlPlaneError("validation", "AWS KMS secret key provider requires wrapped keys");
+  }
+  const credentials = normalizeAwsCredentials(options.credentials);
+  const fetchImpl = options.fetch ?? globalThis.fetch;
+  if (!fetchImpl) {
+    throw new ControlPlaneError("validation", "AWS KMS secret key provider requires fetch");
+  }
+  const keys: SecretDataKey[] = [];
+  for (const wrappedKey of options.wrappedKeys) {
+    const keyId = nonEmptyString(wrappedKey.keyId, "AWS KMS wrapped key id");
+    const key = await decryptAwsKmsDataKey({
+      region,
+      endpoint: options.endpoint,
+      credentials,
+      fetch: fetchImpl,
+      now: options.now,
+      wrappedKey: {
+        keyId,
+        ciphertext: Buffer.from(wrappedKey.ciphertext),
+        kmsKeyId: wrappedKey.kmsKeyId,
+        encryptionContext: wrappedKey.encryptionContext,
+      },
+    });
+    keys.push({ keyId, key });
+  }
+  const primaryKeyId = options.primaryKeyId?.trim();
+  const primaryKey = primaryKeyId
+    ? keys.find((key) => key.keyId === primaryKeyId)
+    : keys[0];
+  if (!primaryKey) {
+    throw new ControlPlaneError("validation", `AWS KMS primary key ${primaryKeyId} was not returned`);
+  }
+  return createStaticSecretKeyProvider({ primaryKey, decryptKeys: keys });
+}
+
 export function createConfiguredSecretCipher(
   env: Record<string, string | undefined> = process.env,
 ): SecretCipher | undefined {
+  if (isAwsKmsConfigured(env)) {
+    throw new ControlPlaneError(
+      "validation",
+      "cloud KMS secret providers require createConfiguredSecretCipherAsync",
+    );
+  }
   const command = firstNonEmpty(env.WASMPLANE_SECRET_KMS_KEY_PROVIDER_COMMAND);
   if (command) {
     return createSecretCipherFromKeyProvider(createCommandSecretKeyProvider({
@@ -160,8 +241,48 @@ export function createConfiguredSecretCipher(
   return undefined;
 }
 
+export async function createConfiguredSecretCipherAsync(
+  options: Record<string, string | undefined> | ConfiguredSecretCipherOptions = { env: process.env },
+): Promise<SecretCipher | undefined> {
+  const resolved = resolveConfiguredSecretCipherOptions(options);
+  const env = resolved.env ?? process.env;
+  if (isAwsKmsConfigured(env)) {
+    const provider = await createConfiguredAwsKmsSecretKeyProvider(env, resolved.awsKms);
+    return createSecretCipherFromKeyProvider(provider);
+  }
+  return createConfiguredSecretCipher(env);
+}
+
 export function isEncryptedSecretValue(value: string): boolean {
   return value.startsWith(envelopePrefix);
+}
+
+async function createConfiguredAwsKmsSecretKeyProvider(
+  env: Record<string, string | undefined>,
+  overrides: ConfiguredSecretCipherOptions["awsKms"] = {},
+): Promise<SecretKeyProvider> {
+  const provider = firstNonEmpty(env.WASMPLANE_SECRET_KMS_PROVIDER)?.toLowerCase();
+  if (provider && provider !== "aws") {
+    throw new ControlPlaneError("validation", `unsupported secret KMS provider ${provider}`);
+  }
+  const parsed = parseAwsKmsWrappedKeysEnv(firstNonEmpty(env.WASMPLANE_SECRET_KMS_AWS_WRAPPED_KEYS));
+  const region = firstNonEmpty(
+    env.WASMPLANE_SECRET_KMS_AWS_REGION,
+    env.AWS_REGION,
+    env.AWS_DEFAULT_REGION,
+  );
+  if (!region) {
+    throw new ControlPlaneError("validation", "AWS KMS secret key provider requires a region");
+  }
+  return createAwsKmsSecretKeyProvider({
+    region,
+    primaryKeyId: firstNonEmpty(env.WASMPLANE_SECRET_KMS_KEY_ID, parsed.primaryKeyId),
+    endpoint: overrides.endpoint ?? firstNonEmpty(env.WASMPLANE_SECRET_KMS_AWS_ENDPOINT),
+    credentials: overrides.credentials ?? awsKmsCredentialsFromEnv(env),
+    fetch: overrides.fetch,
+    now: overrides.now,
+    wrappedKeys: parsed.keys,
+  });
 }
 
 function configuredLocalKeyring(
@@ -245,6 +366,13 @@ function firstNonEmpty(...values: Array<string | undefined>): string | undefined
   return values.find((value) => value && value.trim().length > 0)?.trim();
 }
 
+function nonEmptyString(value: string | undefined, name: string): string {
+  if (!value || value.trim().length === 0) {
+    throw new ControlPlaneError("validation", `${name} is required`);
+  }
+  return value.trim();
+}
+
 function normalizeDataKey(key: SecretDataKey, name: string): { keyId: string; key: Buffer } {
   if (!key.keyId || key.keyId.trim().length === 0) {
     throw new ControlPlaneError("validation", `${name} id is required`);
@@ -262,6 +390,110 @@ function addDataKey(keys: Map<string, Buffer>, key: { keyId: string; key: Buffer
     throw new ControlPlaneError("validation", `${name} id ${key.keyId} is configured more than once`);
   }
   keys.set(key.keyId, key.key);
+}
+
+function resolveConfiguredSecretCipherOptions(
+  options: Record<string, string | undefined> | ConfiguredSecretCipherOptions,
+): ConfiguredSecretCipherOptions {
+  if ("env" in options || "awsKms" in options) {
+    return options as ConfiguredSecretCipherOptions;
+  }
+  return { env: options as Record<string, string | undefined> };
+}
+
+function isAwsKmsConfigured(env: Record<string, string | undefined>): boolean {
+  const provider = firstNonEmpty(env.WASMPLANE_SECRET_KMS_PROVIDER)?.toLowerCase();
+  if (provider && !["aws", "command", "env", "local"].includes(provider)) {
+    throw new ControlPlaneError("validation", `unsupported secret KMS provider ${provider}`);
+  }
+  return provider === "aws" || Boolean(firstNonEmpty(env.WASMPLANE_SECRET_KMS_AWS_WRAPPED_KEYS));
+}
+
+function awsKmsCredentialsFromEnv(env: Record<string, string | undefined>): AwsKmsCredentials {
+  return normalizeAwsCredentials({
+    accessKeyId: firstNonEmpty(env.AWS_ACCESS_KEY_ID),
+    secretAccessKey: firstNonEmpty(env.AWS_SECRET_ACCESS_KEY),
+    sessionToken: firstNonEmpty(env.AWS_SESSION_TOKEN),
+  });
+}
+
+function normalizeAwsCredentials(credentials: AwsKmsCredentials | undefined): AwsKmsCredentials {
+  if (!credentials?.accessKeyId || credentials.accessKeyId.trim().length === 0) {
+    throw new ControlPlaneError("validation", "AWS KMS credentials require AWS_ACCESS_KEY_ID");
+  }
+  if (!credentials.secretAccessKey || credentials.secretAccessKey.trim().length === 0) {
+    throw new ControlPlaneError("validation", "AWS KMS credentials require AWS_SECRET_ACCESS_KEY");
+  }
+  return {
+    accessKeyId: credentials.accessKeyId.trim(),
+    secretAccessKey: credentials.secretAccessKey,
+    sessionToken: credentials.sessionToken?.trim() || undefined,
+  };
+}
+
+function parseAwsKmsWrappedKeysEnv(value: string | undefined): {
+  primaryKeyId?: string;
+  keys: AwsKmsWrappedSecretDataKey[];
+} {
+  if (!value) {
+    throw new ControlPlaneError("validation", "AWS KMS secret key provider requires wrapped keys");
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new ControlPlaneError("validation", "WASMPLANE_SECRET_KMS_AWS_WRAPPED_KEYS must be valid JSON");
+  }
+  const record = Array.isArray(parsed)
+    ? { keys: parsed }
+    : objectRecord(parsed, "AWS KMS wrapped key config");
+  if (!Array.isArray(record.keys)) {
+    throw new ControlPlaneError("validation", "AWS KMS wrapped key config must include keys");
+  }
+  const primaryKeyId = typeof record.primaryKeyId === "string" ? record.primaryKeyId.trim() : undefined;
+  const keys = record.keys.map((item, index) => {
+    const key = objectRecord(item, `AWS KMS wrapped key ${index}`);
+    if (typeof key.keyId !== "string" || typeof key.ciphertextBase64 !== "string") {
+      throw new ControlPlaneError(
+        "validation",
+        `AWS KMS wrapped key ${index} must include keyId and ciphertextBase64`,
+      );
+    }
+    return {
+      keyId: key.keyId,
+      ciphertext: fromBase64(key.ciphertextBase64, `AWS KMS wrapped key ${key.keyId} ciphertext`),
+      kmsKeyId: typeof key.kmsKeyId === "string" ? key.kmsKeyId : undefined,
+      encryptionContext: parseAwsKmsEncryptionContext(key.encryptionContext, `AWS KMS wrapped key ${key.keyId}`),
+    };
+  });
+  return { primaryKeyId, keys };
+}
+
+function parseAwsKmsEncryptionContext(value: unknown, name: string): Record<string, string> | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const record = objectRecord(value, `${name} encryptionContext`);
+  const context: Record<string, string> = {};
+  for (const [key, contextValue] of Object.entries(record)) {
+    if (typeof contextValue !== "string") {
+      throw new ControlPlaneError("validation", `${name} encryptionContext values must be strings`);
+    }
+    context[key] = contextValue;
+  }
+  return context;
+}
+
+function fromBase64(value: string, name: string): Buffer {
+  try {
+    const decoded = Buffer.from(value, "base64");
+    if (decoded.byteLength === 0) {
+      throw new Error("empty");
+    }
+    return decoded;
+  } catch {
+    throw new ControlPlaneError("validation", `${name} must be base64`);
+  }
 }
 
 function parseKeyringEnv(value: string | undefined): SecretDataKey[] {
@@ -342,4 +574,147 @@ function objectRecord(value: unknown, name: string): Record<string, unknown> {
     throw new ControlPlaneError("validation", `${name} must be an object`);
   }
   return value as Record<string, unknown>;
+}
+
+async function decryptAwsKmsDataKey(options: {
+  region: string;
+  endpoint?: string;
+  credentials: AwsKmsCredentials;
+  fetch: typeof fetch;
+  now?: () => Date;
+  wrappedKey: {
+    keyId: string;
+    ciphertext: Buffer;
+    kmsKeyId?: string;
+    encryptionContext?: Record<string, string>;
+  };
+}): Promise<Buffer> {
+  const endpoint = new URL(options.endpoint ?? `https://kms.${options.region}.amazonaws.com/`);
+  const payload: Record<string, unknown> = {
+    CiphertextBlob: options.wrappedKey.ciphertext.toString("base64"),
+  };
+  if (options.wrappedKey.kmsKeyId) {
+    payload.KeyId = options.wrappedKey.kmsKeyId;
+  }
+  if (options.wrappedKey.encryptionContext) {
+    payload.EncryptionContext = options.wrappedKey.encryptionContext;
+  }
+  const body = JSON.stringify(payload);
+  const headers = signAwsKmsJsonRequest({
+    body,
+    credentials: options.credentials,
+    now: options.now?.() ?? new Date(),
+    region: options.region,
+    target: "TrentService.Decrypt",
+    url: endpoint,
+  });
+  const response = await options.fetch(endpoint, {
+    method: "POST",
+    headers,
+    body,
+  });
+  const text = await response.text();
+  if (!response.ok) {
+    const message = text.trim().slice(0, 500);
+    throw new ControlPlaneError(
+      "validation",
+      `AWS KMS decrypt failed for secret key ${options.wrappedKey.keyId}: ${response.status} ${message}`,
+    );
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new ControlPlaneError("validation", "AWS KMS decrypt returned invalid JSON");
+  }
+  const record = objectRecord(parsed, "AWS KMS decrypt response");
+  if (typeof record.Plaintext !== "string") {
+    throw new ControlPlaneError("validation", "AWS KMS decrypt response must include Plaintext");
+  }
+  return fromBase64(record.Plaintext, `AWS KMS plaintext for secret key ${options.wrappedKey.keyId}`);
+}
+
+function signAwsKmsJsonRequest(options: {
+  body: string;
+  credentials: AwsKmsCredentials;
+  now: Date;
+  region: string;
+  target: string;
+  url: URL;
+}): Record<string, string> {
+  const amzDate = awsAmzDate(options.now);
+  const dateStamp = amzDate.slice(0, 8);
+  const payloadHash = sha256Hex(options.body);
+  const headers: Record<string, string> = {
+    "content-type": "application/x-amz-json-1.1",
+    host: options.url.host,
+    "x-amz-content-sha256": payloadHash,
+    "x-amz-date": amzDate,
+    "x-amz-target": options.target,
+  };
+  if (options.credentials.sessionToken) {
+    headers["x-amz-security-token"] = options.credentials.sessionToken;
+  }
+  const signedHeaderNames = Object.keys(headers).sort();
+  const signedHeaders = signedHeaderNames.join(";");
+  const canonicalHeaders = signedHeaderNames
+    .map((name) => `${name}:${headers[name].trim().replace(/\s+/g, " ")}`)
+    .join("\n") + "\n";
+  const canonicalRequest = [
+    "POST",
+    options.url.pathname || "/",
+    canonicalQuery(options.url),
+    canonicalHeaders,
+    signedHeaders,
+    payloadHash,
+  ].join("\n");
+  const credentialScope = `${dateStamp}/${options.region}/kms/aws4_request`;
+  const stringToSign = [
+    "AWS4-HMAC-SHA256",
+    amzDate,
+    credentialScope,
+    sha256Hex(canonicalRequest),
+  ].join("\n");
+  const signature = hmacHex(
+    awsSigningKey(options.credentials.secretAccessKey, dateStamp, options.region, "kms"),
+    stringToSign,
+  );
+  return {
+    ...headers,
+    authorization: `AWS4-HMAC-SHA256 Credential=${options.credentials.accessKeyId}/${credentialScope}, `
+      + `SignedHeaders=${signedHeaders}, Signature=${signature}`,
+  };
+}
+
+function awsAmzDate(date: Date): string {
+  return date.toISOString().replace(/[:-]|\.\d{3}/g, "");
+}
+
+function canonicalQuery(url: URL): string {
+  const params = [...url.searchParams.entries()].sort(([left], [right]) => left.localeCompare(right));
+  return params.map(([key, value]) => `${encodeRfc3986(key)}=${encodeRfc3986(value)}`).join("&");
+}
+
+function encodeRfc3986(value: string): string {
+  return encodeURIComponent(value).replace(/[!'()*]/g, (char) =>
+    `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
+}
+
+function sha256Hex(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function awsSigningKey(secretAccessKey: string, dateStamp: string, region: string, service: string): Buffer {
+  const dateKey = hmacBuffer(`AWS4${secretAccessKey}`, dateStamp);
+  const regionKey = hmacBuffer(dateKey, region);
+  const serviceKey = hmacBuffer(regionKey, service);
+  return hmacBuffer(serviceKey, "aws4_request");
+}
+
+function hmacBuffer(key: string | Buffer, value: string): Buffer {
+  return createHmac("sha256", key).update(value).digest();
+}
+
+function hmacHex(key: string | Buffer, value: string): string {
+  return createHmac("sha256", key).update(value).digest("hex");
 }

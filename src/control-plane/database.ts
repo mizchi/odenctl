@@ -1,6 +1,6 @@
 import { createControlPlane } from "./service.ts";
 import { createSqliteRepository } from "./repository.ts";
-import { createConfiguredSecretCipher } from "./secret-encryption.ts";
+import { createConfiguredSecretCipherAsync } from "./secret-encryption.ts";
 import { projectQuotasFromEnv } from "./quotas.ts";
 import {
   applyControlPlaneMigrations,
@@ -45,7 +45,7 @@ export async function createConfiguredControlPlane(
 ) {
   const env = options.env ?? process.env;
   const config = resolveControlPlaneDatabaseConfig(env);
-  const secretCipher = createConfiguredSecretCipher(env);
+  const secretCipher = await createConfiguredSecretCipherAsync({ env });
   const projectQuotas = projectQuotasFromEnv(env);
   if (config.kind === "postgres") {
     const [{ createAsyncControlPlane }, { createPostgresRepository }] = await Promise.all([

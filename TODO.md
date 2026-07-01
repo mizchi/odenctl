@@ -10,6 +10,7 @@ Production readiness tasks, in implementation order.
 - [x] Decrypt repository-backed secrets when runtime resolves worker bindings.
 - [x] Document key configuration, rotation constraints, and migration notes.
 - [x] Add external KMS providers and multi-key decrypt support for online rotation.
+- [x] Add AWS KMS wrapped data key adapter for cloud KMS deployments.
 
 ## 2. Project quota and rate limit
 

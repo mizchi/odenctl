@@ -265,7 +265,8 @@ secret value を AES-256-GCM envelope に暗号化する。runtime が repositor
 runtime 側でそのまま読める。envelope には key id を持たせ、復号は configured keyring から key id で
 選ぶ。online rotation では新 primary key で暗号化しつつ、旧 key を decrypt-only keyring に残す。
 external KMS は command provider 契約で接続し、provider は primary key id と decrypt keyring の JSON を
-返す。
+返す。AWS KMS adapter は KMS ciphertext blob として wrap された data key を起動時に `Decrypt` で
+unwrap し、以後は in-memory data keyring で AES-GCM envelope を処理する。
 
 ## Limits
 
@@ -456,7 +457,7 @@ single-region estimate は README の cost estimator にまとめる。現状の
 
 - WASIp3/component model 前提だが、guest toolchain と host ABI の安定性には追従が必要
 - `cpuMs` は Wasmtime epoch tick ベースであり、精密な kernel CPU time enforcement ではない
-- secret value は local/env KMS envelope encryption と command-provider keyring に対応したが、cloud KMS SDK 直結 adapter は未実装
+- secret value は local/env KMS envelope encryption、command-provider keyring、AWS KMS wrapped data key adapter に対応したが、GCP/Azure KMS adapter は未実装
 - multi-region failover は placement publish target selection までで、cross-region state consistency は未実装
 - daemon は local HTTP interface で、runtime node と同一 trust boundary 前提
 - Wasmtime upgrade は Engine variant hash と runtime cache invalidation で分離するが、multi-node
@@ -469,8 +470,8 @@ single-region estimate は README の cost estimator にまとめる。現状の
 
 ## Next Implementation Priorities
 
-1. Cloud KMS adapter
-2. CI/weekly perf regression
-3. Store/Instance reuse experiment
-4. Durable autoscaler coordination store
-5. Cross-region state consistency
+1. CI/weekly perf regression
+2. Store/Instance reuse experiment
+3. Durable autoscaler coordination store
+4. Cross-region state consistency
+5. GCP/Azure KMS adapter

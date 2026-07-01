@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { stat } from "node:fs/promises";
 import { MVP_RUNTIME_BACKEND, MVP_WASI_PROFILE, type RuntimeNodeHostInfo } from "../control-plane/contracts.ts";
-import { createConfiguredSecretCipher } from "../control-plane/secret-encryption.ts";
+import { createConfiguredSecretCipherAsync } from "../control-plane/secret-encryption.ts";
 import { createSqliteRepository } from "../control-plane/repository.ts";
 import {
   createRuntimeArtifactStore,
@@ -55,7 +55,7 @@ const controlPlaneUrl = process.env.CONTROL_PLANE_URL ?? process.env.WASMPLANE_C
 const controlPlaneToken = process.env.CONTROL_PLANE_TOKEN ?? process.env.WASMPLANE_CONTROL_PLANE_TOKEN;
 const runtimeManagementToken = process.env.WASMPLANE_RUNTIME_TOKEN;
 const secretDbPath = process.env.WASMPLANE_SECRET_DB;
-const secretCipher = createConfiguredSecretCipher(process.env);
+const secretCipher = await createConfiguredSecretCipherAsync({ env: process.env });
 const runtimeConcurrency = Number.parseInt(process.env.RUNTIME_CONCURRENCY ?? "128", 10);
 const projectConcurrencyLimits = parseProjectConcurrencyLimits(process.env);
 const projectRateLimits = parseProjectRateLimits(process.env);

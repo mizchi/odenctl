@@ -21,11 +21,17 @@ export {
 } from "./control-plane/migrations.ts";
 export {
   createAesGcmSecretCipher,
+  createAwsKmsSecretKeyProvider,
   createCommandSecretKeyProvider,
   createConfiguredSecretCipher,
+  createConfiguredSecretCipherAsync,
   createKeyringSecretCipher,
   createSecretCipherFromKeyProvider,
   createStaticSecretKeyProvider,
+  type AwsKmsCredentials,
+  type AwsKmsSecretKeyProviderOptions,
+  type AwsKmsWrappedSecretDataKey,
+  type ConfiguredSecretCipherOptions,
   isEncryptedSecretValue,
 } from "./control-plane/secret-encryption.ts";
 export {
