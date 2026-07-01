@@ -169,9 +169,12 @@ Wasmtime instantiation; the default is 128. The daemon also exposes `GET /stats`
 pressure counters and `GET /metrics` for Prometheus-format host metrics.
 `WASMPLANE_WASIP3_EXPERIMENTAL_INSTANCE_REUSE` sets the maximum idle Store/Instance reuse pool per
 prepared component, but reuse is inactive unless the daemon also receives
-`WASMPLANE_WASIP3_INSTANCE_REUSE_CONTRACT=stateless-v1`. The `stateless-v1` contract is an explicit
-workload-author promise for benchmarking and trusted stateless workers: guest memory and globals are
-not reset by the component model, so stateful or untrusted workloads should keep the default
+`WASMPLANE_WASIP3_INSTANCE_REUSE_CONTRACT=stateless-v1` or `guest-reset-v1`. The `stateless-v1`
+contract is an explicit workload-author promise for benchmarking and trusted stateless workers:
+guest memory and globals are not reset by the component model. The stricter `guest-reset-v1`
+contract requires a top-level component export named `wasmplane-reset` with type `func() -> ()`;
+the daemon calls it after a successful `handle` call and only returns the instance to the idle pool
+when reset succeeds. Stateful or untrusted workloads should use `guest-reset-v1` or keep the default
 isolated-per-request instantiation path. Use `WASMPLANE_WASIP3_INSTANCE_REUSE_CONTRACT=disabled` or
 omit it to force isolated instances even when the pool size env is present.
 When the runtime is configured with `WASMPLANE_WASIP3_HOST_DAEMON=1` or

@@ -9,7 +9,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Result, anyhow, bail};
 use native_tls::TlsConnector;
-use wasmtime::component::{Component, HasData, Linker, Resource, ResourceTable, bindgen};
+use wasmtime::component::{
+    Component, ComponentExportIndex, Func as ComponentFunc, HasData, Linker, Resource,
+    ResourceTable, bindgen, types::ComponentItem,
+};
 use wasmtime::{
     Config, Engine, InstanceAllocationStrategy, PoolingAllocationConfig, Store, StoreLimits,
     StoreLimitsBuilder,
@@ -31,6 +34,7 @@ bindgen!({
 
 pub const WASI_PROFILE: &str = "wasip3";
 const EPOCH_TICK_MS: u64 = 10;
+const GUEST_RESET_EXPORT: &str = "wasmplane-reset";
 
 pub struct CompileReport {
     pub wasi_profile: &'static str,
@@ -65,11 +69,16 @@ pub struct Wasip3Runtime {
 pub enum InstanceReuseContract {
     Disabled,
     StatelessV1,
+    GuestResetV1,
 }
 
 impl InstanceReuseContract {
     fn allows_idle_instance_reuse(self) -> bool {
-        matches!(self, Self::StatelessV1)
+        matches!(self, Self::StatelessV1 | Self::GuestResetV1)
+    }
+
+    fn requires_guest_reset(self) -> bool {
+        matches!(self, Self::GuestResetV1)
     }
 }
 
@@ -127,13 +136,20 @@ struct PreparedComponentCache {
 }
 
 struct PreparedComponentEntry {
-    worker_pre: WorkerPre<WorkerHost>,
+    prepared: PreparedWorker,
     idle: Vec<ReusableWorkerInstance>,
+}
+
+#[derive(Clone)]
+struct PreparedWorker {
+    worker_pre: WorkerPre<WorkerHost>,
+    guest_reset: Option<ComponentExportIndex>,
 }
 
 struct ReusableWorkerInstance {
     store: Store<WorkerHost>,
     worker: Worker,
+    guest_reset: Option<ComponentFunc>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -1535,7 +1551,7 @@ impl Wasip3Runtime {
     ) -> Result<HttpResponseOutput> {
         let limits = host.invocation_limits;
         enforce_request_body_limit(&request, limits)?;
-        let worker_pre = self.prepare_worker(component_key.clone())?;
+        let prepared = self.prepare_worker(component_key.clone())?;
         if self.instance_reuse_enabled() {
             if let Some(mut reusable) = self.take_reusable_worker(&component_key) {
                 *reusable.store.data_mut() = host;
@@ -1546,17 +1562,12 @@ impl Wasip3Runtime {
         let mut store = Store::new(&self.engine, host);
         store.limiter(|host| &mut host.store_limits);
         let epoch_deadline = configure_ticker_epoch_deadline(&mut store, limits);
-        let worker = futures::executor::block_on(worker_pre.instantiate_async(&mut store))
+        let reusable = futures::executor::block_on(instantiate_prepared_worker(&prepared, store))
             .map_err(|error| map_epoch_deadline_error(error, epoch_deadline))?;
-        self.invoke_reusable_worker(
-            component_key,
-            ReusableWorkerInstance { store, worker },
-            request,
-            limits,
-        )
+        self.invoke_reusable_worker(component_key, reusable, request, limits)
     }
 
-    fn prepare_worker(&self, component_key: PreparedComponentKey) -> Result<WorkerPre<WorkerHost>> {
+    fn prepare_worker(&self, component_key: PreparedComponentKey) -> Result<PreparedWorker> {
         {
             let mut cache = self
                 .prepared
@@ -1579,7 +1590,13 @@ impl Wasip3Runtime {
         };
         let mut linker = Linker::<WorkerHost>::new(&self.engine);
         add_worker_imports(&mut linker)?;
-        let prepared = WorkerPre::new(linker.instantiate_pre(&component)?)?;
+        let instance_pre = linker.instantiate_pre(&component)?;
+        let guest_reset =
+            guest_reset_export_for_contract(self.instance_reuse_contract, &instance_pre)?;
+        let prepared = PreparedWorker {
+            worker_pre: WorkerPre::new(instance_pre)?,
+            guest_reset,
+        };
 
         let mut cache = self
             .prepared
@@ -1628,11 +1645,91 @@ impl Wasip3Runtime {
         let response =
             invoke_prepared_worker(&mut reusable.store, &reusable.worker, request, limits)?;
         if self.instance_reuse_enabled() {
+            invoke_guest_reset_if_needed(&mut reusable.store, reusable.guest_reset, limits)?;
             *reusable.store.data_mut() = WorkerHost::new();
             self.return_reusable_worker(component_key, reusable);
         }
         Ok(response)
     }
+}
+
+async fn instantiate_prepared_worker(
+    prepared: &PreparedWorker,
+    mut store: Store<WorkerHost>,
+) -> Result<ReusableWorkerInstance, wasmtime::Error> {
+    if let Some(reset_index) = prepared.guest_reset {
+        let instance = prepared
+            .worker_pre
+            .instance_pre()
+            .instantiate_async(&mut store)
+            .await?;
+        let worker = Worker::new(&mut store, &instance)?;
+        let guest_reset = *instance
+            .get_typed_func::<(), ()>(&mut store, &reset_index)?
+            .func();
+        return Ok(ReusableWorkerInstance {
+            store,
+            worker,
+            guest_reset: Some(guest_reset),
+        });
+    }
+
+    let worker = prepared.worker_pre.instantiate_async(&mut store).await?;
+    Ok(ReusableWorkerInstance {
+        store,
+        worker,
+        guest_reset: None,
+    })
+}
+
+fn guest_reset_export_for_contract(
+    contract: InstanceReuseContract,
+    instance_pre: &wasmtime::component::InstancePre<WorkerHost>,
+) -> Result<Option<ComponentExportIndex>> {
+    if !contract.requires_guest_reset() {
+        return Ok(None);
+    }
+    let (item, index) = instance_pre
+        .component()
+        .get_export(None, GUEST_RESET_EXPORT)
+        .ok_or_else(|| {
+            anyhow!(
+                "instance reuse contract guest-reset-v1 requires export `{GUEST_RESET_EXPORT}: func() -> ()`"
+            )
+        })?;
+    let ComponentItem::ComponentFunc(func) = item else {
+        bail!(
+            "instance reuse contract guest-reset-v1 requires export `{GUEST_RESET_EXPORT}` to be a function"
+        );
+    };
+    func.typecheck::<(), ()>(&instance_pre.instance_type())
+        .map_err(|error| {
+            anyhow!("type-checking guest reset export `{GUEST_RESET_EXPORT}`: {error}")
+        })?;
+    Ok(Some(index))
+}
+
+fn invoke_guest_reset_if_needed(
+    store: &mut Store<WorkerHost>,
+    guest_reset: Option<ComponentFunc>,
+    limits: InvocationLimits,
+) -> Result<()> {
+    let Some(guest_reset) = guest_reset else {
+        return Ok(());
+    };
+    let epoch_deadline = configure_ticker_epoch_deadline(store, limits);
+    futures::executor::block_on(async {
+        store
+            .run_concurrent(async |accessor| -> wasmtime::Result<_> {
+                let reset =
+                    unsafe { wasmtime::component::TypedFunc::<(), ()>::new_unchecked(guest_reset) };
+                reset.call_concurrent(accessor, ()).await?;
+                Ok(())
+            })
+            .await?
+    })
+    .map_err(|error| map_epoch_deadline_error(error, epoch_deadline))?;
+    Ok(())
 }
 
 fn invoke_prepared_worker(
@@ -1699,21 +1796,17 @@ impl PreparedComponentCache {
         self.entries.values().map(|entry| entry.idle.len()).sum()
     }
 
-    fn get(&mut self, key: &PreparedComponentKey) -> Option<WorkerPre<WorkerHost>> {
-        let prepared = self.entries.get(key)?.worker_pre.clone();
+    fn get(&mut self, key: &PreparedComponentKey) -> Option<PreparedWorker> {
+        let prepared = self.entries.get(key)?.prepared.clone();
         self.touch(key);
         Some(prepared)
     }
 
-    fn insert(
-        &mut self,
-        key: PreparedComponentKey,
-        prepared: WorkerPre<WorkerHost>,
-    ) -> WorkerPre<WorkerHost> {
+    fn insert(&mut self, key: PreparedComponentKey, prepared: PreparedWorker) -> PreparedWorker {
         self.entries.insert(
             key.clone(),
             PreparedComponentEntry {
-                worker_pre: prepared.clone(),
+                prepared: prepared.clone(),
                 idle: Vec::new(),
             },
         );
@@ -2185,9 +2278,42 @@ mod tests {
             pooling: None,
         })
         .expect("runtime");
+        let with_guest_reset = Wasip3Runtime::with_options(Wasip3RuntimeOptions {
+            max_prepared_components: 4,
+            max_reusable_instances_per_component: 1,
+            instance_reuse_contract: InstanceReuseContract::GuestResetV1,
+            pooling: None,
+        })
+        .expect("runtime");
 
         assert!(!without_contract.instance_reuse_enabled());
         assert!(with_contract.instance_reuse_enabled());
+        assert!(with_guest_reset.instance_reuse_enabled());
+    }
+
+    #[test]
+    fn runtime_rejects_guest_reset_contract_without_reset_export() {
+        let dir = temp_dir("runtime-reuse-reset-missing");
+        let component_path = build_async_worker_component(&dir);
+        let runtime = Wasip3Runtime::with_options(Wasip3RuntimeOptions {
+            max_prepared_components: 4,
+            max_reusable_instances_per_component: 1,
+            instance_reuse_contract: InstanceReuseContract::GuestResetV1,
+            pooling: None,
+        })
+        .expect("runtime");
+
+        let error = runtime
+            .invoke_component_handle_with_limits_and_policy(
+                &component_path,
+                hello_request(),
+                InvocationLimits::default(),
+                HostPolicy::deny_all(),
+            )
+            .expect_err("guest reset contract should require reset export");
+
+        assert!(format!("{error:?}").contains("guest-reset-v1 requires export `wasmplane-reset"));
+        assert_eq!(runtime.reusable_instance_count(), 0);
     }
 
     #[test]

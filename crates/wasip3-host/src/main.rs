@@ -856,7 +856,10 @@ fn parse_instance_reuse_contract(value: &str) -> Result<InstanceReuseContract> {
     match value {
         "disabled" => Ok(InstanceReuseContract::Disabled),
         "stateless-v1" => Ok(InstanceReuseContract::StatelessV1),
-        _ => bail!("--instance-reuse-contract must be one of: disabled, stateless-v1"),
+        "guest-reset-v1" => Ok(InstanceReuseContract::GuestResetV1),
+        _ => bail!(
+            "--instance-reuse-contract must be one of: disabled, stateless-v1, guest-reset-v1"
+        ),
     }
 }
 
@@ -1067,7 +1070,7 @@ fn print_usage() {
         "  wasmplane-wasip3-host invoke (--component <component.wasm> | --precompiled <component.cwasm>) --method <METHOD> --uri <URI> [--headers <JSON>] [--body <TEXT>] [--wall-ms <MS>] [--cpu-ms <MS>] [--memory-mb <MB>] [--request-bytes <BYTES>] [--response-bytes <BYTES>] [--subrequests <COUNT>] [--host-calls <COUNT>] [--capabilities <JSON>] [--kv-store-dir <DIR>]"
     );
     eprintln!(
-        "  wasmplane-wasip3-host serve [--host <HOST>] [--port <PORT>] [--kv-store-dir <DIR>] [--max-prepared-components <COUNT>] [--max-concurrent-invocations <COUNT>] [--experimental-instance-reuse <COUNT>] [--instance-reuse-contract <disabled|stateless-v1>] [--pooling-total-component-instances <COUNT>] [--pooling-memory-mb <MB>]"
+        "  wasmplane-wasip3-host serve [--host <HOST>] [--port <PORT>] [--kv-store-dir <DIR>] [--max-prepared-components <COUNT>] [--max-concurrent-invocations <COUNT>] [--experimental-instance-reuse <COUNT>] [--instance-reuse-contract <disabled|stateless-v1|guest-reset-v1>] [--pooling-total-component-instances <COUNT>] [--pooling-memory-mb <MB>]"
     );
 }
 
@@ -1291,9 +1294,22 @@ mod tests {
 
         let error = parse_serve_args(&mut args).expect_err("unknown contract should fail");
 
-        assert!(
-            format!("{error:?}")
-                .contains("--instance-reuse-contract must be one of: disabled, stateless-v1")
+        assert!(format!("{error:?}").contains(
+            "--instance-reuse-contract must be one of: disabled, stateless-v1, guest-reset-v1"
+        ));
+    }
+
+    #[test]
+    fn parse_serve_args_accepts_guest_reset_instance_reuse_contract() {
+        let mut args = vec!["--instance-reuse-contract", "guest-reset-v1"]
+            .into_iter()
+            .map(String::from);
+
+        let parsed = parse_serve_args(&mut args).expect("serve args");
+
+        assert_eq!(
+            parsed.runtime_options.instance_reuse_contract,
+            InstanceReuseContract::GuestResetV1
         );
     }
 

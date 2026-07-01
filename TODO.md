@@ -164,8 +164,10 @@ Production readiness tasks, in implementation order.
 - [x] Wire the Node runtime daemon launcher through `WASMPLANE_WASIP3_EXPERIMENTAL_INSTANCE_REUSE`.
 - [x] Require an explicit `stateless-v1` instance reuse contract before reusing idle guest instances.
 - [x] Wire the Node runtime daemon launcher through `WASMPLANE_WASIP3_INSTANCE_REUSE_CONTRACT`.
-- [x] Document that reuse is for stateless-worker benchmarking until a guest reset export exists.
-- [ ] Add a real guest reset export contract and reject reuse for components that do not implement it.
+- [x] Add a `guest-reset-v1` export contract and reject reuse for components that do not implement it.
+- [x] Call the `wasmplane-reset: func() -> ()` export before returning instances to the idle pool.
+- [x] Document `stateless-v1` versus `guest-reset-v1` reuse modes.
+- [ ] Add a conforming reset-export Wasm fixture that proves a mutable guest can be reset and reused.
 
 ## 23. Durable autoscaler coordination store
 
