@@ -98,6 +98,11 @@ import {
   type ProjectUsageQuotaPolicies,
   type ProjectUsageQuotaReport,
 } from "./usage-quota.ts";
+import {
+  createProjectBillingStatement,
+  type ProjectBillingRates,
+  type ProjectBillingStatement,
+} from "./billing-statement.ts";
 
 export interface ControlPlaneOptions {
   repository: ControlPlaneRepository;
@@ -108,6 +113,7 @@ export interface ControlPlaneOptions {
   projectQuotas?: ProjectQuotas;
   projectEnforcementPolicies?: ProjectEnforcementPolicies;
   projectUsageQuotas?: ProjectUsageQuotaPolicies;
+  projectBillingRates?: ProjectBillingRates;
   artifactSignatureVerifier?: ArtifactSignatureVerifier;
   admissionPolicy?: ControlPlaneAdmissionPolicy;
 }
@@ -182,6 +188,11 @@ export interface GetProjectEnforcementReportInput {
 }
 
 export interface GetProjectUsageQuotaReportInput {
+  projectId: string;
+  at?: string;
+}
+
+export interface GetProjectBillingStatementInput {
   projectId: string;
   at?: string;
 }
@@ -393,6 +404,7 @@ export function createControlPlane(options: ControlPlaneOptions) {
   const projectQuotas = options.projectQuotas;
   const projectEnforcementPolicies = options.projectEnforcementPolicies;
   const projectUsageQuotas = options.projectUsageQuotas;
+  const projectBillingRates = options.projectBillingRates;
   const artifactSignatureVerifier = options.artifactSignatureVerifier;
   const admissionPolicy = options.admissionPolicy;
 
@@ -562,6 +574,19 @@ export function createControlPlane(options: ControlPlaneOptions) {
       summary,
       period,
       policy,
+      generatedAt: now(),
+    });
+  }
+
+  function getProjectBillingStatement(input: GetProjectBillingStatementInput): ProjectBillingStatement {
+    requireProject(repository, input.projectId);
+    const at = normalizeUsageTimestamp(input.at, "billing statement at") ?? now();
+    const period = usageQuotaPeriodFor(at, undefined);
+    const summary = repository.getProjectUsageSummary(input.projectId, period.from, period.to);
+    return createProjectBillingStatement({
+      summary,
+      period,
+      rates: projectBillingRates,
       generatedAt: now(),
     });
   }
@@ -1073,6 +1098,7 @@ export function createControlPlane(options: ControlPlaneOptions) {
     getProjectUsageSummary,
     getProjectEnforcementReport,
     getProjectUsageQuotaReport,
+    getProjectBillingStatement,
     createCustomDomain,
     listProjectCustomDomains,
     verifyCustomDomainOwnership,

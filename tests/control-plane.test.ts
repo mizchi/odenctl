@@ -452,6 +452,53 @@ test("control plane enforces billing usage quotas from usage ledgers", () => {
   });
 });
 
+test("control plane reports project billing statements from usage ledgers", () => {
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+    projectBillingRates: {
+      invocationsPerMillionUsd: 0.4,
+      cpuMsPerMillionUsd: 0.2,
+    },
+  });
+  const organization = control.createOrganization({ id: "org_statement", name: "Statement Org" });
+  const project = control.createProject({
+    id: "prj_statement",
+    name: "statement",
+    organizationId: organization.id,
+  });
+  control.recordUsageEvent({
+    id: "use_statement_invocation",
+    projectId: project.id,
+    metric: "invocation",
+    quantity: 2_000_000,
+    recordedAt: "2026-07-01T00:00:00.000Z",
+  });
+  control.recordUsageEvent({
+    id: "use_statement_cpu",
+    projectId: project.id,
+    metric: "cpu_ms",
+    quantity: 500_000,
+    recordedAt: "2026-07-02T00:00:00.000Z",
+  });
+
+  const statement = control.getProjectBillingStatement({
+    projectId: project.id,
+    at: "2026-07-15T00:00:00.000Z",
+  });
+
+  assert.equal(statement.projectId, project.id);
+  assert.equal(statement.organizationId, organization.id);
+  assert.equal(statement.generatedAt, fixedNow());
+  assert.equal(statement.period.key, "2026-07");
+  assert.deepEqual(statement.lineItems.map((item) => [item.metric, item.amountUsd]), [
+    ["invocations", 0.8],
+    ["cpuMs", 0.1],
+  ]);
+  assert.equal(statement.totalUsd, 0.9);
+});
+
 test("async control plane reports per-tenant enforcement status", async () => {
   const control = createAsyncControlPlane({
     repository: asyncRepository(createMemoryRepository()),
@@ -549,6 +596,40 @@ test("async control plane enforces billing usage quotas from usage ledgers", asy
     remaining: 0,
     status: "ok",
   });
+});
+
+test("async control plane reports project billing statements from usage ledgers", async () => {
+  const control = createAsyncControlPlane({
+    repository: asyncRepository(createMemoryRepository()),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+    projectBillingRates: {
+      storageGbMonthUsd: 0.03,
+    },
+  });
+  const project = await control.createProject({
+    id: "prj_async_statement",
+    name: "async statement",
+  });
+  await control.recordUsageEvent({
+    id: "use_async_statement_storage",
+    projectId: project.id,
+    metric: "storage_bytes",
+    quantity: 2 * 1024 ** 3,
+    recordedAt: "2026-07-02T00:00:00.000Z",
+  });
+
+  const statement = await control.getProjectBillingStatement({
+    projectId: project.id,
+    at: "2026-07-15T00:00:00.000Z",
+  });
+
+  assert.equal(statement.projectId, project.id);
+  assert.equal(statement.period.key, "2026-07");
+  assert.deepEqual(statement.lineItems.map((item) => [item.metric, item.quantity, item.amountUsd]), [
+    ["storageBytes", 2, 0.06],
+  ]);
+  assert.equal(statement.totalUsd, 0.06);
 });
 
 test("async control plane manages tenant API keys and usage meters", async () => {

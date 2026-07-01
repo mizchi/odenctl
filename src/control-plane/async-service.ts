@@ -98,6 +98,11 @@ import {
   type ProjectUsageQuotaPolicies,
   type ProjectUsageQuotaReport,
 } from "./usage-quota.ts";
+import {
+  createProjectBillingStatement,
+  type ProjectBillingRates,
+  type ProjectBillingStatement,
+} from "./billing-statement.ts";
 
 export interface AsyncControlPlaneRepository {
   createOrganization(organization: Organization): Promise<Organization>;
@@ -167,6 +172,7 @@ export interface AsyncControlPlaneOptions {
   projectQuotas?: ProjectQuotas;
   projectEnforcementPolicies?: ProjectEnforcementPolicies;
   projectUsageQuotas?: ProjectUsageQuotaPolicies;
+  projectBillingRates?: ProjectBillingRates;
   artifactSignatureVerifier?: ArtifactSignatureVerifier;
   admissionPolicy?: ControlPlaneAdmissionPolicy;
 }
@@ -241,6 +247,11 @@ export interface GetProjectEnforcementReportInput {
 }
 
 export interface GetProjectUsageQuotaReportInput {
+  projectId: string;
+  at?: string;
+}
+
+export interface GetProjectBillingStatementInput {
   projectId: string;
   at?: string;
 }
@@ -452,6 +463,7 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
   const projectQuotas = options.projectQuotas;
   const projectEnforcementPolicies = options.projectEnforcementPolicies;
   const projectUsageQuotas = options.projectUsageQuotas;
+  const projectBillingRates = options.projectBillingRates;
   const artifactSignatureVerifier = options.artifactSignatureVerifier;
   const admissionPolicy = options.admissionPolicy;
 
@@ -636,6 +648,21 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
       summary,
       period,
       policy,
+      generatedAt: now(),
+    });
+  }
+
+  async function getProjectBillingStatement(
+    input: GetProjectBillingStatementInput,
+  ): Promise<ProjectBillingStatement> {
+    await requireProject(repository, input.projectId);
+    const at = normalizeUsageTimestamp(input.at, "billing statement at") ?? now();
+    const period = usageQuotaPeriodFor(at, undefined);
+    const summary = await repository.getProjectUsageSummary(input.projectId, period.from, period.to);
+    return createProjectBillingStatement({
+      summary,
+      period,
+      rates: projectBillingRates,
       generatedAt: now(),
     });
   }
@@ -1160,6 +1187,7 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
     getProjectUsageSummary,
     getProjectEnforcementReport,
     getProjectUsageQuotaReport,
+    getProjectBillingStatement,
     createCustomDomain,
     listProjectCustomDomains,
     verifyCustomDomainOwnership,

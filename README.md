@@ -69,6 +69,11 @@ ledgers before accepting new usage events. Values are comma-separated `project=v
 Usage event ids are idempotency keys: retrying the same event payload with the same id returns the
 existing event without incrementing ledger totals, while reusing an id for different payloads is a
 conflict.
+Set `WASMPLANE_BILLING_INVOCATION_PER_MILLION_USD`,
+`WASMPLANE_BILLING_CPU_MS_PER_MILLION_USD`, `WASMPLANE_BILLING_WALL_MS_PER_MILLION_USD`,
+`WASMPLANE_BILLING_MEMORY_MB_MS_PER_MILLION_USD`, `WASMPLANE_BILLING_EGRESS_GB_USD`,
+`WASMPLANE_BILLING_STORAGE_GB_MONTH_USD`, and `WASMPLANE_BILLING_SQLITE_UNIT_USD` to expose
+invoice-ready calendar-month usage statements from `GET /projects/:id/billing-statement`.
 Set `WASMPLANE_SNAPSHOT_PUBLISH_INTERVAL_MS` to run a background publish job that periodically
 generates the current route snapshot and publishes it to configured/registered active runtime
 nodes. Each generated route snapshot includes a content-derived `snap_<hash>` id, and publish
@@ -737,6 +742,7 @@ Available endpoints:
 - `GET /projects/:id/quota-usage`
 - `GET /projects/:id/enforcement-report`
 - `GET /projects/:id/usage-quota`
+- `GET /projects/:id/billing-statement`
 - `POST /projects/:id/sqlite-databases`
 - `GET /projects/:id/sqlite-databases`
 - `GET /sqlite-databases`

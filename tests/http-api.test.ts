@@ -476,6 +476,59 @@ test("HTTP API enforces and reports billing usage quotas", async () => {
   }
 });
 
+test("HTTP API exposes project billing statements", async () => {
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+    projectBillingRates: {
+      invocationsPerMillionUsd: 0.4,
+    },
+  });
+  const app = createHttpApp({ controlPlane: control });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const project = await postJson(baseUrl, "/projects", {
+      id: "prj_http_billing_statement",
+      name: "http billing statement",
+    });
+    await postJson(baseUrl, "/usage/events", {
+      id: "use_http_billing_statement_invocation",
+      projectId: project.id,
+      metric: "invocation",
+      quantity: 1_000_000,
+      recordedAt: "2026-07-01T00:00:00.000Z",
+    });
+
+    const response = await fetch(
+      `${baseUrl}/projects/${project.id}/billing-statement?at=${
+        encodeURIComponent("2026-07-15T00:00:00.000Z")
+      }`,
+    );
+    assert.equal(response.status, 200);
+    const statement = await response.json();
+    assert.equal(statement.projectId, project.id);
+    assert.equal(statement.period.key, "2026-07");
+    assert.deepEqual(statement.lineItems, [
+      {
+        metric: "invocations",
+        quantity: 1,
+        unit: "million invocations",
+        unitPriceUsd: 0.4,
+        amountUsd: 0.4,
+      },
+    ]);
+    assert.equal(statement.totalUsd, 0.4);
+  } finally {
+    await app.close();
+  }
+});
+
 test("HTTP API manages custom domain verification and TLS hooks", async () => {
   const control = createControlPlane({
     repository: createMemoryRepository(),
