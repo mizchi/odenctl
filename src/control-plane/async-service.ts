@@ -99,7 +99,9 @@ import {
   type ProjectUsageQuotaReport,
 } from "./usage-quota.ts";
 import {
+  createOrganizationBillingStatement,
   createProjectBillingStatement,
+  type OrganizationBillingStatement,
   type ProjectBillingRates,
   type ProjectBillingStatement,
 } from "./billing-statement.ts";
@@ -129,6 +131,7 @@ export interface AsyncControlPlaneRepository {
   updateDeployPreview(preview: DeployPreview): Promise<DeployPreview>;
   createProject(project: Project): Promise<Project>;
   getProject(id: string): Promise<Project | undefined>;
+  listOrganizationProjects(organizationId: string): Promise<Project[]>;
   getProjectUsage(projectId: string): Promise<ProjectResourceUsage>;
   createArtifact(artifact: Artifact): Promise<Artifact>;
   getArtifact(id: string): Promise<Artifact | undefined>;
@@ -253,6 +256,11 @@ export interface GetProjectUsageQuotaReportInput {
 
 export interface GetProjectBillingStatementInput {
   projectId: string;
+  at?: string;
+}
+
+export interface GetOrganizationBillingStatementInput {
+  organizationId: string;
   at?: string;
 }
 
@@ -661,6 +669,25 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
     const summary = await repository.getProjectUsageSummary(input.projectId, period.from, period.to);
     return createProjectBillingStatement({
       summary,
+      period,
+      rates: projectBillingRates,
+      generatedAt: now(),
+    });
+  }
+
+  async function getOrganizationBillingStatement(
+    input: GetOrganizationBillingStatementInput,
+  ): Promise<OrganizationBillingStatement> {
+    await requireOrganization(repository, input.organizationId);
+    const at = normalizeUsageTimestamp(input.at, "billing statement at") ?? now();
+    const period = usageQuotaPeriodFor(at, undefined);
+    const projects = await repository.listOrganizationProjects(input.organizationId);
+    const summaries = await Promise.all(
+      projects.map((project) => repository.getProjectUsageSummary(project.id, period.from, period.to)),
+    );
+    return createOrganizationBillingStatement({
+      organizationId: input.organizationId,
+      summaries,
       period,
       rates: projectBillingRates,
       generatedAt: now(),
@@ -1188,6 +1215,7 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
     getProjectEnforcementReport,
     getProjectUsageQuotaReport,
     getProjectBillingStatement,
+    getOrganizationBillingStatement,
     createCustomDomain,
     listProjectCustomDomains,
     verifyCustomDomainOwnership,

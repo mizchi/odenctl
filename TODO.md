@@ -252,3 +252,4 @@ Production readiness tasks, in implementation order.
 - [x] Add per-tenant memory, CPU, storage, concurrency, and rate enforcement reports.
 - [x] Add forced tenant drain and isolation-pool routing for noisy-neighbor mitigation.
 - [x] Add billing-ready quota enforcement tied to usage ledgers.
+- [x] Add invoice-ready project and organization billing statements from usage ledgers.

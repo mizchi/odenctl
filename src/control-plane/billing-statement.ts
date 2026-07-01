@@ -39,6 +39,16 @@ export interface ProjectBillingStatement {
   totalUsd: number;
 }
 
+export interface OrganizationBillingStatement {
+  organizationId: string;
+  generatedAt: string;
+  currency: "USD";
+  period: UsageQuotaPeriod;
+  usage: ProjectUsageSummary["totals"];
+  projects: ProjectBillingStatement[];
+  totalUsd: number;
+}
+
 export function createProjectBillingStatement(input: {
   summary: ProjectUsageSummary;
   period: UsageQuotaPeriod;
@@ -66,6 +76,32 @@ export function createProjectBillingStatement(input: {
     usage: totals,
     lineItems,
     totalUsd: roundUsd(lineItems.reduce((sum, item) => sum + item.amountUsd, 0)),
+  };
+}
+
+export function createOrganizationBillingStatement(input: {
+  organizationId: string;
+  summaries: ProjectUsageSummary[];
+  period: UsageQuotaPeriod;
+  rates?: ProjectBillingRates;
+  generatedAt: string;
+}): OrganizationBillingStatement {
+  const projects = input.summaries.map((summary) =>
+    createProjectBillingStatement({
+      summary,
+      period: input.period,
+      rates: input.rates,
+      generatedAt: input.generatedAt,
+    })
+  );
+  return {
+    organizationId: input.organizationId,
+    generatedAt: input.generatedAt,
+    currency: "USD",
+    period: input.period,
+    usage: sumUsage(input.summaries),
+    projects,
+    totalUsd: roundUsd(projects.reduce((sum, project) => sum + project.totalUsd, 0)),
   };
 }
 
@@ -125,4 +161,27 @@ function roundQuantity(value: number): number {
 
 function roundUsd(value: number): number {
   return Math.round(value * 100) / 100;
+}
+
+function sumUsage(summaries: ProjectUsageSummary[]): ProjectUsageSummary["totals"] {
+  return summaries.reduce(
+    (totals, summary) => ({
+      invocations: totals.invocations + summary.totals.invocations,
+      cpuMs: totals.cpuMs + summary.totals.cpuMs,
+      wallMs: totals.wallMs + summary.totals.wallMs,
+      memoryMbMs: totals.memoryMbMs + summary.totals.memoryMbMs,
+      egressBytes: totals.egressBytes + summary.totals.egressBytes,
+      storageBytes: totals.storageBytes + summary.totals.storageBytes,
+      sqliteUnits: totals.sqliteUnits + summary.totals.sqliteUnits,
+    }),
+    {
+      invocations: 0,
+      cpuMs: 0,
+      wallMs: 0,
+      memoryMbMs: 0,
+      egressBytes: 0,
+      storageBytes: 0,
+      sqliteUnits: 0,
+    },
+  );
 }

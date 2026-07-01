@@ -443,6 +443,14 @@ export class PostgresControlPlaneRepository implements AsyncControlPlaneReposito
     return result.rows[0] ? projectFromRow(result.rows[0]) : undefined;
   }
 
+  async listOrganizationProjects(organizationId: string): Promise<Project[]> {
+    const result = await this.pool.query(
+      "select * from projects where organization_id = $1 order by created_at asc, id asc",
+      [organizationId],
+    );
+    return result.rows.map(projectFromRow);
+  }
+
   async getProjectUsage(projectId: string): Promise<ProjectResourceUsage> {
     const result = await this.pool.query(
       `select

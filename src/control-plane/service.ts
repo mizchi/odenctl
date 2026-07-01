@@ -99,7 +99,9 @@ import {
   type ProjectUsageQuotaReport,
 } from "./usage-quota.ts";
 import {
+  createOrganizationBillingStatement,
   createProjectBillingStatement,
+  type OrganizationBillingStatement,
   type ProjectBillingRates,
   type ProjectBillingStatement,
 } from "./billing-statement.ts";
@@ -194,6 +196,11 @@ export interface GetProjectUsageQuotaReportInput {
 
 export interface GetProjectBillingStatementInput {
   projectId: string;
+  at?: string;
+}
+
+export interface GetOrganizationBillingStatementInput {
+  organizationId: string;
   at?: string;
 }
 
@@ -585,6 +592,24 @@ export function createControlPlane(options: ControlPlaneOptions) {
     const summary = repository.getProjectUsageSummary(input.projectId, period.from, period.to);
     return createProjectBillingStatement({
       summary,
+      period,
+      rates: projectBillingRates,
+      generatedAt: now(),
+    });
+  }
+
+  function getOrganizationBillingStatement(
+    input: GetOrganizationBillingStatementInput,
+  ): OrganizationBillingStatement {
+    requireOrganization(repository, input.organizationId);
+    const at = normalizeUsageTimestamp(input.at, "billing statement at") ?? now();
+    const period = usageQuotaPeriodFor(at, undefined);
+    const summaries = repository
+      .listOrganizationProjects(input.organizationId)
+      .map((project) => repository.getProjectUsageSummary(project.id, period.from, period.to));
+    return createOrganizationBillingStatement({
+      organizationId: input.organizationId,
+      summaries,
       period,
       rates: projectBillingRates,
       generatedAt: now(),
@@ -1099,6 +1124,7 @@ export function createControlPlane(options: ControlPlaneOptions) {
     getProjectEnforcementReport,
     getProjectUsageQuotaReport,
     getProjectBillingStatement,
+    getOrganizationBillingStatement,
     createCustomDomain,
     listProjectCustomDomains,
     verifyCustomDomainOwnership,

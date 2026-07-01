@@ -93,8 +93,10 @@ export {
   type UsageQuotaPeriod,
 } from "./control-plane/usage-quota.ts";
 export {
+  createOrganizationBillingStatement,
   createProjectBillingStatement,
   projectBillingRatesFromEnv,
+  type OrganizationBillingStatement,
   type ProjectBillingLineItem,
   type ProjectBillingMetric,
   type ProjectBillingRates,

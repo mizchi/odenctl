@@ -73,7 +73,8 @@ Set `WASMPLANE_BILLING_INVOCATION_PER_MILLION_USD`,
 `WASMPLANE_BILLING_CPU_MS_PER_MILLION_USD`, `WASMPLANE_BILLING_WALL_MS_PER_MILLION_USD`,
 `WASMPLANE_BILLING_MEMORY_MB_MS_PER_MILLION_USD`, `WASMPLANE_BILLING_EGRESS_GB_USD`,
 `WASMPLANE_BILLING_STORAGE_GB_MONTH_USD`, and `WASMPLANE_BILLING_SQLITE_UNIT_USD` to expose
-invoice-ready calendar-month usage statements from `GET /projects/:id/billing-statement`.
+invoice-ready calendar-month usage statements from `GET /projects/:id/billing-statement` and
+organization rollups from `GET /organizations/:id/billing-statement`.
 Set `WASMPLANE_SNAPSHOT_PUBLISH_INTERVAL_MS` to run a background publish job that periodically
 generates the current route snapshot and publishes it to configured/registered active runtime
 nodes. Each generated route snapshot includes a content-derived `snap_<hash>` id, and publish
@@ -723,6 +724,7 @@ Available endpoints:
 - `POST /admin/routes/canary`
 - `POST /admin/routes/rollback`
 - `POST /organizations`
+- `GET /organizations/:id/billing-statement`
 - `POST /users`
 - `POST /projects`
 - `POST /projects/:id/memberships`

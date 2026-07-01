@@ -63,6 +63,7 @@ export interface HttpAppOptions {
     getProjectEnforcementReport(input: any): MaybePromise<unknown>;
     getProjectUsageQuotaReport(input: any): MaybePromise<unknown>;
     getProjectBillingStatement(input: any): MaybePromise<unknown>;
+    getOrganizationBillingStatement(input: any): MaybePromise<unknown>;
     createCustomDomain(input: any): MaybePromise<unknown>;
     listProjectCustomDomains(input: any): MaybePromise<unknown>;
     verifyCustomDomainOwnership(input: any): MaybePromise<unknown>;
@@ -207,6 +208,18 @@ export function createHttpApp(options: HttpAppOptions) {
       }
       if (method === "POST" && url.pathname === "/organizations") {
         writeJson(response, 201, await options.controlPlane.createOrganization(await readJson(request)));
+        return;
+      }
+      const organizationBillingStatement = organizationBillingStatementMatch(method, url.pathname);
+      if (organizationBillingStatement) {
+        writeJson(
+          response,
+          200,
+          await options.controlPlane.getOrganizationBillingStatement({
+            organizationId: organizationBillingStatement.organizationId,
+            at: url.searchParams.get("at") ?? undefined,
+          }),
+        );
         return;
       }
       if (method === "POST" && url.pathname === "/users") {
@@ -1416,6 +1429,17 @@ function projectBillingStatementMatch(method: string, pathname: string): { proje
     return undefined;
   }
   return { projectId: decodeURIComponent(match[1]) };
+}
+
+function organizationBillingStatementMatch(method: string, pathname: string): { organizationId: string } | undefined {
+  if (method !== "GET") {
+    return undefined;
+  }
+  const match = /^\/organizations\/([^/]+)\/billing-statement$/.exec(pathname);
+  if (!match) {
+    return undefined;
+  }
+  return { organizationId: decodeURIComponent(match[1]) };
 }
 
 function projectCustomDomainsMatch(method: string, pathname: string): { projectId: string } | undefined {

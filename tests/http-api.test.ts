@@ -529,6 +529,72 @@ test("HTTP API exposes project billing statements", async () => {
   }
 });
 
+test("HTTP API exposes organization billing statements", async () => {
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+    projectBillingRates: {
+      invocationsPerMillionUsd: 0.4,
+      sqliteUnitUsd: 2.5,
+    },
+  });
+  const app = createHttpApp({ controlPlane: control });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const organization = await postJson(baseUrl, "/organizations", {
+      id: "org_http_billing_statement",
+      name: "HTTP Billing Statement Org",
+    });
+    const projectA = await postJson(baseUrl, "/projects", {
+      id: "prj_http_billing_statement_a",
+      organizationId: organization.id,
+      name: "http billing statement a",
+    });
+    const projectB = await postJson(baseUrl, "/projects", {
+      id: "prj_http_billing_statement_b",
+      organizationId: organization.id,
+      name: "http billing statement b",
+    });
+    await postJson(baseUrl, "/usage/events", {
+      id: "use_http_org_billing_invocation",
+      projectId: projectA.id,
+      metric: "invocation",
+      quantity: 1_000_000,
+      recordedAt: "2026-07-01T00:00:00.000Z",
+    });
+    await postJson(baseUrl, "/usage/events", {
+      id: "use_http_org_billing_sqlite",
+      projectId: projectB.id,
+      metric: "sqlite_unit",
+      quantity: 2,
+      recordedAt: "2026-07-02T00:00:00.000Z",
+    });
+
+    const response = await fetch(
+      `${baseUrl}/organizations/${organization.id}/billing-statement?at=${
+        encodeURIComponent("2026-07-15T00:00:00.000Z")
+      }`,
+    );
+    assert.equal(response.status, 200);
+    const statement = await response.json();
+    assert.equal(statement.organizationId, organization.id);
+    assert.equal(statement.period.key, "2026-07");
+    assert.deepEqual(statement.projects.map((project: any) => [project.projectId, project.totalUsd]), [
+      [projectA.id, 0.4],
+      [projectB.id, 5],
+    ]);
+    assert.equal(statement.totalUsd, 5.4);
+  } finally {
+    await app.close();
+  }
+});
+
 test("HTTP API manages custom domain verification and TLS hooks", async () => {
   const control = createControlPlane({
     repository: createMemoryRepository(),

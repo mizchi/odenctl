@@ -46,6 +46,7 @@ export interface ControlPlaneRepository {
   updateDeployPreview(preview: DeployPreview): DeployPreview;
   createProject(project: Project): Project;
   getProject(id: string): Project | undefined;
+  listOrganizationProjects(organizationId: string): Project[];
   getProjectUsage(projectId: string): ProjectResourceUsage;
   createArtifact(artifact: Artifact): Artifact;
   getArtifact(id: string): Artifact | undefined;
@@ -466,6 +467,13 @@ class SqliteControlPlaneRepository implements ControlPlaneRepository {
   getProject(id: string): Project | undefined {
     const row = this.db.prepare("select * from projects where id = ?").get(id);
     return row ? projectFromRow(row) : undefined;
+  }
+
+  listOrganizationProjects(organizationId: string): Project[] {
+    return this.db
+      .prepare("select * from projects where organization_id = ? order by created_at asc, id asc")
+      .all(organizationId)
+      .map(projectFromRow);
   }
 
   getProjectUsage(projectId: string): ProjectResourceUsage {

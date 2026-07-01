@@ -499,6 +499,79 @@ test("control plane reports project billing statements from usage ledgers", () =
   assert.equal(statement.totalUsd, 0.9);
 });
 
+test("control plane reports organization billing statements across projects", () => {
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+    projectBillingRates: {
+      invocationsPerMillionUsd: 0.4,
+      sqliteUnitUsd: 2.5,
+    },
+  });
+  const organization = control.createOrganization({ id: "org_billing_statement", name: "Billing Statement Org" });
+  const projectA = control.createProject({
+    id: "prj_statement_a",
+    name: "statement-a",
+    organizationId: organization.id,
+  });
+  const projectB = control.createProject({
+    id: "prj_statement_b",
+    name: "statement-b",
+    organizationId: organization.id,
+  });
+  const otherOrganization = control.createOrganization({ id: "org_other_statement", name: "Other Statement Org" });
+  const otherProject = control.createProject({
+    id: "prj_statement_other",
+    name: "statement-other",
+    organizationId: otherOrganization.id,
+  });
+  control.recordUsageEvent({
+    id: "use_statement_a_invocation",
+    projectId: projectA.id,
+    metric: "invocation",
+    quantity: 1_000_000,
+    recordedAt: "2026-07-01T00:00:00.000Z",
+  });
+  control.recordUsageEvent({
+    id: "use_statement_b_sqlite",
+    projectId: projectB.id,
+    metric: "sqlite_unit",
+    quantity: 2,
+    recordedAt: "2026-07-02T00:00:00.000Z",
+  });
+  control.recordUsageEvent({
+    id: "use_statement_other_invocation",
+    projectId: otherProject.id,
+    metric: "invocation",
+    quantity: 9_000_000,
+    recordedAt: "2026-07-02T00:00:00.000Z",
+  });
+
+  const statement = control.getOrganizationBillingStatement({
+    organizationId: organization.id,
+    at: "2026-07-15T00:00:00.000Z",
+  });
+
+  assert.equal(statement.organizationId, organization.id);
+  assert.equal(statement.generatedAt, fixedNow());
+  assert.equal(statement.period.key, "2026-07");
+  assert.deepEqual(statement.projects.map((project) => [project.projectId, project.totalUsd]), [
+    [projectA.id, 0.4],
+    [projectB.id, 5],
+  ]);
+  assert.deepEqual(statement.usage, {
+    invocations: 1_000_000,
+    cpuMs: 0,
+    wallMs: 0,
+    memoryMbMs: 0,
+    egressBytes: 0,
+    storageBytes: 0,
+    sqliteUnits: 2,
+  });
+  assert.equal(statement.totalUsd, 5.4);
+});
+
 test("async control plane reports per-tenant enforcement status", async () => {
   const control = createAsyncControlPlane({
     repository: asyncRepository(createMemoryRepository()),
@@ -630,6 +703,58 @@ test("async control plane reports project billing statements from usage ledgers"
     ["storageBytes", 2, 0.06],
   ]);
   assert.equal(statement.totalUsd, 0.06);
+});
+
+test("async control plane reports organization billing statements across projects", async () => {
+  const control = createAsyncControlPlane({
+    repository: asyncRepository(createMemoryRepository()),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+    projectBillingRates: {
+      invocationsPerMillionUsd: 0.4,
+    },
+  });
+  const organization = await control.createOrganization({
+    id: "org_async_statement",
+    name: "Async Statement Org",
+  });
+  const projectA = await control.createProject({
+    id: "prj_async_statement_a",
+    name: "async statement a",
+    organizationId: organization.id,
+  });
+  const projectB = await control.createProject({
+    id: "prj_async_statement_b",
+    name: "async statement b",
+    organizationId: organization.id,
+  });
+  await control.recordUsageEvent({
+    id: "use_async_statement_a_invocation",
+    projectId: projectA.id,
+    metric: "invocation",
+    quantity: 1_000_000,
+    recordedAt: "2026-07-02T00:00:00.000Z",
+  });
+  await control.recordUsageEvent({
+    id: "use_async_statement_b_invocation",
+    projectId: projectB.id,
+    metric: "invocation",
+    quantity: 2_000_000,
+    recordedAt: "2026-07-03T00:00:00.000Z",
+  });
+
+  const statement = await control.getOrganizationBillingStatement({
+    organizationId: organization.id,
+    at: "2026-07-15T00:00:00.000Z",
+  });
+
+  assert.equal(statement.organizationId, organization.id);
+  assert.deepEqual(statement.projects.map((project) => [project.projectId, project.totalUsd]), [
+    [projectA.id, 0.4],
+    [projectB.id, 0.8],
+  ]);
+  assert.equal(statement.usage.invocations, 3_000_000);
+  assert.equal(statement.totalUsd, 1.2);
 });
 
 test("async control plane manages tenant API keys and usage meters", async () => {
