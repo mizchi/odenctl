@@ -36,6 +36,17 @@ export interface PerfBudgetConfig {
   clusterSwitchBudgets?: PerfClusterEventBudget[];
   clusterPlacementBudgets?: PerfClusterEventBudget[];
   clusterAutoscalingBudgets?: PerfClusterEventBudget[];
+  trend?: PerfTrendBudget;
+}
+
+export interface PerfTrendBudget {
+  minHistorySamples?: number;
+  maxP95IncreaseRatio?: number;
+  maxAvgIncreaseRatio?: number;
+  minThroughputRatio?: number;
+  maxPublishIncreaseRatio?: number;
+  maxVisibleIncreaseRatio?: number;
+  maxTotalIncreaseRatio?: number;
 }
 
 export interface PerfRegressionFinding {
@@ -65,7 +76,12 @@ export interface PerfRegressionReport {
 export interface PerfRegressionCliOptions {
   budgetPath: string;
   inputPaths: string[];
+  historyPaths: string[];
   outputPath?: string;
+}
+
+export interface PerfRegressionEvaluateOptions {
+  historyReports?: unknown[];
 }
 
 type BenchmarkRow = BenchmarkResult | ClusterThroughputResult;
@@ -74,11 +90,13 @@ type ClusterEventRow = ClusterSwitchResult | ClusterPlacementResult | ClusterAut
 export function evaluatePerfBudgets(
   reports: unknown[],
   budget: PerfBudgetConfig,
+  options: PerfRegressionEvaluateOptions = {},
 ): PerfRegressionReport {
   const findings: PerfRegressionFinding[] = [];
   const checked: PerfRegressionCheck[] = [];
   const benchmarkRows = collectBenchmarkRows(reports);
   const clusterReports = reports.filter(isClusterBenchmarkReport);
+  const history = collectPerfTrendHistory(options.historyReports ?? []);
 
   for (const item of budget.benchmarkBudgets ?? []) {
     const matches = benchmarkRows.filter((row) => benchmarkMatches(row, item));
@@ -119,6 +137,20 @@ export function evaluatePerfBudgets(
     findings,
     checked,
   );
+  if (budget.trend) {
+    evaluatePerfTrends(
+      benchmarkRows,
+      {
+        switches: clusterReports.flatMap((report) => report.switches),
+        placements: clusterReports.flatMap((report) => report.placements),
+        autoscaling: clusterReports.flatMap((report) => report.autoscaling),
+      },
+      history,
+      budget.trend,
+      findings,
+      checked,
+    );
+  }
 
   return {
     schemaVersion: 1,
@@ -165,6 +197,7 @@ export function parsePerfRegressionArgs(args: string[]): PerfRegressionCliOption
   const options: PerfRegressionCliOptions = {
     budgetPath: "",
     inputPaths: [],
+    historyPaths: [],
   };
   for (let index = 0; index < args.length; index += 1) {
     const flag = args[index];
@@ -176,6 +209,10 @@ export function parsePerfRegressionArgs(args: string[]): PerfRegressionCliOption
         break;
       case "--input":
         options.inputPaths.push(requiredValue(flag, value));
+        index += 1;
+        break;
+      case "--history":
+        options.historyPaths.push(requiredValue(flag, value));
         index += 1;
         break;
       case "--output":
@@ -284,6 +321,165 @@ function evaluateClusterEventBudget(
   }
 }
 
+function evaluatePerfTrends(
+  benchmarkRows: BenchmarkRow[],
+  clusterRows: {
+    switches: ClusterSwitchResult[];
+    placements: ClusterPlacementResult[];
+    autoscaling: ClusterAutoscalingResult[];
+  },
+  history: PerfTrendHistory,
+  budget: PerfTrendBudget,
+  findings: PerfRegressionFinding[],
+  checked: PerfRegressionCheck[],
+) {
+  const minSamples = positiveIntegerOrDefault(budget.minHistorySamples, 3);
+  for (const row of benchmarkRows) {
+    const key = trendKey("benchmark", row);
+    const samples = history.benchmarks.get(key) ?? [];
+    const before = findings.length;
+    evaluateTrendMetric(
+      "benchmark",
+      row.name,
+      "p95Ms",
+      row.p95Ms,
+      samples,
+      budget.maxP95IncreaseRatio,
+      "max",
+      minSamples,
+      findings,
+    );
+    evaluateTrendMetric(
+      "benchmark",
+      row.name,
+      "avgMs",
+      row.avgMs,
+      samples,
+      budget.maxAvgIncreaseRatio,
+      "max",
+      minSamples,
+      findings,
+    );
+    evaluateTrendMetric(
+      "benchmark",
+      row.name,
+      "throughputRps",
+      row.throughputRps,
+      samples,
+      budget.minThroughputRatio,
+      "min",
+      minSamples,
+      findings,
+    );
+    if (findings.length !== before) {
+      checked.push({ kind: "benchmark", name: row.name, dimensions: rowDimensions(row), ok: false });
+    }
+  }
+  evaluateClusterTrendRows("cluster.switch", clusterRows.switches, history.switches, budget, minSamples, findings, checked);
+  evaluateClusterTrendRows("cluster.placement", clusterRows.placements, history.placements, budget, minSamples, findings, checked);
+  evaluateClusterTrendRows(
+    "cluster.autoscaling",
+    clusterRows.autoscaling,
+    history.autoscaling,
+    budget,
+    minSamples,
+    findings,
+    checked,
+  );
+}
+
+function evaluateClusterTrendRows(
+  kind: PerfRegressionFinding["kind"],
+  rows: ClusterEventRow[],
+  historyRows: Map<string, PerfTrendSample[]>,
+  budget: PerfTrendBudget,
+  minSamples: number,
+  findings: PerfRegressionFinding[],
+  checked: PerfRegressionCheck[],
+) {
+  for (const row of rows) {
+    const samples = historyRows.get(trendKey(kind, row)) ?? [];
+    const before = findings.length;
+    evaluateTrendMetric(
+      kind,
+      row.name,
+      "publishMs",
+      row.publishMs,
+      samples,
+      budget.maxPublishIncreaseRatio,
+      "max",
+      minSamples,
+      findings,
+    );
+    const visibleMs = clusterVisibleMs(row);
+    if (visibleMs !== undefined) {
+      evaluateTrendMetric(
+        kind,
+        row.name,
+        "visibleMs",
+        visibleMs,
+        samples,
+        budget.maxVisibleIncreaseRatio,
+        "max",
+        minSamples,
+        findings,
+      );
+    }
+    evaluateTrendMetric(
+      kind,
+      row.name,
+      "totalMs",
+      row.totalMs,
+      samples,
+      budget.maxTotalIncreaseRatio,
+      "max",
+      minSamples,
+      findings,
+    );
+    if (findings.length !== before) {
+      checked.push({ kind, name: row.name, dimensions: rowDimensions(row), ok: false });
+    }
+  }
+}
+
+function evaluateTrendMetric(
+  kind: PerfRegressionFinding["kind"],
+  name: string,
+  metric: string,
+  actual: number,
+  samples: PerfTrendSample[],
+  ratio: number | undefined,
+  mode: "max" | "min",
+  minSamples: number,
+  findings: PerfRegressionFinding[],
+) {
+  if (ratio === undefined) {
+    return;
+  }
+  const values = samples
+    .map((sample) => sample.metrics[metric])
+    .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  if (values.length < minSamples) {
+    return;
+  }
+  const baseline = median(values);
+  const limit = round4(baseline * ratio);
+  const failed = mode === "max" ? actual > limit : actual < limit;
+  if (!failed) {
+    return;
+  }
+  findings.push({
+    kind,
+    name,
+    metric,
+    actual: round4(actual),
+    limit,
+    message: mode === "max"
+      ? `${name} ${metric} ${round4(actual)} > historical median ${round4(baseline)} * ${ratio} (${limit})`
+      : `${name} ${metric} ${round4(actual)} < historical median ${round4(baseline)} * ${ratio} (${limit})`,
+  });
+}
+
 function metricFinding(
   kind: PerfRegressionFinding["kind"],
   name: string,
@@ -328,6 +524,73 @@ function collectBenchmarkRows(reports: unknown[]): BenchmarkRow[] {
   return rows;
 }
 
+interface PerfTrendHistory {
+  benchmarks: Map<string, PerfTrendSample[]>;
+  switches: Map<string, PerfTrendSample[]>;
+  placements: Map<string, PerfTrendSample[]>;
+  autoscaling: Map<string, PerfTrendSample[]>;
+}
+
+interface PerfTrendSample {
+  metrics: Record<string, number>;
+}
+
+function collectPerfTrendHistory(reports: unknown[]): PerfTrendHistory {
+  const history: PerfTrendHistory = {
+    benchmarks: new Map(),
+    switches: new Map(),
+    placements: new Map(),
+    autoscaling: new Map(),
+  };
+  for (const row of collectBenchmarkRows(reports)) {
+    addTrendSample(history.benchmarks, trendKey("benchmark", row), {
+      p95Ms: row.p95Ms,
+      avgMs: row.avgMs,
+      throughputRps: row.throughputRps,
+    });
+  }
+  for (const report of reports.filter(isClusterBenchmarkReport)) {
+    for (const row of report.switches) {
+      addClusterTrendSample(history.switches, "cluster.switch", row);
+    }
+    for (const row of report.placements) {
+      addClusterTrendSample(history.placements, "cluster.placement", row);
+    }
+    for (const row of report.autoscaling) {
+      addClusterTrendSample(history.autoscaling, "cluster.autoscaling", row);
+    }
+  }
+  return history;
+}
+
+function addClusterTrendSample(
+  target: Map<string, PerfTrendSample[]>,
+  kind: PerfRegressionFinding["kind"],
+  row: ClusterEventRow,
+) {
+  addTrendSample(target, trendKey(kind, row), {
+    publishMs: row.publishMs,
+    visibleMs: clusterVisibleMs(row),
+    totalMs: row.totalMs,
+  });
+}
+
+function addTrendSample(
+  target: Map<string, PerfTrendSample[]>,
+  key: string,
+  metrics: Record<string, number | undefined>,
+) {
+  const sample: PerfTrendSample = { metrics: {} };
+  for (const [metric, value] of Object.entries(metrics)) {
+    if (typeof value === "number" && Number.isFinite(value)) {
+      sample.metrics[metric] = value;
+    }
+  }
+  const samples = target.get(key) ?? [];
+  samples.push(sample);
+  target.set(key, samples);
+}
+
 function isBenchmarkReport(value: unknown): value is BenchmarkReport {
   const report = value as BenchmarkReport;
   return Array.isArray(report?.results);
@@ -369,6 +632,14 @@ function rowDimensions(row: BenchmarkRow | ClusterEventRow): Record<string, numb
   return dimensions;
 }
 
+function trendKey(kind: PerfRegressionFinding["kind"], row: BenchmarkRow | ClusterEventRow): string {
+  return JSON.stringify({
+    kind,
+    name: row.name,
+    dimensions: rowDimensions(row),
+  });
+}
+
 function budgetDimensions(
   budget: PerfBenchmarkBudget | PerfClusterEventBudget,
 ): Record<string, number | string> {
@@ -407,6 +678,19 @@ function round4(value: number): number {
   return Math.round(value * 10_000) / 10_000;
 }
 
+function median(values: number[]): number {
+  const sorted = values.toSorted((left, right) => left - right);
+  const middle = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 1) {
+    return sorted[middle];
+  }
+  return (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
+function positiveIntegerOrDefault(value: number | undefined, fallback: number): number {
+  return Number.isInteger(value) && value !== undefined && value > 0 ? value : fallback;
+}
+
 function requiredValue(flag: string, value: string | undefined): string {
   if (!value || value.startsWith("--")) {
     throw new Error(`expected ${flag} <value>`);
@@ -420,7 +704,10 @@ async function main() {
   const reports = await Promise.all(
     options.inputPaths.map(async (path) => JSON.parse(await readFile(path, "utf8")) as unknown),
   );
-  const report = evaluatePerfBudgets(reports, budget);
+  const historyReports = await Promise.all(
+    options.historyPaths.map(async (path) => JSON.parse(await readFile(path, "utf8")) as unknown),
+  );
+  const report = evaluatePerfBudgets(reports, budget, { historyReports });
   const markdown = formatPerfRegressionMarkdown(report);
   if (options.outputPath) {
     await writeFile(options.outputPath, markdown);

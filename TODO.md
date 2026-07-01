@@ -179,3 +179,11 @@ Production readiness tasks, in implementation order.
 - [x] Expose `PUT`/`GET /replication/snapshots/routes` for replicated snapshot state.
 - [x] Include replica ACK consistency in `POST /snapshots/routes/publish` responses.
 - [x] Add env configuration for regional replica targets.
+
+## 25. Historical perf trend analysis
+
+- [x] Add optional historical benchmark inputs to `perf-check`.
+- [x] Compare current rows against historical medians by name and dimensions.
+- [x] Add trend thresholds to `perf/budgets.json`.
+- [x] Wire `WASMPLANE_PERF_HISTORY` into `just perf-regression`.
+- [x] Document remaining GitHub Actions artifact-download work.

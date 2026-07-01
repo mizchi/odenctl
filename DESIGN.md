@@ -481,12 +481,13 @@ single-region estimate は README の cost estimator にまとめる。現状の
 - Fly autoscaler lease/cooldown は in-memory/SQLite/Postgres store に対応したが、provider idempotency
   metadata は未実装
 - Store/Instance reuse は experimental flag のみで、guest state reset contract は未実装
-- weekly perf regression は fixed budget check で、履歴ベースの trend/regression 分析は未実装
+- weekly perf regression は fixed budget check と任意の historical median trend check に対応したが、
+  GitHub Actions 上で過去 artifact を自動取得する処理は未実装
 
 ## Next Implementation Priorities
 
-1. Historical perf trend analysis
-2. Safe guest reset contract for instance reuse
-3. Provider idempotency metadata for autoscaling
-4. Durable route snapshot replica store
-5. Managed identity token providers for GCP/Azure KMS
+1. Safe guest reset contract for instance reuse
+2. Provider idempotency metadata for autoscaling
+3. Durable route snapshot replica store
+4. Managed identity token providers for GCP/Azure KMS
+5. GitHub Actions historical perf artifact download

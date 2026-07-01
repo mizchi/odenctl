@@ -11,6 +11,8 @@ perf_iterations := env_var_or_default("WASMPLANE_PERF_ITERATIONS", "20")
 perf_warmup := env_var_or_default("WASMPLANE_PERF_WARMUP", "2")
 perf_concurrency := env_var_or_default("WASMPLANE_PERF_CONCURRENCY", "1,4")
 perf_nodes := env_var_or_default("WASMPLANE_PERF_NODES", "1,2")
+perf_history := env_var_or_default("WASMPLANE_PERF_HISTORY", "")
+perf_history_arg := if perf_history == "" { "" } else { "--history " + perf_history }
 
 test:
     pnpm test
@@ -54,7 +56,7 @@ perf-regression: rust-build guest-build
     mkdir -p perf-results
     pnpm bench all --component "{{ guest_component }}" --host-bin target/debug/wasmplane-wasip3-host --iterations "{{ perf_iterations }}" --warmup "{{ perf_warmup }}" --concurrency "{{ perf_concurrency }}" --format json --output perf-results/bench.json
     pnpm cluster-bench --component "{{ guest_component }}" --host-bin target/debug/wasmplane-wasip3-host --nodes "{{ perf_nodes }}" --iterations "{{ perf_iterations }}" --warmup "{{ perf_warmup }}" --concurrency "{{ perf_concurrency }}" --placement --autoscaling --format json --output perf-results/cluster-bench.json
-    pnpm perf-check --budget perf/budgets.json --input perf-results/bench.json --input perf-results/cluster-bench.json --output perf-results/perf-regression.md
+    pnpm perf-check --budget perf/budgets.json --input perf-results/bench.json --input perf-results/cluster-bench.json {{ perf_history_arg }} --output perf-results/perf-regression.md
 
 db-migrate-check:
     pnpm wasmplane migrate check

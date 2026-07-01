@@ -66,6 +66,35 @@ test("perf regression markdown summarizes pass and fail results", () => {
   assert.match(markdown, /host\.invoke\.cwasm p95Ms/);
 });
 
+test("perf trend evaluator reports regressions against historical medians", () => {
+  const report = evaluatePerfBudgets(
+    [sampleBenchReport(), sampleClusterReport()],
+    {
+      schemaVersion: 1,
+      trend: {
+        minHistorySamples: 2,
+        maxP95IncreaseRatio: 1.2,
+        minThroughputRatio: 0.9,
+        maxTotalIncreaseRatio: 1.2,
+      },
+    },
+    {
+      historyReports: [
+        sampleBenchReport({ p95Ms: 7, throughputRps: 220 }),
+        sampleBenchReport({ p95Ms: 8, throughputRps: 200 }),
+        sampleClusterReport({ switchTotalMs: 12 }),
+        sampleClusterReport({ switchTotalMs: 14 }),
+      ],
+    },
+  );
+
+  assert.equal(report.ok, false);
+  assert.match(report.findings.map((finding) => finding.message).join("\n"), /host\.invoke\.cwasm p95Ms/);
+  assert.match(report.findings.map((finding) => finding.message).join("\n"), /historical median/);
+  assert.match(report.findings.map((finding) => finding.message).join("\n"), /host\.invoke\.cwasm throughputRps/);
+  assert.match(report.findings.map((finding) => finding.message).join("\n"), /cluster\.switch\.cold totalMs/);
+});
+
 test("perf regression CLI args parse budget, inputs, and output", () => {
   assert.deepEqual(
     parsePerfRegressionArgs([
@@ -75,18 +104,21 @@ test("perf regression CLI args parse budget, inputs, and output", () => {
       "perf-results/bench.json",
       "--input",
       "perf-results/cluster.json",
+      "--history",
+      "perf-history/bench-previous.json",
       "--output",
       "perf-results/report.md",
     ]),
     {
       budgetPath: "perf/budgets.json",
       inputPaths: ["perf-results/bench.json", "perf-results/cluster.json"],
+      historyPaths: ["perf-history/bench-previous.json"],
       outputPath: "perf-results/report.md",
     },
   );
 });
 
-function sampleBenchReport() {
+function sampleBenchReport(options: { p95Ms?: number; throughputRps?: number } = {}) {
   return {
     schemaVersion: 1,
     generatedAt: "2026-07-01T00:00:00.000Z",
@@ -104,11 +136,11 @@ function sampleBenchReport() {
         count: 10,
         errors: 0,
         elapsedMs: 100,
-        throughputRps: 100,
+        throughputRps: options.throughputRps ?? 100,
         minMs: 5,
         avgMs: 8,
         p50Ms: 8,
-        p95Ms: 10,
+        p95Ms: options.p95Ms ?? 10,
         p99Ms: 10,
         maxMs: 10,
       },
@@ -116,7 +148,7 @@ function sampleBenchReport() {
   };
 }
 
-function sampleClusterReport(options: { switchOk?: boolean } = {}) {
+function sampleClusterReport(options: { switchOk?: boolean; switchTotalMs?: number } = {}) {
   return {
     schemaVersion: 1,
     generatedAt: "2026-07-01T00:00:00.000Z",
@@ -151,7 +183,7 @@ function sampleClusterReport(options: { switchOk?: boolean } = {}) {
         ok: options.switchOk ?? true,
         publishMs: 5,
         visibleAfterPublishMs: 20,
-        totalMs: 25,
+        totalMs: options.switchTotalMs ?? 25,
         attempts: 2,
         errors: options.switchOk === false ? 1 : 0,
       },

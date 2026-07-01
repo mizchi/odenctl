@@ -1,5 +1,14 @@
 {
   "schemaVersion": 1,
+  "trend": {
+    "minHistorySamples": 3,
+    "maxP95IncreaseRatio": 1.5,
+    "maxAvgIncreaseRatio": 1.5,
+    "minThroughputRatio": 0.67,
+    "maxPublishIncreaseRatio": 1.5,
+    "maxVisibleIncreaseRatio": 1.5,
+    "maxTotalIncreaseRatio": 1.5
+  },
   "benchmarkBudgets": [
     {
       "name": "host.invoke.component",
