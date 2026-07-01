@@ -253,3 +253,4 @@ Production readiness tasks, in implementation order.
 - [x] Add forced tenant drain and isolation-pool routing for noisy-neighbor mitigation.
 - [x] Add billing-ready quota enforcement tied to usage ledgers.
 - [x] Add invoice-ready project and organization billing statements from usage ledgers.
+- [x] Add project monthly USD budget enforcement from billing rate cards.

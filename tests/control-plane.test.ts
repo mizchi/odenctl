@@ -572,6 +572,59 @@ test("control plane reports organization billing statements across projects", ()
   assert.equal(statement.totalUsd, 5.4);
 });
 
+test("control plane enforces monthly billing budgets from usage ledgers", () => {
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+    projectBillingRates: {
+      invocationsPerMillionUsd: 1,
+    },
+    projectBillingBudgets: {
+      prj_billing_budget: {
+        period: "calendar_month",
+        maxUsd: 1,
+      },
+    },
+  });
+  const organization = control.createOrganization({ id: "org_billing_budget", name: "Billing Budget Org" });
+  const project = control.createProject({
+    id: "prj_billing_budget",
+    name: "billing budget",
+    organizationId: organization.id,
+  });
+  control.recordUsageEvent({
+    id: "use_billing_budget_invocation",
+    projectId: project.id,
+    metric: "invocation",
+    quantity: 1_000_000,
+    recordedAt: "2026-07-01T00:00:00.000Z",
+  });
+
+  assert.throws(
+    () =>
+      control.recordUsageEvent({
+        id: "use_billing_budget_over",
+        projectId: project.id,
+        metric: "invocation",
+        quantity: 1_000_000,
+        recordedAt: "2026-07-02T00:00:00.000Z",
+      }),
+    /billing budget exceeded.*\$2\/\$1.*2026-07/,
+  );
+
+  const report = control.getProjectBillingBudgetReport({
+    projectId: project.id,
+    at: "2026-07-15T00:00:00.000Z",
+  });
+  assert.equal(report.projectId, project.id);
+  assert.equal(report.organizationId, organization.id);
+  assert.equal(report.usedUsd, 1);
+  assert.equal(report.limitUsd, 1);
+  assert.equal(report.remainingUsd, 0);
+  assert.equal(report.status, "ok");
+});
+
 test("async control plane reports per-tenant enforcement status", async () => {
   const control = createAsyncControlPlane({
     repository: asyncRepository(createMemoryRepository()),
@@ -755,6 +808,54 @@ test("async control plane reports organization billing statements across project
   ]);
   assert.equal(statement.usage.invocations, 3_000_000);
   assert.equal(statement.totalUsd, 1.2);
+});
+
+test("async control plane enforces monthly billing budgets from usage ledgers", async () => {
+  const control = createAsyncControlPlane({
+    repository: asyncRepository(createMemoryRepository()),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+    projectBillingRates: {
+      storageGbMonthUsd: 1,
+    },
+    projectBillingBudgets: {
+      prj_async_billing_budget: {
+        period: "calendar_month",
+        maxUsd: 1,
+      },
+    },
+  });
+  const project = await control.createProject({
+    id: "prj_async_billing_budget",
+    name: "async billing budget",
+  });
+  await control.recordUsageEvent({
+    id: "use_async_billing_budget_storage",
+    projectId: project.id,
+    metric: "storage_bytes",
+    quantity: 1024 ** 3,
+    recordedAt: "2026-07-01T00:00:00.000Z",
+  });
+
+  await assert.rejects(
+    () =>
+      control.recordUsageEvent({
+        id: "use_async_billing_budget_over",
+        projectId: project.id,
+        metric: "storage_bytes",
+        quantity: 1024 ** 3,
+        recordedAt: "2026-07-02T00:00:00.000Z",
+      }),
+    /billing budget exceeded.*\$2\/\$1.*2026-07/,
+  );
+
+  const report = await control.getProjectBillingBudgetReport({
+    projectId: project.id,
+    at: "2026-07-15T00:00:00.000Z",
+  });
+  assert.equal(report.projectId, project.id);
+  assert.equal(report.usedUsd, 1);
+  assert.equal(report.status, "ok");
 });
 
 test("async control plane manages tenant API keys and usage meters", async () => {

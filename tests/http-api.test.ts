@@ -595,6 +595,71 @@ test("HTTP API exposes organization billing statements", async () => {
   }
 });
 
+test("HTTP API enforces and reports monthly billing budgets", async () => {
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+    projectBillingRates: {
+      invocationsPerMillionUsd: 1,
+    },
+    projectBillingBudgets: {
+      prj_http_billing_budget: {
+        period: "calendar_month",
+        maxUsd: 1,
+      },
+    },
+  });
+  const app = createHttpApp({ controlPlane: control });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const project = await postJson(baseUrl, "/projects", {
+      id: "prj_http_billing_budget",
+      name: "http billing budget",
+    });
+    await postJson(baseUrl, "/usage/events", {
+      id: "use_http_billing_budget_invocation",
+      projectId: project.id,
+      metric: "invocation",
+      quantity: 1_000_000,
+      recordedAt: "2026-07-01T00:00:00.000Z",
+    });
+    const over = await fetch(`${baseUrl}/usage/events`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        id: "use_http_billing_budget_over",
+        projectId: project.id,
+        metric: "invocation",
+        quantity: 1_000_000,
+        recordedAt: "2026-07-02T00:00:00.000Z",
+      }),
+    });
+    assert.equal(over.status, 400);
+    assert.match((await over.json()).error.message, /billing budget exceeded.*\$2\/\$1.*2026-07/);
+
+    const response = await fetch(
+      `${baseUrl}/projects/${project.id}/billing-budget?at=${
+        encodeURIComponent("2026-07-15T00:00:00.000Z")
+      }`,
+    );
+    assert.equal(response.status, 200);
+    const report = await response.json();
+    assert.equal(report.projectId, project.id);
+    assert.equal(report.usedUsd, 1);
+    assert.equal(report.limitUsd, 1);
+    assert.equal(report.remainingUsd, 0);
+    assert.equal(report.status, "ok");
+  } finally {
+    await app.close();
+  }
+});
+
 test("HTTP API manages custom domain verification and TLS hooks", async () => {
   const control = createControlPlane({
     repository: createMemoryRepository(),

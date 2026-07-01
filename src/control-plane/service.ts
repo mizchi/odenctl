@@ -105,6 +105,12 @@ import {
   type ProjectBillingRates,
   type ProjectBillingStatement,
 } from "./billing-statement.ts";
+import {
+  createProjectBillingBudgetReport,
+  enforceProjectBillingBudget,
+  type ProjectBillingBudgetPolicies,
+  type ProjectBillingBudgetReport,
+} from "./billing-budget.ts";
 
 export interface ControlPlaneOptions {
   repository: ControlPlaneRepository;
@@ -116,6 +122,7 @@ export interface ControlPlaneOptions {
   projectEnforcementPolicies?: ProjectEnforcementPolicies;
   projectUsageQuotas?: ProjectUsageQuotaPolicies;
   projectBillingRates?: ProjectBillingRates;
+  projectBillingBudgets?: ProjectBillingBudgetPolicies;
   artifactSignatureVerifier?: ArtifactSignatureVerifier;
   admissionPolicy?: ControlPlaneAdmissionPolicy;
 }
@@ -195,6 +202,11 @@ export interface GetProjectUsageQuotaReportInput {
 }
 
 export interface GetProjectBillingStatementInput {
+  projectId: string;
+  at?: string;
+}
+
+export interface GetProjectBillingBudgetReportInput {
   projectId: string;
   at?: string;
 }
@@ -412,6 +424,7 @@ export function createControlPlane(options: ControlPlaneOptions) {
   const projectEnforcementPolicies = options.projectEnforcementPolicies;
   const projectUsageQuotas = options.projectUsageQuotas;
   const projectBillingRates = options.projectBillingRates;
+  const projectBillingBudgets = options.projectBillingBudgets;
   const artifactSignatureVerifier = options.artifactSignatureVerifier;
   const admissionPolicy = options.admissionPolicy;
 
@@ -532,6 +545,7 @@ export function createControlPlane(options: ControlPlaneOptions) {
       return resolveUsageEventReplay(event, existing);
     }
     enforceUsageQuota(project.id, event);
+    enforceBillingBudget(project.id, event);
     try {
       return repository.createUsageEvent(event);
     } catch (error) {
@@ -594,6 +608,23 @@ export function createControlPlane(options: ControlPlaneOptions) {
       summary,
       period,
       rates: projectBillingRates,
+      generatedAt: now(),
+    });
+  }
+
+  function getProjectBillingBudgetReport(
+    input: GetProjectBillingBudgetReportInput,
+  ): ProjectBillingBudgetReport {
+    requireProject(repository, input.projectId);
+    const at = normalizeUsageTimestamp(input.at, "billing budget at") ?? now();
+    const policy = projectBillingBudgets?.[input.projectId];
+    const period = usageQuotaPeriodFor(at, policy);
+    const summary = repository.getProjectUsageSummary(input.projectId, period.from, period.to);
+    return createProjectBillingBudgetReport({
+      summary,
+      period,
+      rates: projectBillingRates,
+      policy,
       generatedAt: now(),
     });
   }
@@ -1124,6 +1155,7 @@ export function createControlPlane(options: ControlPlaneOptions) {
     getProjectEnforcementReport,
     getProjectUsageQuotaReport,
     getProjectBillingStatement,
+    getProjectBillingBudgetReport,
     getOrganizationBillingStatement,
     createCustomDomain,
     listProjectCustomDomains,
@@ -1206,6 +1238,23 @@ export function createControlPlane(options: ControlPlaneOptions) {
       policy,
       period,
       summary: repository.getProjectUsageSummary(projectId, period.from, period.to),
+      metric: event.metric,
+      quantity: event.quantity,
+    });
+  }
+
+  function enforceBillingBudget(projectId: string, event: UsageEvent) {
+    const policy = projectBillingBudgets?.[projectId];
+    if (!policy) {
+      return;
+    }
+    const period = usageQuotaPeriodFor(event.recordedAt, policy);
+    enforceProjectBillingBudget({
+      projectId,
+      policy,
+      period,
+      summary: repository.getProjectUsageSummary(projectId, period.from, period.to),
+      rates: projectBillingRates,
       metric: event.metric,
       quantity: event.quantity,
     });

@@ -75,6 +75,9 @@ Set `WASMPLANE_BILLING_INVOCATION_PER_MILLION_USD`,
 `WASMPLANE_BILLING_STORAGE_GB_MONTH_USD`, and `WASMPLANE_BILLING_SQLITE_UNIT_USD` to expose
 invoice-ready calendar-month usage statements from `GET /projects/:id/billing-statement` and
 organization rollups from `GET /organizations/:id/billing-statement`.
+Set `WASMPLANE_BILLING_MONTHLY_USD_LIMITS` to comma-separated `project=usd` entries to reject
+usage events that would exceed a project's calendar-month spend budget. Current budget status is
+available from `GET /projects/:id/billing-budget`.
 Set `WASMPLANE_SNAPSHOT_PUBLISH_INTERVAL_MS` to run a background publish job that periodically
 generates the current route snapshot and publishes it to configured/registered active runtime
 nodes. Each generated route snapshot includes a content-derived `snap_<hash>` id, and publish
@@ -745,6 +748,7 @@ Available endpoints:
 - `GET /projects/:id/enforcement-report`
 - `GET /projects/:id/usage-quota`
 - `GET /projects/:id/billing-statement`
+- `GET /projects/:id/billing-budget`
 - `POST /projects/:id/sqlite-databases`
 - `GET /projects/:id/sqlite-databases`
 - `GET /sqlite-databases`

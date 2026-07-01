@@ -103,6 +103,14 @@ export {
   type ProjectBillingStatement,
 } from "./control-plane/billing-statement.ts";
 export {
+  createProjectBillingBudgetReport,
+  enforceProjectBillingBudget,
+  projectBillingBudgetsFromEnv,
+  type ProjectBillingBudgetPolicies,
+  type ProjectBillingBudgetPolicy,
+  type ProjectBillingBudgetReport,
+} from "./control-plane/billing-budget.ts";
+export {
   enforceProjectQuota,
   projectQuotasFromEnv,
 } from "./control-plane/quotas.ts";

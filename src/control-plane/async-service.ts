@@ -105,6 +105,12 @@ import {
   type ProjectBillingRates,
   type ProjectBillingStatement,
 } from "./billing-statement.ts";
+import {
+  createProjectBillingBudgetReport,
+  enforceProjectBillingBudget,
+  type ProjectBillingBudgetPolicies,
+  type ProjectBillingBudgetReport,
+} from "./billing-budget.ts";
 
 export interface AsyncControlPlaneRepository {
   createOrganization(organization: Organization): Promise<Organization>;
@@ -176,6 +182,7 @@ export interface AsyncControlPlaneOptions {
   projectEnforcementPolicies?: ProjectEnforcementPolicies;
   projectUsageQuotas?: ProjectUsageQuotaPolicies;
   projectBillingRates?: ProjectBillingRates;
+  projectBillingBudgets?: ProjectBillingBudgetPolicies;
   artifactSignatureVerifier?: ArtifactSignatureVerifier;
   admissionPolicy?: ControlPlaneAdmissionPolicy;
 }
@@ -255,6 +262,11 @@ export interface GetProjectUsageQuotaReportInput {
 }
 
 export interface GetProjectBillingStatementInput {
+  projectId: string;
+  at?: string;
+}
+
+export interface GetProjectBillingBudgetReportInput {
   projectId: string;
   at?: string;
 }
@@ -472,6 +484,7 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
   const projectEnforcementPolicies = options.projectEnforcementPolicies;
   const projectUsageQuotas = options.projectUsageQuotas;
   const projectBillingRates = options.projectBillingRates;
+  const projectBillingBudgets = options.projectBillingBudgets;
   const artifactSignatureVerifier = options.artifactSignatureVerifier;
   const admissionPolicy = options.admissionPolicy;
 
@@ -598,6 +611,7 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
       return resolveUsageEventReplay(event, existing);
     }
     await enforceUsageQuota(project.id, event);
+    await enforceBillingBudget(project.id, event);
     try {
       return await repository.createUsageEvent(event);
     } catch (error) {
@@ -671,6 +685,23 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
       summary,
       period,
       rates: projectBillingRates,
+      generatedAt: now(),
+    });
+  }
+
+  async function getProjectBillingBudgetReport(
+    input: GetProjectBillingBudgetReportInput,
+  ): Promise<ProjectBillingBudgetReport> {
+    await requireProject(repository, input.projectId);
+    const at = normalizeUsageTimestamp(input.at, "billing budget at") ?? now();
+    const policy = projectBillingBudgets?.[input.projectId];
+    const period = usageQuotaPeriodFor(at, policy);
+    const summary = await repository.getProjectUsageSummary(input.projectId, period.from, period.to);
+    return createProjectBillingBudgetReport({
+      summary,
+      period,
+      rates: projectBillingRates,
+      policy,
       generatedAt: now(),
     });
   }
@@ -1215,6 +1246,7 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
     getProjectEnforcementReport,
     getProjectUsageQuotaReport,
     getProjectBillingStatement,
+    getProjectBillingBudgetReport,
     getOrganizationBillingStatement,
     createCustomDomain,
     listProjectCustomDomains,
@@ -1297,6 +1329,23 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
       policy,
       period,
       summary: await repository.getProjectUsageSummary(projectId, period.from, period.to),
+      metric: event.metric,
+      quantity: event.quantity,
+    });
+  }
+
+  async function enforceBillingBudget(projectId: string, event: UsageEvent) {
+    const policy = projectBillingBudgets?.[projectId];
+    if (!policy) {
+      return;
+    }
+    const period = usageQuotaPeriodFor(event.recordedAt, policy);
+    enforceProjectBillingBudget({
+      projectId,
+      policy,
+      period,
+      summary: await repository.getProjectUsageSummary(projectId, period.from, period.to),
+      rates: projectBillingRates,
       metric: event.metric,
       quantity: event.quantity,
     });
