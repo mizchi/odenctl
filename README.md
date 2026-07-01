@@ -627,6 +627,24 @@ The command uploads bytes through `POST /artifacts/local`, creates an immutable 
 the route, then publishes a route snapshot unless `--no-publish` is passed. Limit overrides use
 `--limit name=value`, for example `--limit wallMs=2500 --limit cpuMs=100`. The CLI also reads
 `WASMPLANE_CONTROL_PLANE_TOKEN` when `--token` is omitted.
+For local development, run a control plane and runtime node, then use `dev` to validate the
+component, create a deploy preview, publish the route snapshot directly to the local runtime, and
+print a route-preview curl command:
+
+```sh
+pnpm start
+pnpm runtime
+pnpm wasmplane dev \
+  --project-id prj_hello \
+  --component examples/hello-worker/target/wasm32-wasip1/debug/hello_worker.component.wasm \
+  --host dev.localhost \
+  --env FEATURE_FLAG=on
+```
+
+`wasmplane dev` defaults to `http://127.0.0.1:8787` for the control plane and
+`http://127.0.0.1:8788` for the runtime. It validates through `wasmplane-wasip3-host compile`
+unless `--no-validate` is passed, publishes to `PUT /__runtime/snapshots/routes`, and reads
+`GET /__runtime/logs?projectId=...&deploymentId=...` unless `--no-tail-logs` is passed.
 Canary rollout can be driven through the control-plane API by first pointing a route at the stable
 deployment, then calling `POST /routes/canary` with a candidate deployment and weight. Rollback uses
 `POST /routes/rollback` and returns the route to the stable target with 100% weight. Automatic

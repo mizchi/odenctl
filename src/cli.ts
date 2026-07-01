@@ -7,6 +7,11 @@ import {
   type ConfiguredControlPlaneMigrationOptions,
 } from "./control-plane/database.ts";
 import {
+  createWasip3HostArtifactValidator,
+  type LocalArtifactValidator,
+} from "./control-plane/artifact-validation.ts";
+import { publishRouteSnapshot } from "./control-plane/snapshot-publisher.ts";
+import {
   createConfiguredVolumeSqliteBackupCipher,
   createVolumeSqliteRegistry,
 } from "./control-plane/volume-sqlite.ts";
@@ -43,6 +48,45 @@ export interface DeployComponentResult {
   deployment: any;
   route: any;
   publish?: any;
+}
+
+export interface DevCommandInput {
+  controlPlaneUrl: string;
+  runtimeUrl: string;
+  projectId: string;
+  componentPath: string;
+  host: string;
+  pathPrefix?: string;
+  artifactId?: string;
+  deploymentId?: string;
+  previewId?: string;
+  runtimeVersion?: string;
+  limits?: Partial<RuntimeLimits>;
+  outboundAllow?: string[];
+  kv?: Array<{ binding: string; namespaceId: string }>;
+  secrets?: Array<{ binding: string; secretId: string }>;
+  environment?: Record<string, string>;
+  token?: string;
+  runtimeToken?: string;
+  validate?: boolean;
+  tailLogs?: boolean;
+  hostBin?: string;
+  validator?: LocalArtifactValidator;
+  fetch?: FetchFunction;
+}
+
+export interface DevCommandResult {
+  artifact: any;
+  deployment: any;
+  preview: any;
+  snapshot: any;
+  publish?: any;
+  logs?: any;
+  routePreview: {
+    hostHeader: string;
+    localUrl: string;
+    curl: string;
+  };
 }
 
 export interface MigrateCommandInput extends ConfiguredControlPlaneMigrationOptions {
@@ -139,6 +183,89 @@ export async function deployComponent(input: DeployComponentInput): Promise<Depl
   return { artifact, deployment, route, publish };
 }
 
+export async function runDevCommand(input: DevCommandInput): Promise<DevCommandResult> {
+  const fetchImpl = input.fetch ?? fetch;
+  const bytes = await readFile(input.componentPath);
+  const digest = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+  const suffix = digest.slice("sha256:".length, "sha256:".length + 16);
+  const artifactId = input.artifactId ?? `art_${suffix}`;
+  const deploymentId = input.deploymentId ?? `dep_${suffix}`;
+  const previewId = input.previewId;
+  const pathPrefix = input.pathPrefix ?? "/";
+  const limits = { ...defaultLimits, ...(input.limits ?? {}) };
+  const runtime: RuntimeSpec = {
+    backend: MVP_RUNTIME_BACKEND,
+    version: input.runtimeVersion ?? "wasmtime-42",
+    wasi: MVP_WASI_PROFILE,
+  };
+  const capabilities: CapabilityPolicy = {
+    outboundHttp: {
+      enabled: (input.outboundAllow ?? []).length > 0,
+      allow: input.outboundAllow ?? [],
+    },
+    kv: input.kv ?? [],
+    secrets: input.secrets ?? [],
+    arbitraryFilesystem: false,
+    arbitrarySockets: false,
+    processSpawn: false,
+  };
+
+  if (input.validate !== false) {
+    const validator = input.validator ?? createWasip3HostArtifactValidator({ hostBin: input.hostBin });
+    await validator.validate({
+      path: input.componentPath,
+      digest,
+      location: pathToFileURL(input.componentPath).href,
+    });
+  }
+
+  const artifact = await postJson(fetchImpl, input.controlPlaneUrl, "/artifacts/local", input.token, {
+    id: artifactId,
+    projectId: input.projectId,
+    bytesBase64: bytes.toString("base64"),
+  });
+  const deployment = await postJson(fetchImpl, input.controlPlaneUrl, "/deployments", input.token, {
+    id: deploymentId,
+    projectId: input.projectId,
+    artifactId: artifact.id,
+    world: MVP_WORKER_WORLD,
+    runtime,
+    limits,
+    capabilities,
+  });
+  const environment = {
+    ...(input.environment ?? {}),
+    WASMPLANE_DEV: input.environment?.WASMPLANE_DEV ?? "1",
+  };
+  const preview = await postJson(fetchImpl, input.controlPlaneUrl, "/deploy-previews", input.token, {
+    ...(previewId ? { id: previewId } : {}),
+    projectId: input.projectId,
+    deploymentId: deployment.id,
+    host: input.host,
+    pathPrefix,
+    environment,
+  });
+  const snapshot = await getJson(fetchImpl, input.controlPlaneUrl, "/snapshots/routes", input.token);
+  const publish = await publishRouteSnapshot(
+    snapshot,
+    [{ id: "local", url: input.runtimeUrl, token: input.runtimeToken }],
+    fetchImpl as any,
+  );
+  const logs = input.tailLogs === false
+    ? undefined
+    : await readRuntimeLogs(fetchImpl, input, deployment.id);
+
+  return {
+    artifact,
+    deployment,
+    preview,
+    snapshot,
+    publish,
+    logs,
+    routePreview: routePreview(input.runtimeUrl, preview.host ?? input.host, preview.pathPrefix ?? pathPrefix),
+  };
+}
+
 export function parseDeployArgs(args: string[], env: Record<string, string | undefined> = process.env): DeployComponentInput {
   const input: Partial<DeployComponentInput> = {
     controlPlaneUrl: env.WASMPLANE_CONTROL_PLANE_URL ?? "http://127.0.0.1:8787",
@@ -230,6 +357,128 @@ export function parseDeployArgs(args: string[], env: Record<string, string | und
     throw new Error("expected --host <hostname>");
   }
   return input as DeployComponentInput;
+}
+
+export function parseDevArgs(
+  args: string[],
+  env: Record<string, string | undefined> = process.env,
+): DevCommandInput {
+  const input: Partial<DevCommandInput> = {
+    controlPlaneUrl: env.WASMPLANE_CONTROL_PLANE_URL ?? "http://127.0.0.1:8787",
+    runtimeUrl: env.WASMPLANE_RUNTIME_URL ?? "http://127.0.0.1:8788",
+    token: env.WASMPLANE_CONTROL_PLANE_TOKEN,
+    runtimeToken: env.WASMPLANE_RUNTIME_TOKEN,
+    host: "dev.localhost",
+    pathPrefix: "/",
+    outboundAllow: [],
+    kv: [],
+    secrets: [],
+    environment: {},
+    validate: true,
+    tailLogs: true,
+  };
+  for (let index = 0; index < args.length; index += 1) {
+    const flag = args[index];
+    const value = args[index + 1];
+    switch (flag) {
+      case "--control-plane-url":
+        input.controlPlaneUrl = requiredValue(flag, value);
+        index += 1;
+        break;
+      case "--runtime-url":
+        input.runtimeUrl = requiredValue(flag, value);
+        index += 1;
+        break;
+      case "--project-id":
+        input.projectId = requiredValue(flag, value);
+        index += 1;
+        break;
+      case "--component":
+        input.componentPath = requiredValue(flag, value);
+        index += 1;
+        break;
+      case "--host":
+        input.host = requiredValue(flag, value);
+        index += 1;
+        break;
+      case "--path-prefix":
+        input.pathPrefix = requiredValue(flag, value);
+        index += 1;
+        break;
+      case "--artifact-id":
+        input.artifactId = requiredValue(flag, value);
+        index += 1;
+        break;
+      case "--deployment-id":
+        input.deploymentId = requiredValue(flag, value);
+        index += 1;
+        break;
+      case "--preview-id":
+        input.previewId = requiredValue(flag, value);
+        index += 1;
+        break;
+      case "--runtime-version":
+        input.runtimeVersion = requiredValue(flag, value);
+        index += 1;
+        break;
+      case "--token":
+        input.token = requiredValue(flag, value);
+        index += 1;
+        break;
+      case "--runtime-token":
+        input.runtimeToken = requiredValue(flag, value);
+        index += 1;
+        break;
+      case "--host-bin":
+        input.hostBin = requiredValue(flag, value);
+        index += 1;
+        break;
+      case "--outbound":
+        input.outboundAllow?.push(requiredValue(flag, value));
+        index += 1;
+        break;
+      case "--kv":
+        input.kv?.push(parseBinding(requiredValue(flag, value), "namespaceId"));
+        index += 1;
+        break;
+      case "--secret":
+        input.secrets?.push(parseBinding(requiredValue(flag, value), "secretId"));
+        index += 1;
+        break;
+      case "--limit":
+        input.limits = { ...(input.limits ?? {}), ...parseLimit(requiredValue(flag, value)) };
+        index += 1;
+        break;
+      case "--env": {
+        const [key, envValue] = parseEnvBinding(requiredValue(flag, value));
+        input.environment = { ...(input.environment ?? {}), [key]: envValue };
+        index += 1;
+        break;
+      }
+      case "--validate":
+        input.validate = true;
+        break;
+      case "--no-validate":
+        input.validate = false;
+        break;
+      case "--tail-logs":
+        input.tailLogs = true;
+        break;
+      case "--no-tail-logs":
+        input.tailLogs = false;
+        break;
+      default:
+        throw new Error(`unknown dev argument ${flag}`);
+    }
+  }
+
+  if (!input.projectId) {
+    throw new Error("expected --project-id <id>");
+  }
+  if (!input.componentPath) {
+    throw new Error("expected --component <component.wasm>");
+  }
+  return input as DevCommandInput;
 }
 
 export function parseMigrateArgs(
@@ -399,6 +648,15 @@ async function postJson(
   return requestJson(fetchImpl, baseUrl, path, "POST", token, body);
 }
 
+async function getJson(
+  fetchImpl: FetchFunction,
+  baseUrl: string,
+  path: string,
+  token: string | undefined,
+): Promise<any> {
+  return requestJson(fetchImpl, baseUrl, path, "GET", token, undefined);
+}
+
 async function putJson(
   fetchImpl: FetchFunction,
   baseUrl: string,
@@ -420,7 +678,7 @@ async function requestJson(
   const response = await fetchImpl(new URL(path, baseUrl).href, {
     method,
     headers: requestHeaders(token),
-    body: JSON.stringify(body),
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
   if (!response.ok) {
     const text = await response.text();
@@ -429,10 +687,38 @@ async function requestJson(
   return response.json();
 }
 
+async function readRuntimeLogs(
+  fetchImpl: FetchFunction,
+  input: DevCommandInput,
+  deploymentId: string,
+) {
+  const params = new URLSearchParams({
+    projectId: input.projectId,
+    deploymentId,
+  });
+  return requestJson(
+    fetchImpl,
+    input.runtimeUrl,
+    `/__runtime/logs?${params.toString()}`,
+    "GET",
+    input.runtimeToken,
+    undefined,
+  );
+}
+
 function requestHeaders(token: string | undefined): Record<string, string> {
   return {
     "content-type": "application/json",
     ...(token ? { authorization: `Bearer ${token}` } : {}),
+  };
+}
+
+function routePreview(runtimeUrl: string, host: string, pathPrefix: string) {
+  const localUrl = new URL(pathPrefix, runtimeUrl.endsWith("/") ? runtimeUrl : `${runtimeUrl}/`).href;
+  return {
+    hostHeader: host,
+    localUrl,
+    curl: `curl -H 'host: ${host}' ${localUrl}`,
   };
 }
 
@@ -457,6 +743,16 @@ function parseLimit(value: string): Partial<RuntimeLimits> {
     throw new Error(`limit ${key} must be a positive integer`);
   }
   return { [key]: number };
+}
+
+function parseEnvBinding(value: string): [string, string] {
+  const separator = value.indexOf("=");
+  const key = separator >= 0 ? value.slice(0, separator) : "";
+  const envValue = separator >= 0 ? value.slice(separator + 1) : "";
+  if (!/^[A-Z_][A-Z0-9_]*$/.test(key)) {
+    throw new Error("dev environment bindings must use ENV_NAME=value syntax");
+  }
+  return [key, envValue];
 }
 
 function isLimitKey(key: string): key is keyof RuntimeLimits {
@@ -509,6 +805,24 @@ function printDeployResult(result: DeployComponentResult) {
   );
 }
 
+function printDevResult(result: DevCommandResult) {
+  console.log(
+    JSON.stringify(
+      {
+        artifactId: result.artifact.id,
+        deploymentId: result.deployment.id,
+        previewId: result.preview.id,
+        previewUrl: result.preview.url,
+        routePreview: result.routePreview,
+        published: result.publish?.ok,
+        logs: result.logs,
+      },
+      null,
+      2,
+    ),
+  );
+}
+
 function printMigrationStatus(status: Awaited<ReturnType<typeof runMigrateCommand>>) {
   console.log(JSON.stringify(status, null, 2));
 }
@@ -521,6 +835,10 @@ async function main() {
   const [command, ...args] = process.argv.slice(2);
   if (command === "deploy") {
     printDeployResult(await deployComponent(parseDeployArgs(args)));
+    return;
+  }
+  if (command === "dev") {
+    printDevResult(await runDevCommand(parseDevArgs(args)));
     return;
   }
   if (command === "migrate") {
@@ -537,7 +855,7 @@ async function main() {
     return;
   }
   throw new Error(
-    "usage: wasmplane <deploy|migrate|volume-sqlite> ...",
+    "usage: wasmplane <deploy|dev|migrate|volume-sqlite> ...",
   );
 }
 

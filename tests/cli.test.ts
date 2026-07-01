@@ -6,9 +6,11 @@ import { join } from "node:path";
 import { test } from "node:test";
 import {
   deployComponent,
+  parseDevArgs,
   parseDeployArgs,
   parseMigrateArgs,
   parseVolumeSqliteArgs,
+  runDevCommand,
   runMigrateCommand,
   runVolumeSqliteCommand,
 } from "../src/cli.ts";
@@ -164,6 +166,141 @@ test("CLI deploy args read token from environment", () => {
   );
 
   assert.equal(input.token, "env-secret");
+});
+
+test("CLI dev args default to local control plane and runtime with WIT validation and log tailing", () => {
+  const input = parseDevArgs(
+    [
+      "--project-id",
+      "prj_hello",
+      "--component",
+      "worker.component.wasm",
+      "--host",
+      "dev.localhost",
+      "--env",
+      "FEATURE_FLAG=on",
+    ],
+    {
+      WASMPLANE_CONTROL_PLANE_TOKEN: "control-secret",
+      WASMPLANE_RUNTIME_TOKEN: "runtime-secret",
+    },
+  );
+
+  assert.equal(input.controlPlaneUrl, "http://127.0.0.1:8787");
+  assert.equal(input.runtimeUrl, "http://127.0.0.1:8788");
+  assert.equal(input.validate, true);
+  assert.equal(input.tailLogs, true);
+  assert.equal(input.token, "control-secret");
+  assert.equal(input.runtimeToken, "runtime-secret");
+  assert.deepEqual(input.environment, { FEATURE_FLAG: "on" });
+});
+
+test("CLI dev validates, creates a deploy preview, publishes to local runtime, and tails logs", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "wasmplane-cli-dev-"));
+  const componentPath = join(dir, "worker.component.wasm");
+  const componentBytes = Buffer.from("component bytes");
+  await writeFile(componentPath, componentBytes);
+  const calls: Array<{ url: string; path: string; method: string; headers: Record<string, string>; body: any }> = [];
+  const validations: any[] = [];
+  const snapshot = {
+    schemaVersion: 1,
+    generatedAt: "2026-07-01T00:00:00.000Z",
+    routes: [{ host: "dev.localhost", pathPrefix: "/", projectId: "prj_hello", deploymentId: "dep_dev" }],
+  };
+
+  const result = await runDevCommand({
+    controlPlaneUrl: "http://control-plane.local",
+    runtimeUrl: "http://127.0.0.1:8788",
+    projectId: "prj_hello",
+    componentPath,
+    artifactId: "art_dev",
+    deploymentId: "dep_dev",
+    previewId: "prv_dev",
+    host: "dev.localhost",
+    pathPrefix: "/",
+    token: "control-secret",
+    runtimeToken: "runtime-secret",
+    environment: { FEATURE_FLAG: "on" },
+    validate: true,
+    tailLogs: true,
+    validator: {
+      async validate(input) {
+        validations.push(input);
+      },
+    },
+    fetch: async (url, init) => {
+      const parsed = new URL(url);
+      const body = init?.body ? JSON.parse(init.body) : {};
+      calls.push({ url, path: parsed.pathname, method: init?.method ?? "GET", headers: init?.headers ?? {}, body });
+      if (parsed.pathname === "/artifacts/local") {
+        return jsonResponse(201, {
+          id: body.id,
+          projectId: body.projectId,
+          digest: `sha256:${createHash("sha256").update(componentBytes).digest("hex")}`,
+          location: "file:///tmp/artifact.component.wasm",
+          sizeBytes: componentBytes.byteLength,
+        });
+      }
+      if (parsed.pathname === "/deployments") {
+        return jsonResponse(201, { id: body.id, projectId: body.projectId, artifactId: body.artifactId });
+      }
+      if (parsed.pathname === "/deploy-previews") {
+        return jsonResponse(201, {
+          id: body.id,
+          projectId: body.projectId,
+          deploymentId: body.deploymentId,
+          host: body.host,
+          pathPrefix: body.pathPrefix,
+          url: "https://dev.localhost/",
+          environment: body.environment,
+          status: "active",
+        });
+      }
+      if (parsed.pathname === "/snapshots/routes") {
+        return jsonResponse(200, snapshot);
+      }
+      if (parsed.pathname === "/__runtime/snapshots/routes") {
+        return jsonResponse(200, { ok: true, routes: body.routes.length, generatedAt: body.generatedAt });
+      }
+      if (parsed.pathname === "/__runtime/logs") {
+        assert.equal(parsed.searchParams.get("projectId"), "prj_hello");
+        assert.equal(parsed.searchParams.get("deploymentId"), "dep_dev");
+        return jsonResponse(200, { logs: [{ level: "info", message: "ready" }] });
+      }
+      return jsonResponse(404, { error: { code: "not_found" } });
+    },
+  });
+
+  assert.equal(validations.length, 1);
+  assert.equal(validations[0].path, componentPath);
+  assert.equal(validations[0].digest, `sha256:${createHash("sha256").update(componentBytes).digest("hex")}`);
+  assert.deepEqual(
+    calls.map((call) => [call.method, new URL(call.url).origin, call.path]),
+    [
+      ["POST", "http://control-plane.local", "/artifacts/local"],
+      ["POST", "http://control-plane.local", "/deployments"],
+      ["POST", "http://control-plane.local", "/deploy-previews"],
+      ["GET", "http://control-plane.local", "/snapshots/routes"],
+      ["PUT", "http://127.0.0.1:8788", "/__runtime/snapshots/routes"],
+      ["GET", "http://127.0.0.1:8788", "/__runtime/logs"],
+    ],
+  );
+  assert.deepEqual(calls[2]?.body, {
+    id: "prv_dev",
+    projectId: "prj_hello",
+    deploymentId: "dep_dev",
+    host: "dev.localhost",
+    pathPrefix: "/",
+    environment: { FEATURE_FLAG: "on", WASMPLANE_DEV: "1" },
+  });
+  assert.equal(calls[4]?.headers.authorization, "Bearer runtime-secret");
+  assert.equal(result.preview.url, "https://dev.localhost/");
+  assert.deepEqual(result.routePreview, {
+    hostHeader: "dev.localhost",
+    localUrl: "http://127.0.0.1:8788/",
+    curl: "curl -H 'host: dev.localhost' http://127.0.0.1:8788/",
+  });
+  assert.deepEqual(result.logs, { logs: [{ level: "info", message: "ready" }] });
 });
 
 test("CLI migrate args parse explicit SQLite path", () => {
