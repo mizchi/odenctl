@@ -49,7 +49,13 @@ export {
   type RuntimeSaturationSignal,
 } from "./control-plane/autoscaling.ts";
 export {
+  createInMemoryFlyAutoscalerCoordinationStore,
   reconcileFlyMachinesAutoscaling,
+  type FlyAutoscalerCoordinationStore,
+  type FlyAutoscalerCooldownOptions,
+  type FlyAutoscalerCooldownReport,
+  type FlyAutoscalerLeaseOptions,
+  type FlyAutoscalerLeaseReport,
   type FlyAutoscalerReport,
   type FlyMachine,
 } from "./control-plane/fly-autoscaler.ts";
@@ -59,7 +65,11 @@ export { createMemoryRepository, createSqliteRepository } from "./control-plane/
 export { createPostgresRepository } from "./control-plane/postgres-repository.ts";
 export { createWasip3HostArtifactValidator } from "./control-plane/artifact-validation.ts";
 export { ingestLocalArtifact } from "./control-plane/local-artifacts.ts";
-export { publishRouteSnapshot, runtimeNodeTargetsFromEnv } from "./control-plane/snapshot-publisher.ts";
+export {
+  publishRouteSnapshot,
+  runtimeNodeTargetsFromEnv,
+  type RouteSnapshotPublishOptions,
+} from "./control-plane/snapshot-publisher.ts";
 export { createHttpApp, publishCurrentRouteSnapshot } from "./http/app.ts";
 export {
   createFileArtifactStore,
@@ -69,7 +79,11 @@ export {
 } from "./runtime/artifacts.ts";
 export { registerRuntimeNode, sendRuntimeHeartbeat, startRuntimeHeartbeat } from "./runtime/heartbeat.ts";
 export { signRuntimeIdentityHeaders, verifyRuntimeIdentityHeaders } from "./runtime/identity.ts";
-export { pruneRuntimeCaches } from "./runtime/cache-retention.ts";
+export {
+  invalidatePrecompiledCacheVariants,
+  precompiledCacheNameMatchesEngineVariant,
+  pruneRuntimeCaches,
+} from "./runtime/cache-retention.ts";
 export { createRuntimeNodeApp } from "./runtime/node-app.ts";
 export {
   createEnvSecretStore,

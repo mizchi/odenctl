@@ -19,7 +19,7 @@ import {
   runtimeOciArtifactOptionsFromEnv,
   runtimeS3ArtifactOptionsFromEnv,
 } from "../src/runtime/artifacts.ts";
-import { pruneRuntimeCaches } from "../src/runtime/cache-retention.ts";
+import { invalidatePrecompiledCacheVariants, pruneRuntimeCaches } from "../src/runtime/cache-retention.ts";
 import { createRouteCache, createRuntimeSupervisor } from "../src/runtime/supervisor.ts";
 import {
   createWasip3HostBackend,
@@ -332,6 +332,38 @@ test("runtime cache retention prunes stale and over-budget files while keeping a
   assert.equal(await fileExists(join(artifactDir, "stale.wasm")), false);
   assert.equal(await fileExists(join(cwasmDir, "active.cwasm")), true);
   assert.equal(await fileExists(join(cwasmDir, "stale.cwasm")), false);
+});
+
+test("runtime cache invalidation removes cwasm files from older engine variants", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "wasmplane-cwasm-invalidation-"));
+  const cwasmDir = join(dir, "cwasm");
+  const artifactDigest = createHash("sha256").update("api").digest("hex");
+  const current = join(cwasmDir, `dep_api-${artifactDigest}-engine-current.cwasm`);
+  const old = join(cwasmDir, `dep_api-${artifactDigest}-engine-old.cwasm`);
+  const defaultVariant = join(cwasmDir, `dep_api-${artifactDigest}.cwasm`);
+  const activeOld = join(cwasmDir, `dep_active-${artifactDigest}-engine-old.cwasm`);
+  const unrelated = join(cwasmDir, "notes.txt");
+  await writeCacheFile(current, "current cwasm", "2026-06-26T11:55:00.000Z");
+  await writeCacheFile(old, "old cwasm", "2026-06-26T11:54:00.000Z");
+  await writeCacheFile(defaultVariant, "default cwasm", "2026-06-26T11:53:00.000Z");
+  await writeCacheFile(activeOld, "active old cwasm", "2026-06-26T11:52:00.000Z");
+  await writeCacheFile(unrelated, "not cwasm", "2026-06-26T11:51:00.000Z");
+
+  const report = await invalidatePrecompiledCacheVariants({
+    precompiledCacheDir: cwasmDir,
+    currentEngineVariant: "engine-current",
+    keepPaths: [activeOld],
+  });
+
+  assert.deepEqual(report.removed.map((file) => file.name).sort(), [
+    `dep_api-${artifactDigest}-engine-old.cwasm`,
+    `dep_api-${artifactDigest}.cwasm`,
+  ]);
+  assert.equal(await fileExists(current), true);
+  assert.equal(await fileExists(old), false);
+  assert.equal(await fileExists(defaultVariant), false);
+  assert.equal(await fileExists(activeOld), true);
+  assert.equal(await fileExists(unrelated), true);
 });
 
 test("file artifact store verifies sha256 digests", async () => {

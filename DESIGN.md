@@ -163,6 +163,9 @@ metadata を保持し、maintenance/scale-down 前の drain に使う。control 
 から、draining/offline/stale/saturated node を publish target から除外する。snapshot publish は project
 placement policy で region/label rule を評価し、snapshot 内 project の rule に合う registered runtime
 nodes の union へ publish できる。
+runtime node は Wasmtime backend, WASI profile, runtime version, host version, Engine variant も
+registration/heartbeat で広告する。Admin UI はこの metadata を表示し、Wasmtime upgrade 時に
+新旧 Engine variant が混在していないか確認できる。
 
 registry の肥大化を避けるため、operator は status と age を指定して古い runtime node entry を GC できる。
 default cleanup は offline node のみを対象にし、active node の削除は明示的な status 指定を必要とする。
@@ -182,6 +185,10 @@ GC は max age を超えた file を先に消し、次に directory ごとの ma
 削除する。現在 prepared deployment が参照している materialized artifact と `.cwasm` は keep path として
 保護し、snapshot switch や warmup 中の hot path を壊さない。GC は runtime management endpoint から
 手動実行でき、interval env が設定されている場合は runtime node 内で定期実行する。
+`.cwasm` は Engine variant 付き cache key で保存する。variant は host version label, host binary stat,
+precompile に使う Wasmtime Engine config から作る。Wasmtime/Cranelift upgrade 後は
+`POST /__runtime/cache/invalidate-cwasm` で現在 variant 以外の `.cwasm` を削除できる。prepared component
+が参照している `.cwasm` は keep path として保護されるため、drain 中の node で安全に実行できる。
 
 `RUNTIME_SNAPSHOT_WARMUP=1` の場合、snapshot ACK 前に target deployments を materialize/precompile
 する。これにより deploy switch 後の初回 request latency を抑える。warmup work は
@@ -337,7 +344,10 @@ snapshot publish target から外してから Fly Machines stop などの provid
 Fly Machines controller は provider prototype として分離する。Fly Machines API の public base は
 `https://api.machines.dev/v1` で、scale-up は `POST /apps/{app}/machines`、scale-down は
 `POST /apps/{app}/machines/{id}/stop` を使う。実 production では API rate limit と deploy/update
-競合を避けるため、controller は cooldown, lease, idempotency metadata を追加する必要がある。
+競合を避けるため、controller は coordination store を通して lease と cooldown を使う。lease は
+複数 controller instance の同時 reconcile を防ぎ、cooldown は成功した provider action 後の連続
+scale-up/down を抑える。in-memory store は single-process 用で、production では durable store に
+差し替える。idempotency metadata と provider-side reconciliation audit は次段階の課題である。
 
 ## Admin UI
 
@@ -444,15 +454,20 @@ single-region estimate は README の cost estimator にまとめる。現状の
 - WASIp3/component model 前提だが、guest toolchain と host ABI の安定性には追従が必要
 - `cpuMs` は Wasmtime epoch tick ベースであり、精密な kernel CPU time enforcement ではない
 - secret value は local/env KMS envelope encryption と command-provider keyring に対応したが、cloud KMS SDK 直結 adapter は未実装
-- Store/Instance pooling reuse は未実装
 - multi-region consistency と cross-region failover policy は未実装
 - daemon は local HTTP interface で、runtime node と同一 trust boundary 前提
-- `.cwasm` cache invalidation は Engine variant hash で分離しているが、Wasmtime upgrade policy は運用手順化が必要
+- Wasmtime upgrade は Engine variant hash と runtime cache invalidation で分離するが、multi-node
+  rolling upgrade の自動 orchestration は未実装
+- snapshot publish は target ごとの retry/timeout と attempt 記録に対応したが、永続 queue と
+  dead-letter/replay UI は未実装
+- Fly autoscaler lease/cooldown は coordination interface と in-memory store までで、durable store と
+  provider idempotency metadata は未実装
+- Store/Instance pooling reuse は未実装
 
 ## Next Implementation Priorities
 
-1. Multi-key secret rotation and external KMS providers
-2. artifact signing and provenance
-3. deployment switch benchmark を CI/weekly perf job にする
-4. Wasmtime upgrade / `.cwasm` cache invalidation playbook
-5. stricter CPU metering strategy
+1. Multi-region failover
+2. Cloud KMS adapter
+3. CI/weekly perf regression
+4. Store/Instance reuse experiment
+5. Durable autoscaler coordination store

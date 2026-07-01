@@ -642,6 +642,13 @@ test("registers runtime nodes for route snapshot publication", () => {
     url: "http://127.0.0.1:8788/",
     region: "NRT",
     labels: { tier: "edge", pool: "default" },
+    host: {
+      backend: "wasmtime",
+      wasi: "wasip3",
+      runtimeVersion: "wasmplane-runtime/0.1.0",
+      hostVersion: "wasmtime-43.0.0",
+      engineVariant: "engine-abcd1234",
+    },
   });
 
   assert.equal(node.id, "rt_local");
@@ -650,6 +657,13 @@ test("registers runtime nodes for route snapshot publication", () => {
   assert.equal(node.registeredAt, fixedNow());
   assert.equal(node.region, "nrt");
   assert.deepEqual(node.labels, { pool: "default", tier: "edge" });
+  assert.deepEqual(node.host, {
+    backend: "wasmtime",
+    wasi: "wasip3",
+    runtimeVersion: "wasmplane-runtime/0.1.0",
+    hostVersion: "wasmtime-43.0.0",
+    engineVariant: "engine-abcd1234",
+  });
   assert.deepEqual(control.listRuntimeNodes(), [node]);
 
   assert.throws(
@@ -677,6 +691,13 @@ test("tracks runtime node heartbeat and excludes inactive nodes from publish tar
     version: "wasmplane-runtime/0.1.0",
     capacity: { concurrentRequests: 128, memoryMb: 4096 },
     load: { activeRequests: 64 },
+    host: {
+      backend: "wasmtime",
+      wasi: "wasip3",
+      runtimeVersion: "wasmplane-runtime/0.1.0",
+      hostVersion: "wasmtime-43.0.0",
+      engineVariant: "engine-hot",
+    },
   });
   control.recordRuntimeNodeHeartbeat({ id: "rt_offline", status: "offline" });
 
@@ -685,6 +706,13 @@ test("tracks runtime node heartbeat and excludes inactive nodes from publish tar
   assert.equal(heartbeat.version, "wasmplane-runtime/0.1.0");
   assert.deepEqual(heartbeat.capacity, { concurrentRequests: 128, memoryMb: 4096 });
   assert.deepEqual(heartbeat.load, { activeRequests: 64 });
+  assert.deepEqual(heartbeat.host, {
+    backend: "wasmtime",
+    wasi: "wasip3",
+    runtimeVersion: "wasmplane-runtime/0.1.0",
+    hostVersion: "wasmtime-43.0.0",
+    engineVariant: "engine-hot",
+  });
   assert.deepEqual(
     control.listActiveRuntimeNodes().map((node) => node.id),
     ["rt_active"],
@@ -1024,6 +1052,7 @@ test("sqlite repository records schema migrations and upgrades existing database
     "202606300005_worker_world_version",
     "202606300006_artifact_metadata",
     "202607010001_runtime_node_identity",
+    "202607010002_runtime_node_host_info",
   ]);
   assert.ok(routeColumns.includes("targets_json"));
   const artifactColumns = db
@@ -1042,6 +1071,7 @@ test("sqlite repository records schema migrations and upgrades existing database
   assert.ok(runtimeNodeColumns.includes("labels_json"));
   assert.ok(runtimeNodeColumns.includes("load_json"));
   assert.ok(runtimeNodeColumns.includes("identity_json"));
+  assert.ok(runtimeNodeColumns.includes("host_json"));
   assert.ok(secretColumns.includes("value"));
   assert.ok(kvNamespaceColumns.includes("project_id"));
   assert.equal(db.prepare("select count(*) as count from route_snapshot_publications").get().count, 1);

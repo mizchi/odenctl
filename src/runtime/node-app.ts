@@ -9,7 +9,11 @@ import {
 } from "../control-plane/contracts.ts";
 import { RuntimeError } from "./errors.ts";
 import { verifyRuntimeIdentityHeaders } from "./identity.ts";
-import { pruneRuntimeCaches, type RuntimeCacheRetentionOptions } from "./cache-retention.ts";
+import {
+  invalidatePrecompiledCacheVariants,
+  pruneRuntimeCaches,
+  type RuntimeCacheRetentionOptions,
+} from "./cache-retention.ts";
 import { enforceRuntimeCapabilities } from "./policy.ts";
 import { resolveRuntimeCapabilities } from "./secrets.ts";
 import type { RuntimeTelemetry } from "./otel.ts";
@@ -33,6 +37,7 @@ export interface RuntimeNodeAppOptions {
   maxConcurrentInvocationsByProject?: Record<string, number>;
   requestRateLimitsByProject?: Record<string, RuntimeProjectRateLimit>;
   cacheRetention?: RuntimeCacheRetentionOptions;
+  precompiledCacheEngineVariant?: string;
   cacheRetentionIntervalMs?: number;
   cacheRetentionSetInterval?: (callback: () => void | Promise<void>, intervalMs: number) => unknown;
   cacheRetentionClearInterval?: (timer: unknown) => void;
@@ -130,6 +135,11 @@ export function createRuntimeNodeApp(options: RuntimeNodeAppOptions) {
 
       if (method === "POST" && url.pathname === "/__runtime/cache/gc") {
         writeJson(response, 200, await runRuntimeCacheGc(options));
+        return;
+      }
+
+      if (method === "POST" && url.pathname === "/__runtime/cache/invalidate-cwasm") {
+        writeJson(response, 200, await runPrecompiledCacheInvalidation(options));
         return;
       }
 
@@ -367,6 +377,23 @@ async function runRuntimeCacheGc(options: RuntimeNodeAppOptions) {
   const activePaths = prepared.flatMap((component) => [component.componentPath, component.precompiledPath]);
   return pruneRuntimeCaches({
     ...(options.cacheRetention ?? {}),
+    keepPaths: [
+      ...(options.cacheRetention?.keepPaths ?? []),
+      ...activePaths,
+    ],
+  });
+}
+
+async function runPrecompiledCacheInvalidation(options: RuntimeNodeAppOptions) {
+  const precompiledCacheDir = options.cacheRetention?.precompiledCacheDir;
+  if (!precompiledCacheDir) {
+    throw new RuntimeError("validation", "runtime precompiled cache directory is not configured");
+  }
+  const prepared = await options.supervisor.preparedComponents?.() ?? [];
+  const activePaths = prepared.flatMap((component) => [component.componentPath, component.precompiledPath]);
+  return invalidatePrecompiledCacheVariants({
+    precompiledCacheDir,
+    currentEngineVariant: options.precompiledCacheEngineVariant,
     keepPaths: [
       ...(options.cacheRetention?.keepPaths ?? []),
       ...activePaths,

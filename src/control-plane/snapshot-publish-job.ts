@@ -1,6 +1,7 @@
 export interface SnapshotPublishJobOptions {
   intervalMs: number;
   publish(): Promise<unknown>;
+  isSuccess?(result: unknown): boolean;
   onError?(error: unknown): void;
   setIntervalFn?: (callback: () => void, intervalMs: number) => unknown;
   clearIntervalFn?: (timer: unknown) => void;
@@ -21,7 +22,10 @@ export function createSnapshotPublishJob(options: SnapshotPublishJobOptions) {
     }
     inFlight = true;
     try {
-      await options.publish();
+      const result = await options.publish();
+      if (options.isSuccess && !options.isSuccess(result)) {
+        throw new Error("snapshot publish job result was unsuccessful");
+      }
       return true;
     } catch (error) {
       options.onError?.(error);

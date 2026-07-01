@@ -11,6 +11,12 @@ export interface RuntimeCacheRetentionOptions {
   nowMs?: () => number;
 }
 
+export interface PrecompiledCacheInvalidationOptions {
+  precompiledCacheDir: string;
+  currentEngineVariant?: string;
+  keepPaths?: string[];
+}
+
 export type RuntimeCacheKind = "artifact" | "precompiled";
 
 export interface RuntimeCacheGcReport {
@@ -33,7 +39,7 @@ export interface RuntimeCacheRemovedFile {
   name: string;
   path: string;
   sizeBytes: number;
-  reason: "age" | "size";
+  reason: "age" | "size" | "engine_variant";
 }
 
 interface CacheFile {
@@ -61,6 +67,44 @@ export async function pruneRuntimeCaches(options: RuntimeCacheRetentionOptions):
     removedBytes: reports.reduce((sum, report) => sum + report.removedBytes, 0),
     keptBytes: reports.reduce((sum, report) => sum + report.keptBytes, 0),
   };
+}
+
+export async function invalidatePrecompiledCacheVariants(
+  options: PrecompiledCacheInvalidationOptions,
+): Promise<RuntimeCacheDirectoryReport> {
+  if (!await exists(options.precompiledCacheDir)) {
+    return emptyReport("precompiled", options.precompiledCacheDir);
+  }
+  const keepPaths = new Set((options.keepPaths ?? []).map((path) => resolve(path)));
+  const files = await listCacheFiles(options.precompiledCacheDir, keepPaths);
+  const removed: RuntimeCacheRemovedFile[] = [];
+  const remaining = new Map(files.map((file) => [file.path, file]));
+  for (const file of files) {
+    if (file.keep || !file.name.endsWith(".cwasm")) {
+      continue;
+    }
+    if (!precompiledCacheNameMatchesEngineVariant(file.name, options.currentEngineVariant)) {
+      await removeCacheFile(file, "engine_variant", removed);
+      remaining.delete(file.path);
+    }
+  }
+  return {
+    kind: "precompiled",
+    path: options.precompiledCacheDir,
+    scanned: files.length,
+    keptBytes: sumBytes([...remaining.values()]),
+    removedBytes: sumRemovedBytes(removed),
+    removed,
+  };
+}
+
+export function precompiledCacheNameMatchesEngineVariant(name: string, currentEngineVariant?: string): boolean {
+  const variant = currentEngineVariant ? safeCacheFragment(currentEngineVariant) : undefined;
+  const escapedVariant = variant ? escapeRegExp(variant) : undefined;
+  const pattern = escapedVariant
+    ? new RegExp(`^.+-[a-fA-F0-9]{64}-${escapedVariant}\\.cwasm$`)
+    : /^.+-[a-fA-F0-9]{64}\.cwasm$/;
+  return pattern.test(name);
 }
 
 async function pruneCacheDirectory(
@@ -171,6 +215,14 @@ function emptyReport(kind: RuntimeCacheKind, dir: string): RuntimeCacheDirectory
     removedBytes: 0,
     removed: [],
   };
+}
+
+function safeCacheFragment(value: string): string {
+  return value.replaceAll(/[^a-zA-Z0-9_.-]/g, "_");
+}
+
+function escapeRegExp(value: string): string {
+  return value.replaceAll(/[\\^$.*+?()[\]{}|]/g, "\\$&");
 }
 
 async function exists(path: string): Promise<boolean> {

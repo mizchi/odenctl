@@ -52,3 +52,23 @@ test("snapshot publish job start and stop use the configured timer hooks", () =>
   assert.deepEqual(cleared, ["timer-id"]);
   assert.equal(job.running(), false);
 });
+
+test("snapshot publish job reports unsuccessful publish results as failures", async () => {
+  const errors: unknown[] = [];
+  const job = createSnapshotPublishJob({
+    intervalMs: 1000,
+    async publish() {
+      return { ok: false };
+    },
+    isSuccess(result) {
+      return (result as any).ok === true;
+    },
+    onError(error) {
+      errors.push(error);
+    },
+  });
+
+  assert.equal(await job.tick(), false);
+  assert.equal(errors.length, 1);
+  assert.match(errors[0] instanceof Error ? errors[0].message : String(errors[0]), /unsuccessful/);
+});

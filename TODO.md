@@ -112,3 +112,27 @@ Production readiness tasks, in implementation order.
 - [x] Add a runtime management endpoint to trigger cache GC.
 - [x] Add env configuration for max cache bytes and max cache age.
 - [x] Add optional background cache GC interval.
+
+## 17. Wasmtime upgrade / `.cwasm` cache invalidation
+
+- [x] Add runtime node host metadata for Wasmtime/WASI/runtime/host/Engine variant.
+- [x] Persist and display host metadata in the control plane and Admin UI.
+- [x] Include Engine variant in all runtime `.cwasm` cache keys.
+- [x] Add runtime management endpoint to invalidate older `.cwasm` variants.
+- [x] Protect currently prepared `.cwasm` files during variant invalidation.
+
+## 18. Snapshot publish retry / reliability
+
+- [x] Retry retryable runtime publish failures per target.
+- [x] Do not retry non-retryable auth/validation responses.
+- [x] Record publish attempts and elapsed time in responses and publication history.
+- [x] Add publish timeout and retry tuning env vars.
+- [x] Treat unsuccessful background publish reports as job failures.
+
+## 19. Fly autoscaler lease / cooldown
+
+- [x] Add a Fly autoscaler coordination store interface.
+- [x] Add an in-memory coordination store for single-process controllers and tests.
+- [x] Skip provider actions when another controller holds the lease.
+- [x] Record cooldown after successful scale actions.
+- [x] Skip provider actions while cooldown is active.

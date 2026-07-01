@@ -32,6 +32,7 @@ import {
   normalizeRuntime,
   normalizeRouteTargets,
   normalizeRuntimeNodeCapacity,
+  normalizeRuntimeNodeHostInfo,
   normalizeRuntimeNodeIdentity,
   normalizeRuntimeNodeLabels,
   normalizeRuntimeNodeLoad,
@@ -187,6 +188,7 @@ export interface RegisterRuntimeNodeInput {
   region?: string;
   labels?: Record<string, string>;
   identity?: unknown;
+  host?: unknown;
 }
 
 export interface RecordRuntimeNodeHeartbeatInput {
@@ -195,6 +197,7 @@ export interface RecordRuntimeNodeHeartbeatInput {
   version?: string;
   capacity?: RuntimeNodeCapacity;
   load?: RuntimeNode["load"];
+  host?: unknown;
 }
 
 export interface UpdateRuntimeNodeStatusInput {
@@ -490,6 +493,7 @@ export function createControlPlane(options: ControlPlaneOptions) {
 
   function registerRuntimeNode(input: RegisterRuntimeNodeInput): RuntimeNode {
     const identity = normalizeRuntimeNodeIdentity(input.identity);
+    const host = normalizeRuntimeNodeHostInfo(input.host);
     const node: RuntimeNode = {
       id: optionalId(input.id, "runtime node id") ?? idGenerator("rt"),
       url: normalizeRuntimeNodeUrl(input.url),
@@ -498,6 +502,7 @@ export function createControlPlane(options: ControlPlaneOptions) {
       region: normalizeRuntimeNodeRegion(input.region),
       labels: normalizeRuntimeNodeLabels(input.labels),
       ...(identity ? { identity } : {}),
+      ...(host ? { host } : {}),
     };
     return repository.createRuntimeNode(node);
   }
@@ -514,6 +519,7 @@ export function createControlPlane(options: ControlPlaneOptions) {
       version: input.version ?? existing.version,
       capacity: normalizeRuntimeNodeCapacity(input.capacity) ?? existing.capacity,
       load: normalizeRuntimeNodeLoad(input.load) ?? existing.load,
+      host: normalizeRuntimeNodeHostInfo(input.host) ?? existing.host,
     };
     return repository.updateRuntimeNodeHeartbeat(node);
   }

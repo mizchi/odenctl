@@ -75,6 +75,7 @@ create table if not exists runtime_nodes (
   labels_json jsonb,
   load_json jsonb,
   identity_json jsonb,
+  host_json jsonb,
   registered_at text not null
 );
 
@@ -116,7 +117,8 @@ alter table if exists runtime_nodes
   add column if not exists region text,
   add column if not exists labels_json jsonb,
   add column if not exists load_json jsonb,
-  add column if not exists identity_json jsonb;
+  add column if not exists identity_json jsonb,
+  add column if not exists host_json jsonb;
 
 create index if not exists artifacts_project_digest_idx
   on artifacts (project_id, digest);

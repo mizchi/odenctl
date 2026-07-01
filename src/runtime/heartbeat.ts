@@ -1,5 +1,6 @@
 import type {
   RuntimeNodeCapacity,
+  RuntimeNodeHostInfo,
   RuntimeNodeIdentity,
   RuntimeNodeLoad,
 } from "../control-plane/contracts.ts";
@@ -14,6 +15,7 @@ export interface RuntimeHeartbeatOptions {
   region?: string;
   labels?: Record<string, string>;
   identity?: RuntimeNodeIdentity;
+  host?: RuntimeNodeHostInfo;
   load?: RuntimeNodeLoad | (() => RuntimeNodeLoad);
   token?: string;
   intervalMs?: number;
@@ -27,6 +29,7 @@ export interface RuntimeNodeRegistrationInput {
   region?: string;
   labels?: Record<string, string>;
   identity?: RuntimeNodeIdentity;
+  host?: RuntimeNodeHostInfo;
   token?: string;
   fetch?: typeof fetch;
 }
@@ -37,6 +40,7 @@ export interface RuntimeNodeHeartbeatInput {
   version: string;
   capacity: RuntimeNodeCapacity;
   load?: RuntimeNodeLoad;
+  host?: RuntimeNodeHostInfo;
   token?: string;
   fetch?: typeof fetch;
 }
@@ -51,6 +55,7 @@ export async function registerRuntimeNode(input: RuntimeNodeRegistrationInput): 
       region: input.region,
       labels: input.labels,
       identity: input.identity,
+      host: input.host,
     }),
   });
   if (response.ok || response.status === 409) {
@@ -73,6 +78,7 @@ export async function sendRuntimeHeartbeat(input: RuntimeNodeHeartbeatInput): Pr
         version: input.version,
         capacity: input.capacity,
         load: input.load,
+        host: input.host,
       }),
     },
   );

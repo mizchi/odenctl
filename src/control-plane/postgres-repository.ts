@@ -344,8 +344,9 @@ export class PostgresControlPlaneRepository implements AsyncControlPlaneReposito
           region,
           labels_json,
           load_json,
-          identity_json
-        ) values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10::jsonb, $11::jsonb)`,
+          identity_json,
+          host_json
+        ) values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10::jsonb, $11::jsonb, $12::jsonb)`,
         [
           node.id,
           node.url,
@@ -358,6 +359,7 @@ export class PostgresControlPlaneRepository implements AsyncControlPlaneReposito
           node.labels ? JSON.stringify(node.labels) : null,
           node.load ? JSON.stringify(node.load) : null,
           node.identity ? JSON.stringify(node.identity) : null,
+          node.host ? JSON.stringify(node.host) : null,
         ],
       );
       return node;
@@ -380,8 +382,9 @@ export class PostgresControlPlaneRepository implements AsyncControlPlaneReposito
         capacity_json = $4::jsonb,
         region = $5,
         labels_json = $6::jsonb,
-        load_json = $7::jsonb
-      where id = $8
+        load_json = $7::jsonb,
+        host_json = $8::jsonb
+      where id = $9
       returning *`,
       [
         node.status,
@@ -391,6 +394,7 @@ export class PostgresControlPlaneRepository implements AsyncControlPlaneReposito
         node.region ?? null,
         node.labels ? JSON.stringify(node.labels) : null,
         node.load ? JSON.stringify(node.load) : null,
+        node.host ? JSON.stringify(node.host) : null,
         node.id,
       ],
     );
@@ -603,6 +607,9 @@ function runtimeNodeFromRow(row: any): RuntimeNode {
   }
   if (row.identity_json) {
     node.identity = jsonValue(row.identity_json);
+  }
+  if (row.host_json) {
+    node.host = jsonValue(row.host_json);
   }
   return node;
 }

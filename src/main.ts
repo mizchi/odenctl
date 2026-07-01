@@ -7,7 +7,7 @@ import { createJsonlAuditSink } from "./control-plane/audit.ts";
 import { parseApiTokens } from "./control-plane/authz.ts";
 import { createSnapshotPublishJob } from "./control-plane/snapshot-publish-job.ts";
 import { createWasip3HostArtifactValidator } from "./control-plane/artifact-validation.ts";
-import { runtimeNodeTargetsFromEnv } from "./control-plane/snapshot-publisher.ts";
+import { runtimeNodeTargetsFromEnv, type RouteSnapshotPublishOptions } from "./control-plane/snapshot-publisher.ts";
 import { createHttpApp, publishCurrentRouteSnapshot } from "./http/app.ts";
 import { parseRuntimeIdentityKeys } from "./runtime/config.ts";
 
@@ -27,6 +27,11 @@ const runtimeNodeActiveTtlMs = positiveInteger(
 const snapshotPublishIntervalMs = optionalPositiveInteger(
   process.env.WASMPLANE_SNAPSHOT_PUBLISH_INTERVAL_MS,
 );
+const snapshotPublishOptions: RouteSnapshotPublishOptions = {
+  maxAttempts: positiveInteger(process.env.WASMPLANE_SNAPSHOT_PUBLISH_MAX_ATTEMPTS, 3),
+  retryDelayMs: nonnegativeInteger(process.env.WASMPLANE_SNAPSHOT_PUBLISH_RETRY_DELAY_MS, 100),
+  timeoutMs: optionalPositiveInteger(process.env.WASMPLANE_SNAPSHOT_PUBLISH_TIMEOUT_MS),
+};
 
 const controlPlane = await createConfiguredControlPlane({
   runtimeNodeActiveTtlMs,
@@ -47,6 +52,7 @@ const appOptions = {
   runtimeNodeToken,
   runtimeIdentityKeys,
   runtimeNodes: runtimeNodeTargetsFromEnv(process.env.WASMPLANE_RUNTIME_NODES),
+  snapshotPublish: snapshotPublishOptions,
 };
 const app = createHttpApp(appOptions);
 
@@ -56,6 +62,9 @@ if (snapshotPublishIntervalMs) {
   createSnapshotPublishJob({
     intervalMs: snapshotPublishIntervalMs,
     publish: () => publishCurrentRouteSnapshot(appOptions),
+    isSuccess(result) {
+      return (result as { ok?: boolean }).ok === true;
+    },
     onError(error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error(`snapshot publish job failed: ${message}`);
@@ -81,4 +90,12 @@ function optionalPositiveInteger(value: string | undefined): number | undefined 
   }
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function nonnegativeInteger(value: string | undefined, fallback: number): number {
+  if (!value) {
+    return fallback;
+  }
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }

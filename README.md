@@ -57,7 +57,9 @@ accepted.
 Set `WASMPLANE_SNAPSHOT_PUBLISH_INTERVAL_MS` to run a background publish job that periodically
 generates the current route snapshot and publishes it to configured/registered active runtime
 nodes. Each generated route snapshot includes a content-derived `snap_<hash>` id, and publish
-history records that id for retry and audit correlation.
+history records that id for retry and audit correlation. Snapshot publishes retry retryable target
+failures by default; tune this with `WASMPLANE_SNAPSHOT_PUBLISH_MAX_ATTEMPTS`,
+`WASMPLANE_SNAPSHOT_PUBLISH_RETRY_DELAY_MS`, and `WASMPLANE_SNAPSHOT_PUBLISH_TIMEOUT_MS`.
 Operators can drain runtime nodes before maintenance or scale-down with
 `PATCH /runtime-nodes/:id/status` and body `{"status":"draining"}`. Draining and offline nodes stay
 in the registry for visibility, but are excluded from snapshot publish targets. Switch back to
@@ -135,11 +137,19 @@ runtime cache retention. `POST /__runtime/cache/gc` scans `WASMPLANE_ARTIFACT_CA
 files until each cache directory is below the byte limit. Artifact and `.cwasm` paths for currently
 prepared deployments are protected from deletion. Set `WASMPLANE_RUNTIME_CACHE_GC_INTERVAL_MS` to
 run the same cache GC periodically in the runtime node.
+Runtime nodes include Wasmtime host metadata and an engine variant hash in registration/heartbeat.
+The `.cwasm` cache key includes that variant, and `POST /__runtime/cache/invalidate-cwasm` removes
+precompiled files from older variants while keeping currently prepared components. Set
+`WASMPLANE_WASIP3_HOST_VERSION` during host binary upgrades when you want an explicit version label
+in the runtime registry and Admin UI.
 Autoscalers can read `GET /autoscaling/signals` from the control plane to get per-runtime
 `activeRequests`, `concurrentRequests`, `loadRatio`, and saturation state. The autoscaling helpers
 turn these signals into scale-up/scale-down decisions, and the Fly Machines prototype reconciler can
-create Machines or stop excess Machines. New runtime nodes should be registered as `draining`,
-receive the current route snapshot directly for warmup, then be marked `active` by heartbeat.
+create Machines or stop excess Machines. The Fly reconciler accepts a coordination store for
+controller leases and cooldowns so multiple controller instances do not race provider actions.
+The bundled in-memory store is for single-process controllers and tests; production should back the
+same interface with durable storage. New runtime nodes should be registered as `draining`, receive
+the current route snapshot directly for warmup, then be marked `active` by heartbeat.
 Set `WASMPLANE_KV_STORE_DIR` to choose the host-side persistent KV directory; the default is
 `.wasmplane/kv`.
 Set `WASMPLANE_WASIP3_HOST_DAEMON=1` to make the Node runtime start a local embedded Rust
@@ -288,7 +298,9 @@ materializing `file://`, `http://`, `https://`, or private `s3://` artifacts, ve
 precompiling through that same host binary. Runtime invocation uses the generated `.cwasm` artifact
 so cold invokes skip Cranelift compilation. `.cwasm` files are trusted node-local cache entries
 tied to the host binary, Wasmtime version/configuration, and target machine; they are not portable
-user artifacts. Remote HTTP(S) and S3 artifacts are cached under `WASMPLANE_ARTIFACT_CACHE_DIR`.
+user artifacts. The runtime separates `.cwasm` entries by engine variant and can invalidate older
+variants through the runtime management endpoint. Remote HTTP(S) and S3 artifacts are cached under
+`WASMPLANE_ARTIFACT_CACHE_DIR`.
 Strict `wasm-tools component targets` validation is available as an opt-in backend setting, but it
 is not the default because WASI-adapted Rust components include additional WASI imports that the
 host linker satisfies.
@@ -565,7 +577,8 @@ surface this metadata for deploy audit and runtime publication checks.
 `POST /snapshots/routes/publish` creates a fresh compact route snapshot and pushes it to each
 active registered runtime node, plus statically configured runtime nodes, through
 `PUT /__runtime/snapshots/routes`. The response includes a per-node publish result and stores a
-publication history record.
+publication history record. Each target result includes `attempts` and `elapsedMs`; retryable
+statuses are retried per target without blocking successful targets from recording their result.
 
 Secret creation accepts a value, but responses omit it:
 

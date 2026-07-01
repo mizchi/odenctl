@@ -338,6 +338,59 @@ test("runtime node cache GC endpoint keeps prepared component files", async () =
   }
 });
 
+test("runtime node invalidates precompiled cache variants while keeping active components", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "wasmplane-runtime-cwasm-invalidate-"));
+  const cwasmDir = join(dir, "cwasm");
+  const artifactDigest = createHash("sha256").update("api").digest("hex");
+  const currentCwasm = join(cwasmDir, `dep_api-${artifactDigest}-engine-current.cwasm`);
+  const oldCwasm = join(cwasmDir, `dep_api-${artifactDigest}-engine-old.cwasm`);
+  const activeOldCwasm = join(cwasmDir, `dep_active-${artifactDigest}-engine-old.cwasm`);
+  await writeRuntimeCacheFile(currentCwasm, "current cwasm", "2026-06-26T11:55:00.000Z");
+  await writeRuntimeCacheFile(oldCwasm, "old cwasm", "2026-06-26T11:54:00.000Z");
+  await writeRuntimeCacheFile(activeOldCwasm, "active old cwasm", "2026-06-26T11:53:00.000Z");
+
+  const app = createRuntimeNodeApp({
+    supervisor: {
+      loadSnapshot() {},
+      preparedComponents() {
+        return [{
+          deploymentId: "dep_active",
+          backend: "wasmtime" as const,
+          componentPath: join(dir, "active.wasm"),
+          precompiledPath: activeOldCwasm,
+          cached: true,
+        }];
+      },
+      async prepareRoute() {
+        throw new Error("not used");
+      },
+    },
+    cacheRetention: {
+      precompiledCacheDir: cwasmDir,
+    },
+    precompiledCacheEngineVariant: "engine-current",
+  });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const response = await fetch(`${baseUrl}/__runtime/cache/invalidate-cwasm`, { method: "POST" });
+    if (response.status !== 200) {
+      assert.fail(await response.text());
+    }
+    const report = await response.json();
+    assert.deepEqual(report.removed.map((file: any) => file.name), [`dep_api-${artifactDigest}-engine-old.cwasm`]);
+    assert.equal(await runtimeFileExists(currentCwasm), true);
+    assert.equal(await runtimeFileExists(oldCwasm), false);
+    assert.equal(await runtimeFileExists(activeOldCwasm), true);
+  } finally {
+    await app.close();
+  }
+});
+
 test("runtime node runs cache GC on a configured interval and stops it on close", async () => {
   const dir = await mkdtemp(join(tmpdir(), "wasmplane-runtime-cache-gc-interval-"));
   const artifactDir = join(dir, "artifacts");
@@ -1266,6 +1319,13 @@ test("runtime heartbeat client registers node and reports capacity", async () =>
       region: "nrt",
       labels: { pool: "default" },
       identity: { keyId: "rt-key", certificateSha256: "a".repeat(64) },
+      host: {
+        backend: "wasmtime",
+        wasi: "wasip3",
+        runtimeVersion: "wasmplane-runtime/0.1.0",
+        hostVersion: "wasmtime-43.0.0",
+        engineVariant: "engine-current",
+      },
     });
     await sendRuntimeHeartbeat({
       controlPlaneUrl: control.baseUrl,
@@ -1273,6 +1333,13 @@ test("runtime heartbeat client registers node and reports capacity", async () =>
       version: "wasmplane-runtime/0.1.0",
       capacity: { concurrentRequests: 128, memoryMb: 4096 },
       load: { activeRequests: 12 },
+      host: {
+        backend: "wasmtime",
+        wasi: "wasip3",
+        runtimeVersion: "wasmplane-runtime/0.1.0",
+        hostVersion: "wasmtime-43.0.0",
+        engineVariant: "engine-current",
+      },
     });
 
     assert.deepEqual(requests, [
@@ -1285,6 +1352,13 @@ test("runtime heartbeat client registers node and reports capacity", async () =>
           region: "nrt",
           labels: { pool: "default" },
           identity: { keyId: "rt-key", certificateSha256: "a".repeat(64) },
+          host: {
+            backend: "wasmtime",
+            wasi: "wasip3",
+            runtimeVersion: "wasmplane-runtime/0.1.0",
+            hostVersion: "wasmtime-43.0.0",
+            engineVariant: "engine-current",
+          },
         },
       },
       {
@@ -1295,6 +1369,13 @@ test("runtime heartbeat client registers node and reports capacity", async () =>
           version: "wasmplane-runtime/0.1.0",
           capacity: { concurrentRequests: 128, memoryMb: 4096 },
           load: { activeRequests: 12 },
+          host: {
+            backend: "wasmtime",
+            wasi: "wasip3",
+            runtimeVersion: "wasmplane-runtime/0.1.0",
+            hostVersion: "wasmtime-43.0.0",
+            engineVariant: "engine-current",
+          },
         },
       },
     ]);

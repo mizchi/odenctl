@@ -211,6 +211,13 @@ test("HTTP admin UI renders routes, deployments, canaries, runtime nodes, and me
       status: "active",
       capacity: { concurrentRequests: 16, memoryMb: 2048 },
       load: { activeRequests: 4 },
+      host: {
+        backend: "wasmtime",
+        wasi: "wasip3",
+        runtimeVersion: "wasmplane-runtime/0.1.0",
+        hostVersion: "wasmtime-43.0.0",
+        engineVariant: "engine-current",
+      },
     });
 
     const response = await fetch(`${baseUrl}/admin`);
@@ -222,6 +229,8 @@ test("HTTP admin UI renders routes, deployments, canaries, runtime nodes, and me
     assert.match(html, new RegExp(deployment.id));
     assert.match(html, new RegExp(candidate.id));
     assert.match(html, /rt_admin/);
+    assert.match(html, /wasmtime/);
+    assert.match(html, /engine-current/);
     assert.match(html, /Autoscaling signals/);
     assert.match(html, /action="\/admin\/routes\/canary"/);
     assert.match(html, /action="\/admin\/routes\/rollback"/);
@@ -922,7 +931,10 @@ test("HTTP API publishes route snapshot to configured runtime nodes", async () =
     assert.equal(publish.snapshot.routes, 1);
     assert.equal(publish.snapshot.generatedAt, fixedNow());
     assert.equal(publish.targets.length, 1);
-    assert.deepEqual(publish.targets[0], {
+    const { attempts, elapsedMs, ...target } = publish.targets[0];
+    assert.equal(attempts, 1);
+    assert.equal(typeof elapsedMs, "number");
+    assert.deepEqual(target, {
       id: "local-runtime",
       url: runtime.baseUrl,
       ok: true,
@@ -1199,7 +1211,10 @@ test("HTTP API registers runtime nodes and publishes snapshots through the regis
     }
     const publish = await publishResponse.json();
     assert.equal(publish.ok, true);
-    assert.deepEqual(publish.targets[0], {
+    const { attempts, elapsedMs, ...target } = publish.targets[0];
+    assert.equal(attempts, 1);
+    assert.equal(typeof elapsedMs, "number");
+    assert.deepEqual(target, {
       id: "rt_local",
       url: runtime.baseUrl,
       ok: true,
@@ -1799,6 +1814,72 @@ test("HTTP API exposes route snapshot publication history", async () => {
   } finally {
     await app.close();
     await runtime.close();
+  }
+});
+
+test("HTTP API retries snapshot publishes and records attempt counts", async () => {
+  const calls: Array<{ url: string; body: any }> = [];
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+  });
+  const app = createHttpApp({
+    controlPlane: control,
+    runtimeNodes: [{ id: "rt_retry", url: "http://runtime.local" }],
+    snapshotPublish: {
+      maxAttempts: 3,
+      retryDelayMs: 0,
+      nowMs: () => calls.length * 10,
+    },
+    fetch: async (url, init) => {
+      calls.push({ url, body: JSON.parse(init.body) });
+      if (calls.length === 1) {
+        return {
+          ok: false,
+          status: 503,
+          async json() {
+            return {};
+          },
+          async text() {
+            return "warming";
+          },
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return { routes: 1, generatedAt: fixedNow(), snapshotId: "snap_retry" };
+        },
+        async text() {
+          return "ok";
+        },
+      };
+    },
+  });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    await createHelloRoute(baseUrl);
+    const publishResponse = await fetch(`${baseUrl}/snapshots/routes/publish`, { method: "POST" });
+    if (publishResponse.status !== 200) {
+      assert.fail(await publishResponse.text());
+    }
+    const publish = await publishResponse.json();
+    const history = await (await fetch(`${baseUrl}/snapshots/routes/publishes`)).json();
+
+    assert.equal(calls.length, 2);
+    assert.equal(publish.ok, true);
+    assert.equal(publish.targets[0].attempts, 2);
+    assert.equal(history[0].targets[0].attempts, 2);
+    assert.equal(history[0].targets[0].status, 200);
+  } finally {
+    await app.close();
   }
 });
 

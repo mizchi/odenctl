@@ -7,7 +7,10 @@ import {
   runtimeSaturationSignals,
   warmAndActivateRuntimeNode,
 } from "../src/control-plane/autoscaling.ts";
-import { reconcileFlyMachinesAutoscaling } from "../src/control-plane/fly-autoscaler.ts";
+import {
+  createInMemoryFlyAutoscalerCoordinationStore,
+  reconcileFlyMachinesAutoscaling,
+} from "../src/control-plane/fly-autoscaler.ts";
 
 test("runtime autoscaling exports saturation signals and scales up above threshold", () => {
   const nodes = [
@@ -198,6 +201,126 @@ test("Fly autoscaler creates and stops machines from autoscaling decisions", asy
       body: undefined,
     },
   ]);
+});
+
+test("Fly autoscaler skips reconciliation when another controller holds the lease", async () => {
+  const coordination = createInMemoryFlyAutoscalerCoordinationStore();
+  assert.equal(await coordination.acquireLease({
+    key: "fly:wasmplane-runtime:nrt",
+    holder: "controller-a",
+    ttlMs: 30_000,
+    nowMs: 1_000,
+  }), true);
+  let calls = 0;
+
+  const report = await reconcileFlyMachinesAutoscaling({
+    appName: "wasmplane-runtime",
+    apiToken: "fly-token",
+    region: "nrt",
+    machineConfig: { image: "registry.fly.io/wasmplane-runtime:deployment-1" },
+    decision: {
+      action: "scale_up",
+      reason: "load_above_threshold",
+      currentNodes: 1,
+      desiredNodes: 2,
+      add: 1,
+      remove: 0,
+      averageLoadRatio: 0.9,
+      candidateNodeIds: [],
+    },
+    controllerId: "controller-b",
+    lease: { ttlMs: 30_000 },
+    coordination,
+    nowMs: () => 2_000,
+    fetch: (async () => {
+      calls += 1;
+      return new Response(JSON.stringify({ id: "machine-new" }), { status: 200 });
+    }) as any,
+  });
+
+  assert.equal(calls, 0);
+  assert.deepEqual(report.actions, []);
+  assert.equal(report.skippedReason, "lease_unavailable");
+  assert.deepEqual(report.lease, {
+    key: "fly:wasmplane-runtime:nrt",
+    holder: "controller-b",
+    acquired: false,
+  });
+});
+
+test("Fly autoscaler records cooldown after scaling and skips until it expires", async () => {
+  const coordination = createInMemoryFlyAutoscalerCoordinationStore();
+  const calls: Array<{ url: string; method: string }> = [];
+  let nowMs = 10_000;
+  const fetchImpl = async (url: string, init: any) => {
+    calls.push({ url, method: init.method });
+    return new Response(JSON.stringify({ id: `machine-${calls.length}`, state: "started" }), { status: 200 });
+  };
+  const decision = {
+    action: "scale_up" as const,
+    reason: "load_above_threshold" as const,
+    currentNodes: 1,
+    desiredNodes: 2,
+    add: 1,
+    remove: 0,
+    averageLoadRatio: 0.9,
+    candidateNodeIds: [],
+  };
+
+  const first = await reconcileFlyMachinesAutoscaling({
+    appName: "wasmplane-runtime",
+    apiToken: "fly-token",
+    region: "nrt",
+    machineConfig: { image: "registry.fly.io/wasmplane-runtime:deployment-1" },
+    decision,
+    controllerId: "controller-a",
+    lease: { ttlMs: 30_000 },
+    cooldown: { durationMs: 60_000 },
+    coordination,
+    nowMs: () => nowMs,
+    fetch: fetchImpl as any,
+  });
+  nowMs = 20_000;
+  const second = await reconcileFlyMachinesAutoscaling({
+    appName: "wasmplane-runtime",
+    apiToken: "fly-token",
+    region: "nrt",
+    machineConfig: { image: "registry.fly.io/wasmplane-runtime:deployment-1" },
+    decision,
+    controllerId: "controller-b",
+    lease: { ttlMs: 30_000 },
+    cooldown: { durationMs: 60_000 },
+    coordination,
+    nowMs: () => nowMs,
+    fetch: fetchImpl as any,
+  });
+  nowMs = 71_000;
+  const third = await reconcileFlyMachinesAutoscaling({
+    appName: "wasmplane-runtime",
+    apiToken: "fly-token",
+    region: "nrt",
+    machineConfig: { image: "registry.fly.io/wasmplane-runtime:deployment-1" },
+    decision,
+    controllerId: "controller-c",
+    lease: { ttlMs: 30_000 },
+    cooldown: { durationMs: 60_000 },
+    coordination,
+    nowMs: () => nowMs,
+    fetch: fetchImpl as any,
+  });
+
+  assert.equal(first.actions.length, 1);
+  assert.equal(first.cooldown?.active, false);
+  assert.deepEqual(second.actions, []);
+  assert.equal(second.skippedReason, "cooldown");
+  assert.deepEqual(second.cooldown, {
+    key: "fly:wasmplane-runtime:nrt",
+    active: true,
+    untilMs: 70_000,
+    remainingMs: 50_000,
+  });
+  assert.equal(third.actions.length, 1);
+  assert.deepEqual(calls.map((call) => call.method), ["POST", "POST"]);
 });
 
 function runtimeNode(id: string, activeRequests: number, concurrentRequests: number) {

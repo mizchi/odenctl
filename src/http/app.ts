@@ -18,6 +18,7 @@ import {
 } from "../control-plane/artifact-store.ts";
 import {
   type FetchLike,
+  type RouteSnapshotPublishOptions,
   publishRouteSnapshot,
   type RuntimeNodeTarget,
 } from "../control-plane/snapshot-publisher.ts";
@@ -70,6 +71,7 @@ export interface HttpAppOptions {
   auditSink?: AuditSink;
   now?: () => string;
   fetch?: FetchLike;
+  snapshotPublish?: RouteSnapshotPublishOptions;
 }
 
 export function createHttpApp(options: HttpAppOptions) {
@@ -558,7 +560,7 @@ async function publishAndRecordRouteSnapshot(
   snapshot: RouteSnapshot,
   runtimeNodes: RuntimeNodeTarget[],
 ) {
-  const report = await publishRouteSnapshot(snapshot, runtimeNodes, options.fetch ?? fetch);
+  const report = await publishRouteSnapshot(snapshot, runtimeNodes, options.fetch ?? fetch, options.snapshotPublish);
   const publication = await options.controlPlane.recordRouteSnapshotPublication({
     snapshotId: snapshot.id,
     snapshotGeneratedAt: report.snapshot.generatedAt,
@@ -789,17 +791,18 @@ async function renderAdminPage(options: HttpAppOptions, notice: string | null): 
     <section id="runtime-nodes">
       <h2>Runtime nodes</h2>
       <table>
-        <thead><tr><th>Node</th><th>Status</th><th>Region</th><th>URL</th><th>Capacity</th><th>Load</th><th>Logs</th></tr></thead>
+        <thead><tr><th>Node</th><th>Status</th><th>Region</th><th>URL</th><th>Runtime</th><th>Capacity</th><th>Load</th><th>Logs</th></tr></thead>
         <tbody>${runtimeNodes.length ? runtimeNodes.map((node) => `
           <tr>
             <td><code>${htmlEscape(node.id)}</code></td>
             <td class="${node.status === "active" ? "ok" : "warn"}">${htmlEscape(node.status)}</td>
             <td>${htmlEscape(node.region ?? "")}</td>
             <td><code>${htmlEscape(node.url)}</code></td>
+            <td>${runtimeNodeHostCell(node)}</td>
             <td>${node.capacity ? `${node.capacity.concurrentRequests} req / ${node.capacity.memoryMb} MB` : '<span class="muted">unknown</span>'}</td>
             <td>${node.load ? `${node.load.activeRequests} active` : '<span class="muted">unknown</span>'}</td>
             <td><a href="/runtime-nodes/${encodeURIComponent(node.id)}/logs">logs</a></td>
-          </tr>`).join("") : emptyRow(7, "No runtime nodes")}</tbody>
+          </tr>`).join("") : emptyRow(8, "No runtime nodes")}</tbody>
       </table>
       <div class="actions">
         <form method="post" action="/admin/runtime-nodes/status">
@@ -899,6 +902,19 @@ function adminRouteInputs(): string {
 function adminDecisionMetrics(decision: any): string {
   const metrics = decision.metrics ?? {};
   return `requests=${metrics.requests ?? 0} errors=${metrics.errors ?? 0} p95=${metrics.p95Ms ?? 0}ms`;
+}
+
+function runtimeNodeHostCell(node: RuntimeNode): string {
+  if (!node.host) {
+    return '<span class="muted">unknown</span>';
+  }
+  const label = [
+    node.host.backend,
+    node.host.hostVersion,
+    node.host.wasi,
+    node.host.engineVariant,
+  ].filter((value): value is string => Boolean(value));
+  return `<code>${htmlEscape(label.join("/"))}</code>`;
 }
 
 function emptyRow(columns: number, label: string): string {

@@ -366,8 +366,9 @@ class SqliteControlPlaneRepository implements ControlPlaneRepository {
             region,
             labels_json,
             load_json,
-            identity_json
-          ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            identity_json,
+            host_json
+          ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           node.id,
@@ -381,6 +382,7 @@ class SqliteControlPlaneRepository implements ControlPlaneRepository {
           node.labels ? JSON.stringify(node.labels) : null,
           node.load ? JSON.stringify(node.load) : null,
           node.identity ? JSON.stringify(node.identity) : null,
+          node.host ? JSON.stringify(node.host) : null,
         );
       return node;
     } catch (error) {
@@ -403,7 +405,8 @@ class SqliteControlPlaneRepository implements ControlPlaneRepository {
           capacity_json = ?,
           region = ?,
           labels_json = ?,
-          load_json = ?
+          load_json = ?,
+          host_json = ?
         where id = ?`,
       )
       .run(
@@ -414,6 +417,7 @@ class SqliteControlPlaneRepository implements ControlPlaneRepository {
         node.region ?? null,
         node.labels ? JSON.stringify(node.labels) : null,
         node.load ? JSON.stringify(node.load) : null,
+        node.host ? JSON.stringify(node.host) : null,
         node.id,
       );
     if (result.changes === 0) {
@@ -643,6 +647,9 @@ function runtimeNodeFromRow(row: any): RuntimeNode {
   if (row.identity_json) {
     node.identity = JSON.parse(row.identity_json);
   }
+  if (row.host_json) {
+    node.host = JSON.parse(row.host_json);
+  }
   return node;
 }
 
@@ -782,6 +789,7 @@ create table if not exists runtime_nodes (
   labels_json text,
   load_json text,
   identity_json text,
+  host_json text,
   registered_at text not null
 );
 
@@ -940,6 +948,12 @@ const migrations: SchemaMigration[] = [
     id: "202607010001_runtime_node_identity",
     apply(db) {
       ensureColumn(db, "runtime_nodes", "identity_json", "text");
+    },
+  },
+  {
+    id: "202607010002_runtime_node_host_info",
+    apply(db) {
+      ensureColumn(db, "runtime_nodes", "host_json", "text");
     },
   },
 ];

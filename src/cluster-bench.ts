@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, stat } from "node:fs/promises";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { cpus, tmpdir } from "node:os";
@@ -565,9 +565,11 @@ async function startRuntimeCluster(
       const artifactCacheDir = await mkdtemp(join(tmpdir(), `wasmplane-cluster-${id}-artifacts-`));
       const kvStoreDir = await mkdtemp(join(tmpdir(), `wasmplane-cluster-${id}-kv-`));
       const poolingArgs = clusterHostPoolingArgs(options);
-      const cacheVariant = options.hostDaemonUrl && poolingArgs.length > 0
-        ? clusterEngineCacheVariant(poolingArgs)
-        : undefined;
+      const precompiledCompileArgs = options.hostDaemonUrl ? poolingArgs : [];
+      const cacheVariant = clusterEngineCacheVariant([
+        await clusterHostBinaryCacheKey(options.hostBin),
+        ...precompiledCompileArgs,
+      ]);
       const app = createRuntimeNodeApp({
         supervisor: createRuntimeSupervisor({
           snapshot: emptySnapshot(),
@@ -575,7 +577,7 @@ async function startRuntimeCluster(
           backend: createWasip3HostBackend({
             cacheDir,
             hostBin: options.hostBin,
-            compileArgs: options.hostDaemonUrl ? poolingArgs : undefined,
+            compileArgs: precompiledCompileArgs.length > 0 ? precompiledCompileArgs : undefined,
             cacheVariant,
           }),
         }),
@@ -951,6 +953,15 @@ function appendOptionalNumberArg(args: string[], flag: string, value: number | u
 export function clusterEngineCacheVariant(args: string[]): string {
   const digest = createHash("sha256").update(args.join("\0")).digest("hex").slice(0, 16);
   return `engine-${digest}`;
+}
+
+async function clusterHostBinaryCacheKey(hostBin: string): Promise<string> {
+  try {
+    const info = await stat(hostBin);
+    return `${hostBin}:${info.size}:${Math.trunc(info.mtimeMs)}`;
+  } catch {
+    return hostBin;
+  }
 }
 
 function normalizePath(value: string): string {

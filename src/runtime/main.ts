@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
-import { MVP_WASI_PROFILE } from "../control-plane/contracts.ts";
+import { stat } from "node:fs/promises";
+import { MVP_RUNTIME_BACKEND, MVP_WASI_PROFILE, type RuntimeNodeHostInfo } from "../control-plane/contracts.ts";
 import { createConfiguredSecretCipher } from "../control-plane/secret-encryption.ts";
 import { createSqliteRepository } from "../control-plane/repository.ts";
 import {
@@ -64,9 +65,21 @@ const otlpTraceEndpoint =
   process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT ?? process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
 const hostDaemonPoolingArgs = hostDaemonPoolingRuntimeArgs(process.env);
 const hostDaemonServeArgs = hostDaemonRuntimeArgs(process.env, hostDaemonPoolingArgs);
-const hostDaemonCacheVariant = hostDaemonPoolingArgs.length > 0
-  ? engineCacheVariant(hostDaemonPoolingArgs)
-  : undefined;
+const precompiledCompileArgs = hostDaemonUrl ? hostDaemonPoolingArgs : [];
+const runtimeVersion = "wasmplane-runtime/0.1.0";
+const runtimeHostVersion = process.env.WASMPLANE_WASIP3_HOST_VERSION ?? "wasmplane-wasip3-host";
+const runtimeEngineVariant = engineCacheVariant([
+  runtimeHostVersion,
+  await hostBinaryCacheKey(hostBin),
+  ...precompiledCompileArgs,
+]);
+const runtimeHostInfo: RuntimeNodeHostInfo = {
+  backend: MVP_RUNTIME_BACKEND,
+  wasi: MVP_WASI_PROFILE,
+  runtimeVersion,
+  hostVersion: runtimeHostVersion,
+  engineVariant: runtimeEngineVariant,
+};
 
 const supervisor = createRuntimeSupervisor({
   snapshot: {
@@ -83,8 +96,8 @@ const supervisor = createRuntimeSupervisor({
   backend: createWasip3HostBackend({
     cacheDir,
     hostBin,
-    compileArgs: hostDaemonUrl ? hostDaemonPoolingArgs : undefined,
-    cacheVariant: hostDaemonUrl ? hostDaemonCacheVariant : undefined,
+    compileArgs: precompiledCompileArgs.length > 0 ? precompiledCompileArgs : undefined,
+    cacheVariant: runtimeEngineVariant,
   }),
 });
 
@@ -112,6 +125,7 @@ const app = createRuntimeNodeApp({
     precompiledCacheDir: cacheDir,
     ...runtimeCacheRetention,
   },
+  precompiledCacheEngineVariant: runtimeEngineVariant,
   cacheRetentionIntervalMs: runtimeCacheGcIntervalMs,
   warmupOnSnapshot,
   telemetry: otlpTraceEndpoint
@@ -134,10 +148,11 @@ if (controlPlaneUrl) {
     runtimeNodeId,
     publicUrl,
     token: controlPlaneToken,
-    version: "wasmplane-runtime/0.1.0",
+    version: runtimeVersion,
     region: runtimeRegion,
     labels: runtimeLabels,
     identity: runtimeIdentity,
+    host: runtimeHostInfo,
     capacity: {
       concurrentRequests: runtimeConcurrency,
       memoryMb: resolveRuntimeMemoryMb(process.env, 4096),
@@ -205,6 +220,15 @@ function hostDaemonPoolingRuntimeArgs(env: Record<string, string | undefined>): 
 function engineCacheVariant(args: string[]): string {
   const digest = createHash("sha256").update(args.join("\0")).digest("hex").slice(0, 16);
   return `engine-${digest}`;
+}
+
+async function hostBinaryCacheKey(hostBin: string): Promise<string> {
+  try {
+    const info = await stat(hostBin);
+    return `${hostBin}:${info.size}:${Math.trunc(info.mtimeMs)}`;
+  } catch {
+    return hostBin;
+  }
 }
 
 function appendOptionalArg(args: string[], flag: string, value: string | undefined) {

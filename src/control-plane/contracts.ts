@@ -138,6 +138,14 @@ export interface RuntimeNodeIdentity {
   certificateSha256?: string;
 }
 
+export interface RuntimeNodeHostInfo {
+  backend: string;
+  wasi: string;
+  runtimeVersion?: string;
+  hostVersion?: string;
+  engineVariant?: string;
+}
+
 export interface RuntimeNode {
   id: string;
   url: string;
@@ -150,6 +158,7 @@ export interface RuntimeNode {
   labels?: Record<string, string>;
   load?: RuntimeNodeLoad;
   identity?: RuntimeNodeIdentity;
+  host?: RuntimeNodeHostInfo;
 }
 
 export interface RouteSnapshotPublication {
@@ -167,6 +176,8 @@ export interface RouteSnapshotPublicationTarget {
   url: string;
   ok: boolean;
   status?: number;
+  attempts?: number;
+  elapsedMs?: number;
   routes?: number;
   generatedAt?: string;
   error?: string;
@@ -534,6 +545,25 @@ export function normalizeRuntimeNodeIdentity(value: unknown): RuntimeNodeIdentit
   };
 }
 
+export function normalizeRuntimeNodeHostInfo(value: unknown): RuntimeNodeHostInfo | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const record = objectRecord(value, "runtime node host");
+  const backend = hostInfoToken(record.backend, "runtime node host.backend");
+  const wasi = hostInfoToken(record.wasi, "runtime node host.wasi");
+  const runtimeVersion = optionalHostInfoToken(record.runtimeVersion, "runtime node host.runtimeVersion");
+  const hostVersion = optionalHostInfoToken(record.hostVersion, "runtime node host.hostVersion");
+  const engineVariant = optionalEngineVariant(record.engineVariant, "runtime node host.engineVariant");
+  return {
+    backend,
+    wasi,
+    ...(runtimeVersion ? { runtimeVersion } : {}),
+    ...(hostVersion ? { hostVersion } : {}),
+    ...(engineVariant ? { engineVariant } : {}),
+  };
+}
+
 function optionalSha256(value: unknown, field: string): string | undefined {
   if (value === undefined) {
     return undefined;
@@ -543,6 +573,32 @@ function optionalSha256(value: unknown, field: string): string | undefined {
     throw new ControlPlaneError("validation", `${field} must be a sha256 hex digest`);
   }
   return digest;
+}
+
+function optionalHostInfoToken(value: unknown, field: string): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  return hostInfoToken(value, field);
+}
+
+function hostInfoToken(value: unknown, field: string): string {
+  const token = nonEmptyString(value, field);
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9_.:/@+-]*$/.test(token)) {
+    throw new ControlPlaneError("validation", `${field} must be a runtime host token`);
+  }
+  return token;
+}
+
+function optionalEngineVariant(value: unknown, field: string): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const variant = nonEmptyString(value, field);
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(variant)) {
+    throw new ControlPlaneError("validation", `${field} must be an engine variant id`);
+  }
+  return variant;
 }
 
 export function normalizeRouteTargets(value: unknown, fallbackDeploymentId?: string): RouteTarget[] {
