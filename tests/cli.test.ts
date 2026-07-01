@@ -9,9 +9,11 @@ import {
   parseDevArgs,
   parseDeployArgs,
   parseMigrateArgs,
+  parseNewWorkerArgs,
   parseVolumeSqliteArgs,
   runDevCommand,
   runMigrateCommand,
+  runNewWorkerCommand,
   runVolumeSqliteCommand,
 } from "../src/cli.ts";
 import {
@@ -301,6 +303,33 @@ test("CLI dev validates, creates a deploy preview, publishes to local runtime, a
     curl: "curl -H 'host: dev.localhost' http://127.0.0.1:8788/",
   });
   assert.deepEqual(result.logs, { logs: [{ level: "info", message: "ready" }] });
+});
+
+test("CLI new worker args parse language, name, output, and force", () => {
+  assert.deepEqual(
+    parseNewWorkerArgs(["--language", "rust", "--name", "hello-worker", "--out", "workers/hello", "--force"]),
+    {
+      language: "rust",
+      name: "hello-worker",
+      outDir: "workers/hello",
+      force: true,
+    },
+  );
+});
+
+test("CLI new worker command materializes a template", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "wasmplane-cli-new-worker-"));
+  const outDir = join(dir, "workers", "hello");
+
+  const result = await runNewWorkerCommand({
+    language: "rust",
+    name: "hello-worker",
+    outDir,
+  });
+
+  assert.equal(result.language, "rust");
+  assert.equal(result.outDir, outDir);
+  assert.ok(result.files.some((file: any) => file.path === "wit/world.wit"));
 });
 
 test("CLI migrate args parse explicit SQLite path", () => {

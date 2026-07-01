@@ -627,6 +627,18 @@ The command uploads bytes through `POST /artifacts/local`, creates an immutable 
 the route, then publishes a route snapshot unless `--no-publish` is passed. Limit overrides use
 `--limit name=value`, for example `--limit wallMs=2500 --limit cpuMs=100`. The CLI also reads
 `WASMPLANE_CONTROL_PLANE_TOKEN` when `--token` is omitted.
+
+Worker projects can be bootstrapped from the canonical WIT package with generated SDK helpers:
+
+```sh
+pnpm wasmplane new --language rust --name hello-worker --out workers/hello
+pnpm wasmplane new --language typescript --name hello-worker-ts --out workers/hello-ts
+```
+
+The templates copy `wit/myedge-runtime.wit` to `wit/world.wit`, generate small helper modules
+(`src/wasmplane.rs` or `src/wasmplane.ts`), and include build scripts for `wit-bindgen`/`wasm-tools`
+or `jco componentize`.
+
 For local development, run a control plane and runtime node, then use `dev` to validate the
 component, create a deploy preview, publish the route snapshot directly to the local runtime, and
 print a route-preview curl command:

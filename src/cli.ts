@@ -16,6 +16,13 @@ import {
   createVolumeSqliteRegistry,
 } from "./control-plane/volume-sqlite.ts";
 import {
+  materializeWorkerTemplate,
+  WORKER_TEMPLATE_LANGUAGES,
+  type WorkerTemplateInput,
+  type WorkerTemplateLanguage,
+  type WorkerTemplateResult,
+} from "./worker-templates.ts";
+import {
   MVP_RUNTIME_BACKEND,
   MVP_WASI_PROFILE,
   MVP_WORKER_WORLD,
@@ -92,6 +99,8 @@ export interface DevCommandResult {
 export interface MigrateCommandInput extends ConfiguredControlPlaneMigrationOptions {
   action: "apply" | "check";
 }
+
+export interface NewWorkerCommandInput extends WorkerTemplateInput {}
 
 export type VolumeSqliteCommandAction = "ensure" | "backup" | "restore" | "gc" | "list";
 
@@ -522,6 +531,51 @@ export async function runMigrateCommand(input: MigrateCommandInput) {
     : checkConfiguredControlPlaneMigrations({ env: input.env });
 }
 
+export function parseNewWorkerArgs(args: string[]): NewWorkerCommandInput {
+  const input: Partial<NewWorkerCommandInput> = {
+    language: "rust",
+    force: false,
+  };
+  for (let index = 0; index < args.length; index += 1) {
+    const flag = args[index];
+    const value = args[index + 1];
+    switch (flag) {
+      case "--language": {
+        const language = requiredValue(flag, value);
+        if (!isWorkerTemplateLanguage(language)) {
+          throw new Error(`unknown worker template language ${language}`);
+        }
+        input.language = language;
+        index += 1;
+        break;
+      }
+      case "--name":
+        input.name = requiredValue(flag, value);
+        index += 1;
+        break;
+      case "--out":
+      case "--out-dir":
+        input.outDir = requiredValue(flag, value);
+        index += 1;
+        break;
+      case "--force":
+        input.force = true;
+        break;
+      default:
+        throw new Error(`unknown new argument ${flag}`);
+    }
+  }
+  if (!input.name) {
+    throw new Error("expected --name <worker-name>");
+  }
+  input.outDir = input.outDir ?? input.name;
+  return input as NewWorkerCommandInput;
+}
+
+export async function runNewWorkerCommand(input: NewWorkerCommandInput): Promise<WorkerTemplateResult> {
+  return materializeWorkerTemplate(input);
+}
+
 export function parseVolumeSqliteArgs(args: string[]): VolumeSqliteCommandInput {
   const [action, ...rest] = args;
   if (!isVolumeSqliteAction(action)) {
@@ -827,6 +881,23 @@ function printMigrationStatus(status: Awaited<ReturnType<typeof runMigrateComman
   console.log(JSON.stringify(status, null, 2));
 }
 
+function printNewWorkerResult(result: WorkerTemplateResult) {
+  console.log(
+    JSON.stringify(
+      {
+        language: result.language,
+        name: result.name,
+        outDir: result.outDir,
+        world: result.world,
+        files: result.files.map((file) => file.path),
+        nextSteps: result.nextSteps.map((step) => step.replace("<out-dir>", result.outDir)),
+      },
+      null,
+      2,
+    ),
+  );
+}
+
 function printVolumeSqliteResult(result: Awaited<ReturnType<typeof runVolumeSqliteCommand>>) {
   console.log(JSON.stringify(result, null, 2));
 }
@@ -850,13 +921,21 @@ async function main() {
     }
     return;
   }
+  if (command === "new") {
+    printNewWorkerResult(await runNewWorkerCommand(parseNewWorkerArgs(args)));
+    return;
+  }
   if (command === "volume-sqlite") {
     printVolumeSqliteResult(await runVolumeSqliteCommand(parseVolumeSqliteArgs(args)));
     return;
   }
   throw new Error(
-    "usage: wasmplane <deploy|dev|migrate|volume-sqlite> ...",
+    "usage: wasmplane <deploy|dev|migrate|new|volume-sqlite> ...",
   );
+}
+
+function isWorkerTemplateLanguage(value: string): value is WorkerTemplateLanguage {
+  return WORKER_TEMPLATE_LANGUAGES.includes(value as WorkerTemplateLanguage);
 }
 
 function isVolumeSqliteAction(value: string | undefined): value is VolumeSqliteCommandAction {

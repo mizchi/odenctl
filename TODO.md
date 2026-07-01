@@ -242,7 +242,7 @@ Production readiness tasks, in implementation order.
 ## 31. Platform developer experience
 
 - [x] Add `wasmplane dev` with local runtime, WIT validation, log tailing, and route preview.
-- [ ] Add worker templates and generated WIT SDK helpers for common languages.
+- [x] Add worker templates and generated WIT SDK helpers for common languages.
 - [ ] Add deployment diff output for routes, capabilities, secrets, KV bindings, and runtime limits.
 - [ ] Add project/deployment scoped metrics, logs, traces, and log drain configuration.
 
