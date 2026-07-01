@@ -248,7 +248,7 @@ Production readiness tasks, in implementation order.
 
 ## 32. Runtime packing and isolation
 
-- [ ] Add per-tenant runtime packing policy for warm deployments, idle instance pools, and LRU eviction.
+- [x] Add per-tenant runtime packing policy for warm deployments, idle instance pools, and LRU eviction.
 - [ ] Add per-tenant memory, CPU, storage, concurrency, and rate enforcement reports.
 - [ ] Add forced tenant drain and isolation-pool routing for noisy-neighbor mitigation.
 - [ ] Add billing-ready quota enforcement tied to usage ledgers.

@@ -176,6 +176,11 @@ The bundled in-memory store is for single-process controllers and tests. Product
 use the SQLite or Postgres coordination stores, which persist lease and cooldown state in
 `fly_autoscaler_coordination`. New runtime nodes should be registered as `draining`, receive the
 current route snapshot directly for warmup, then be marked `active` by heartbeat.
+Runtime nodes can bound warm prepared deployments with a packing policy:
+`RUNTIME_PACKING_MAX_WARM_DEPLOYMENTS` caps the node-wide prepared deployment cache,
+`RUNTIME_PACKING_MAX_WARM_DEPLOYMENTS_PER_PROJECT` caps each project independently, and
+`RUNTIME_PACKING_MAX_IDLE_DEPLOYMENT_AGE_MS` evicts idle prepared deployments by age. Eviction uses
+least-recently-used order while protecting the deployment currently being prepared.
 Set `WASMPLANE_KV_STORE_DIR` to choose the host-side persistent KV directory; the default is
 `.wasmplane/kv`.
 Set `WASMPLANE_WASIP3_HOST_DAEMON=1` to make the Node runtime start a local embedded Rust

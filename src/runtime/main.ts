@@ -18,6 +18,7 @@ import {
   parseRuntimeIdentityKeys,
   parseRuntimeLabels,
   parseRuntimeLogDrains,
+  parseRuntimePackingPolicy,
   parseRuntimeShutdownDrainTimeoutMs,
   resolveRuntimeRouteSnapshotFile,
   resolveRuntimeIdentity,
@@ -69,6 +70,7 @@ const runtimeConcurrency = Number.parseInt(process.env.RUNTIME_CONCURRENCY ?? "1
 const projectConcurrencyLimits = parseProjectConcurrencyLimits(process.env);
 const projectRateLimits = parseProjectRateLimits(process.env);
 const runtimeLogDrains = parseRuntimeLogDrains(process.env);
+const runtimePackingPolicy = parseRuntimePackingPolicy(process.env);
 const warmupOnSnapshot = process.env.RUNTIME_SNAPSHOT_WARMUP === "1";
 const warmupConcurrency = Number.parseInt(process.env.RUNTIME_SNAPSHOT_WARMUP_CONCURRENCY ?? "4", 10);
 const otlpTraceEndpoint =
@@ -106,6 +108,7 @@ const supervisor = createRuntimeSupervisor({
     oci: runtimeOciArtifactOptionsFromEnv(process.env),
   }),
   warmupConcurrency: Number.isFinite(warmupConcurrency) && warmupConcurrency > 0 ? warmupConcurrency : 4,
+  packingPolicy: runtimePackingPolicy,
   backend: createWasip3HostBackend({
     cacheDir,
     hostBin,

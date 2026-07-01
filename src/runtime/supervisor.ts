@@ -18,6 +18,34 @@ export interface RuntimeSupervisorOptions {
   artifactStore: ArtifactStore;
   backend: RuntimeBackend;
   warmupConcurrency?: number;
+  packingPolicy?: RuntimePackingPolicy;
+  nowMs?: () => number;
+}
+
+export interface RuntimePackingPolicy {
+  maxWarmDeployments?: number;
+  maxWarmDeploymentsPerProject?: number;
+  maxIdleDeploymentAgeMs?: number;
+}
+
+export interface RuntimePackingStats {
+  policy: RuntimePackingPolicy;
+  warmDeployments: number;
+  deployments: Array<{ deploymentId: string; projectId: string; lastUsedMs: number }>;
+  byProject: Record<string, { warmDeployments: number }>;
+  evictions: {
+    total: number;
+    lru: number;
+    perProjectLimit: number;
+    idleTtl: number;
+  };
+}
+
+interface PreparedDeploymentEntry {
+  projectId: string;
+  deploymentId: string;
+  promise: Promise<CompiledComponent>;
+  lastUsedMs: number;
 }
 
 export function createRouteCache(snapshot: RouteSnapshot): RouteCache {
@@ -36,8 +64,10 @@ export function createRouteCache(snapshot: RouteSnapshot): RouteCache {
 }
 
 export function createRuntimeSupervisor(options: RuntimeSupervisorOptions) {
+  const nowMs = options.nowMs ?? (() => Date.now());
   let routeCache = createRouteCache(options.snapshot);
-  const prepared = new Map<string, Promise<CompiledComponent>>();
+  const prepared = new Map<string, PreparedDeploymentEntry>();
+  const evictions = { total: 0, lru: 0, perProjectLimit: 0, idleTtl: 0 };
 
   async function prepareRoute(input: RouteMatchInput): Promise<CompiledComponent> {
     const route = routeCache.match(input);
@@ -48,16 +78,24 @@ export function createRuntimeSupervisor(options: RuntimeSupervisorOptions) {
   }
 
   async function prepareDeployment(route: CompilableRouteTarget): Promise<CompiledComponent> {
+    evictIdleDeployments();
     const existing = prepared.get(route.deploymentId);
     if (existing) {
-      return existing;
+      existing.lastUsedMs = nowMs();
+      return existing.promise;
     }
 
     const promise = materializeAndCompile(route).catch((error) => {
       prepared.delete(route.deploymentId);
       throw error;
     });
-    prepared.set(route.deploymentId, promise);
+    prepared.set(route.deploymentId, {
+      projectId: route.projectId,
+      deploymentId: route.deploymentId,
+      promise,
+      lastUsedMs: nowMs(),
+    });
+    enforcePackingPolicy(route.deploymentId);
     return promise;
   }
 
@@ -100,10 +138,98 @@ export function createRuntimeSupervisor(options: RuntimeSupervisorOptions) {
   }
 
   async function preparedComponents(): Promise<CompiledComponent[]> {
-    const settled = await Promise.allSettled(prepared.values());
+    const settled = await Promise.allSettled([...prepared.values()].map((entry) => entry.promise));
     return settled
       .filter((result): result is PromiseFulfilledResult<CompiledComponent> => result.status === "fulfilled")
       .map((result) => result.value);
+  }
+
+  function packingStats(): RuntimePackingStats {
+    const deployments = [...prepared.values()]
+      .map((entry) => ({
+        deploymentId: entry.deploymentId,
+        projectId: entry.projectId,
+        lastUsedMs: entry.lastUsedMs,
+      }))
+      .sort((left, right) => left.deploymentId.localeCompare(right.deploymentId));
+    const byProject: Record<string, { warmDeployments: number }> = {};
+    for (const deployment of deployments) {
+      byProject[deployment.projectId] = {
+        warmDeployments: (byProject[deployment.projectId]?.warmDeployments ?? 0) + 1,
+      };
+    }
+    return {
+      policy: { ...(options.packingPolicy ?? {}) },
+      warmDeployments: deployments.length,
+      deployments,
+      byProject,
+      evictions: { ...evictions },
+    };
+  }
+
+  function enforcePackingPolicy(protectedDeploymentId: string) {
+    const policy = options.packingPolicy;
+    if (!policy) {
+      return;
+    }
+    if (policy.maxWarmDeploymentsPerProject !== undefined) {
+      const current = prepared.get(protectedDeploymentId);
+      if (current) {
+        evictUntil(
+          deploymentsForProject(current.projectId),
+          policy.maxWarmDeploymentsPerProject,
+          protectedDeploymentId,
+          "perProjectLimit",
+        );
+      }
+    }
+    if (policy.maxWarmDeployments !== undefined) {
+      evictUntil([...prepared.values()], policy.maxWarmDeployments, protectedDeploymentId, "lru");
+    }
+  }
+
+  function evictIdleDeployments() {
+    const maxIdleMs = options.packingPolicy?.maxIdleDeploymentAgeMs;
+    if (maxIdleMs === undefined) {
+      return;
+    }
+    const cutoff = nowMs() - Math.max(0, maxIdleMs);
+    for (const entry of [...prepared.values()]) {
+      if (entry.lastUsedMs < cutoff) {
+        evictDeployment(entry.deploymentId, "idleTtl");
+      }
+    }
+  }
+
+  function deploymentsForProject(projectId: string): PreparedDeploymentEntry[] {
+    return [...prepared.values()].filter((entry) => entry.projectId === projectId);
+  }
+
+  function evictUntil(
+    entries: PreparedDeploymentEntry[],
+    max: number,
+    protectedDeploymentId: string,
+    reason: keyof typeof evictions,
+  ) {
+    if (!Number.isFinite(max) || max < 0) {
+      return;
+    }
+    const candidates = entries
+      .filter((entry) => entry.deploymentId !== protectedDeploymentId)
+      .sort((left, right) => left.lastUsedMs - right.lastUsedMs);
+    while (entries.length > max && candidates.length > 0) {
+      const evicted = candidates.shift() as PreparedDeploymentEntry;
+      evictDeployment(evicted.deploymentId, reason);
+      entries = entries.filter((entry) => entry.deploymentId !== evicted.deploymentId);
+    }
+  }
+
+  function evictDeployment(deploymentId: string, reason: keyof typeof evictions) {
+    if (!prepared.delete(deploymentId)) {
+      return;
+    }
+    evictions.total += 1;
+    evictions[reason] += 1;
   }
 
   return {
@@ -113,6 +239,7 @@ export function createRuntimeSupervisor(options: RuntimeSupervisorOptions) {
     prepareRoute,
     prepareDeployment,
     preparedComponents,
+    packingStats,
     loadSnapshot,
     warmupSnapshot,
   };

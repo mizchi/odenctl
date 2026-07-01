@@ -257,6 +257,67 @@ test("runtime supervisor prunes prepared deployments removed by a new snapshot",
   assert.deepEqual(calls, ["dep_v1", "dep_v1"]);
 });
 
+test("runtime supervisor applies per-project warm deployment packing policy with LRU eviction", async () => {
+  const first = route("dep_a1", "a1.example.dev", "/", digest("a1"), "file:///tmp/a1.wasm");
+  first.projectId = "prj_a";
+  const second = route("dep_a2", "a2.example.dev", "/", digest("a2"), "file:///tmp/a2.wasm");
+  second.projectId = "prj_a";
+  const other = route("dep_b1", "b1.example.dev", "/", digest("b1"), "file:///tmp/b1.wasm");
+  other.projectId = "prj_b";
+  const calls: string[] = [];
+  let nowMs = 0;
+  const supervisor = createRuntimeSupervisor({
+    snapshot: snapshot([first, second, other]),
+    packingPolicy: {
+      maxWarmDeployments: 2,
+      maxWarmDeploymentsPerProject: 1,
+    },
+    nowMs() {
+      return nowMs;
+    },
+    artifactStore: {
+      async materialize(artifact) {
+        return {
+          path: new URL(artifact.location).pathname,
+          digest: artifact.digest,
+          location: artifact.location,
+          verified: true,
+        };
+      },
+    },
+    backend: {
+      async compileComponent(request) {
+        calls.push(request.deploymentId);
+        return {
+          deploymentId: request.deploymentId,
+          backend: "wasmtime",
+          componentPath: request.artifact.path,
+          precompiledPath: `/cache/${request.deploymentId}.cwasm`,
+          cached: false,
+        };
+      },
+    },
+  });
+
+  await supervisor.prepareRoute({ host: "a1.example.dev", path: "/" });
+  nowMs = 10;
+  await supervisor.prepareRoute({ host: "a2.example.dev", path: "/" });
+  nowMs = 20;
+  await supervisor.prepareRoute({ host: "b1.example.dev", path: "/" });
+
+  const stats = supervisor.packingStats();
+  assert.deepEqual(stats.deployments.map((deployment: any) => deployment.deploymentId).sort(), ["dep_a2", "dep_b1"]);
+  assert.deepEqual(stats.byProject, {
+    prj_a: { warmDeployments: 1 },
+    prj_b: { warmDeployments: 1 },
+  });
+  assert.deepEqual(stats.evictions, { total: 1, lru: 0, perProjectLimit: 1, idleTtl: 0 });
+
+  nowMs = 30;
+  await supervisor.prepareRoute({ host: "a1.example.dev", path: "/" });
+  assert.deepEqual(calls, ["dep_a1", "dep_a2", "dep_b1", "dep_a1"]);
+});
+
 test("runtime supervisor selects weighted rollout targets deterministically", async () => {
   const calls: string[] = [];
   const baseRoute = route("dep_blue", "hello.example.dev", "/", digest("blue"), "file:///tmp/blue.wasm");

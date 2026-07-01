@@ -6,6 +6,9 @@ export interface RuntimeConfigEnv {
   RUNTIME_PROJECT_RATE_LIMITS?: string;
   RUNTIME_LOG_DRAINS?: string;
   RUNTIME_LOG_DRAIN_HEADERS?: string;
+  RUNTIME_PACKING_MAX_WARM_DEPLOYMENTS?: string;
+  RUNTIME_PACKING_MAX_WARM_DEPLOYMENTS_PER_PROJECT?: string;
+  RUNTIME_PACKING_MAX_IDLE_DEPLOYMENT_AGE_MS?: string;
   RUNTIME_REGION?: string;
   RUNTIME_LABELS?: string;
   RUNTIME_SHUTDOWN_DRAIN_TIMEOUT_MS?: string;
@@ -30,6 +33,12 @@ export interface ProjectRateLimitConfig {
 export interface RuntimeLogDrainConfig {
   url: string;
   headers?: Record<string, string>;
+}
+
+export interface RuntimePackingPolicyConfig {
+  maxWarmDeployments?: number;
+  maxWarmDeploymentsPerProject?: number;
+  maxIdleDeploymentAgeMs?: number;
 }
 
 export interface RuntimeAdvertisedIdentity {
@@ -212,6 +221,26 @@ export function parseRuntimeLogDrains(env: RuntimeConfigEnv): RuntimeLogDrainCon
       }]
       : []);
   return drains.length > 0 ? drains : undefined;
+}
+
+export function parseRuntimePackingPolicy(env: RuntimeConfigEnv): RuntimePackingPolicyConfig | undefined {
+  const maxWarmDeployments = positiveIntegerOrUndefined(env.RUNTIME_PACKING_MAX_WARM_DEPLOYMENTS);
+  const maxWarmDeploymentsPerProject = positiveIntegerOrUndefined(
+    env.RUNTIME_PACKING_MAX_WARM_DEPLOYMENTS_PER_PROJECT,
+  );
+  const maxIdleDeploymentAgeMs = positiveIntegerOrUndefined(env.RUNTIME_PACKING_MAX_IDLE_DEPLOYMENT_AGE_MS);
+  if (
+    maxWarmDeployments === undefined
+    && maxWarmDeploymentsPerProject === undefined
+    && maxIdleDeploymentAgeMs === undefined
+  ) {
+    return undefined;
+  }
+  return {
+    ...(maxWarmDeployments !== undefined ? { maxWarmDeployments } : {}),
+    ...(maxWarmDeploymentsPerProject !== undefined ? { maxWarmDeploymentsPerProject } : {}),
+    ...(maxIdleDeploymentAgeMs !== undefined ? { maxIdleDeploymentAgeMs } : {}),
+  };
 }
 
 function parseHeaderMap(raw: string | undefined): Record<string, string> {

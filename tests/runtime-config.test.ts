@@ -8,6 +8,7 @@ import {
   parseRuntimeIdentityKeys,
   parseRuntimeLabels,
   parseRuntimeLogDrains,
+  parseRuntimePackingPolicy,
   parseRuntimeShutdownDrainTimeoutMs,
   resolveRuntimeRouteSnapshotFile,
   resolveRuntimeIdentity,
@@ -117,6 +118,22 @@ test("runtime config parses log drain targets", () => {
     ],
   );
   assert.equal(parseRuntimeLogDrains({}), undefined);
+});
+
+test("runtime config parses warm deployment packing policy", () => {
+  assert.deepEqual(
+    parseRuntimePackingPolicy({
+      RUNTIME_PACKING_MAX_WARM_DEPLOYMENTS: "256",
+      RUNTIME_PACKING_MAX_WARM_DEPLOYMENTS_PER_PROJECT: "8",
+      RUNTIME_PACKING_MAX_IDLE_DEPLOYMENT_AGE_MS: "300000",
+    }),
+    {
+      maxWarmDeployments: 256,
+      maxWarmDeploymentsPerProject: 8,
+      maxIdleDeploymentAgeMs: 300000,
+    },
+  );
+  assert.equal(parseRuntimePackingPolicy({}), undefined);
 });
 
 test("runtime config parses cache retention policy", () => {
