@@ -203,3 +203,8 @@ Production readiness tasks, in implementation order.
 - [x] Document readiness and local drain operations.
 - [x] Add graceful shutdown that drains, rejects new requests, and waits for active invocations.
 - [x] Add a startup option to restore the latest accepted route snapshot from disk.
+
+## 27. Runtime snapshot persistence hardening
+
+- [x] Validate restored route snapshot file shape before using it.
+- [x] Configure the Fly runtime volume path for persisted route snapshots.

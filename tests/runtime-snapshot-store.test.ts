@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -26,4 +26,19 @@ test("file route snapshot loader returns undefined when no snapshot exists", asy
   const dir = await mkdtemp(join(tmpdir(), "wasmplane-runtime-snapshot-missing-"));
 
   assert.equal(await loadRouteSnapshotFile(join(dir, "missing.json")), undefined);
+});
+
+test("file route snapshot loader rejects invalid snapshot schema", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "wasmplane-runtime-snapshot-invalid-"));
+  const file = join(dir, "route-snapshot.json");
+  await writeFile(file, JSON.stringify({
+    schemaVersion: 2,
+    generatedAt: "2026-06-26T10:00:00.000Z",
+    routes: [],
+  }), "utf8");
+
+  await assert.rejects(
+    () => loadRouteSnapshotFile(file),
+    /route snapshot must have schemaVersion 1 and routes/,
+  );
 });

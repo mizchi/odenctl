@@ -6,6 +6,7 @@ test("project tooling keeps Wasm E2E portable", async () => {
   const justfile = await readFile("justfile", "utf8");
   const packageJson = JSON.parse(await readFile("package.json", "utf8"));
   const workflow = await readFile(".github/workflows/ci.yml", "utf8");
+  const flyRuntime = await readFile("fly.runtime.toml", "utf8");
   await readFile("pnpm-lock.yaml", "utf8");
 
   assert.match(justfile, /node_modules\/@bytecodealliance\/jco\/lib\/wasi_snapshot_preview1\.reactor\.wasm/);
@@ -19,4 +20,5 @@ test("project tooling keeps Wasm E2E portable", async () => {
   assert.match(workflow, /rustup target add wasm32-wasip1/);
   assert.match(workflow, /just test/);
   assert.match(workflow, /just e2e/);
+  assert.match(flyRuntime, /RUNTIME_ROUTE_SNAPSHOT_FILE = "\/data\/route-snapshot\.json"/);
 });
