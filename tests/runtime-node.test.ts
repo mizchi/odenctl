@@ -1635,6 +1635,7 @@ test("runtime heartbeat client registers node and reports capacity", async () =>
       version: "wasmplane-runtime/0.1.0",
       capacity: { concurrentRequests: 128, memoryMb: 4096 },
       load: { activeRequests: 12 },
+      identity: { keyId: "rt-key", certificateSha256: "a".repeat(64) },
       host: {
         backend: "wasmtime",
         wasi: "wasip3",
@@ -1671,6 +1672,7 @@ test("runtime heartbeat client registers node and reports capacity", async () =>
           version: "wasmplane-runtime/0.1.0",
           capacity: { concurrentRequests: 128, memoryMb: 4096 },
           load: { activeRequests: 12 },
+          identity: { keyId: "rt-key", certificateSha256: "a".repeat(64) },
           host: {
             backend: "wasmtime",
             wasi: "wasip3",

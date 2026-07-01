@@ -43,6 +43,7 @@ export interface RuntimeNodeHeartbeatInput {
   status?: RuntimeNodeStatus;
   capacity: RuntimeNodeCapacity;
   load?: RuntimeNodeLoad;
+  identity?: RuntimeNodeIdentity;
   host?: RuntimeNodeHostInfo;
   token?: string;
   fetch?: typeof fetch;
@@ -81,6 +82,7 @@ export async function sendRuntimeHeartbeat(input: RuntimeNodeHeartbeatInput): Pr
         version: input.version,
         capacity: input.capacity,
         load: input.load,
+        identity: input.identity,
         host: input.host,
       }),
     },
