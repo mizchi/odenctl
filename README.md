@@ -133,7 +133,8 @@ Set `WASMPLANE_RUNTIME_CACHE_MAX_BYTES` and/or `WASMPLANE_RUNTIME_CACHE_MAX_AGE_
 runtime cache retention. `POST /__runtime/cache/gc` scans `WASMPLANE_ARTIFACT_CACHE_DIR` and
 `WASMPLANE_CACHE_DIR`, removes files older than the age limit, then removes the oldest remaining
 files until each cache directory is below the byte limit. Artifact and `.cwasm` paths for currently
-prepared deployments are protected from deletion.
+prepared deployments are protected from deletion. Set `WASMPLANE_RUNTIME_CACHE_GC_INTERVAL_MS` to
+run the same cache GC periodically in the runtime node.
 Autoscalers can read `GET /autoscaling/signals` from the control plane to get per-runtime
 `activeRequests`, `concurrentRequests`, `loadRatio`, and saturation state. The autoscaling helpers
 turn these signals into scale-up/scale-down decisions, and the Fly Machines prototype reconciler can

@@ -33,6 +33,10 @@ export interface RuntimeNodeAppOptions {
   maxConcurrentInvocationsByProject?: Record<string, number>;
   requestRateLimitsByProject?: Record<string, RuntimeProjectRateLimit>;
   cacheRetention?: RuntimeCacheRetentionOptions;
+  cacheRetentionIntervalMs?: number;
+  cacheRetentionSetInterval?: (callback: () => void | Promise<void>, intervalMs: number) => unknown;
+  cacheRetentionClearInterval?: (timer: unknown) => void;
+  cacheRetentionOnError?: (error: unknown) => void;
   requestIdGenerator?: () => string;
   monotonicNowMs?: () => number;
   eventBufferSize?: number;
@@ -69,6 +73,7 @@ export function createRuntimeNodeApp(options: RuntimeNodeAppOptions) {
   const logs = createRuntimeLogs(options.logBufferSize ?? 100);
   const projectConcurrency = createProjectConcurrencyLimiter(options.maxConcurrentInvocationsByProject);
   const projectRateLimiter = createProjectRateLimiter(options.requestRateLimitsByProject, monotonicNowMs);
+  const cacheRetentionJob = createRuntimeCacheRetentionJob(options);
   const server = createServer(async (request, response) => {
     let workerRequest = false;
     let routeMatched = false;
@@ -308,12 +313,14 @@ export function createRuntimeNodeApp(options: RuntimeNodeAppOptions) {
         server.once("error", reject);
         server.listen(options.port, options.host ?? "127.0.0.1", () => {
           server.off("error", reject);
+          cacheRetentionJob.start();
           resolve(server);
         });
       });
     },
     close() {
       return new Promise<void>((resolve, reject) => {
+        cacheRetentionJob.stop();
         if (!server.listening) {
           resolve();
           return;
@@ -365,6 +372,47 @@ async function runRuntimeCacheGc(options: RuntimeNodeAppOptions) {
       ...activePaths,
     ],
   });
+}
+
+function createRuntimeCacheRetentionJob(options: RuntimeNodeAppOptions) {
+  const intervalMs = options.cacheRetentionIntervalMs;
+  const setIntervalFn = options.cacheRetentionSetInterval ?? setInterval;
+  const clearIntervalFn = options.cacheRetentionClearInterval ?? clearInterval;
+  let timer: unknown;
+  let inFlight = false;
+
+  async function tick(): Promise<boolean> {
+    if (inFlight) {
+      return false;
+    }
+    inFlight = true;
+    try {
+      await runRuntimeCacheGc(options);
+      return true;
+    } catch (error) {
+      options.cacheRetentionOnError?.(error);
+      return false;
+    } finally {
+      inFlight = false;
+    }
+  }
+
+  function start() {
+    if (!Number.isInteger(intervalMs) || intervalMs <= 0 || timer !== undefined) {
+      return;
+    }
+    timer = setIntervalFn(tick, intervalMs);
+  }
+
+  function stop() {
+    if (timer === undefined) {
+      return;
+    }
+    clearIntervalFn(timer);
+    timer = undefined;
+  }
+
+  return { start, stop, tick };
 }
 
 function authorizeRuntimeManagement(

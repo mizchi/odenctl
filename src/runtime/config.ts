@@ -11,6 +11,7 @@ export interface RuntimeConfigEnv {
   WASMPLANE_RUNTIME_IDENTITY_CERT_SHA256?: string;
   WASMPLANE_RUNTIME_CACHE_MAX_BYTES?: string;
   WASMPLANE_RUNTIME_CACHE_MAX_AGE_MS?: string;
+  WASMPLANE_RUNTIME_CACHE_GC_INTERVAL_MS?: string;
   FLY_APP_NAME?: string;
   FLY_MACHINE_ID?: string;
   FLY_REGION?: string;
@@ -124,6 +125,10 @@ export function parseRuntimeCacheRetentionPolicy(env: RuntimeConfigEnv): Runtime
     ...(maxBytes !== undefined ? { maxBytes } : {}),
     ...(maxAgeMs !== undefined ? { maxAgeMs } : {}),
   };
+}
+
+export function parseRuntimeCacheGcIntervalMs(env: RuntimeConfigEnv): number | undefined {
+  return positiveIntegerOrUndefined(env.WASMPLANE_RUNTIME_CACHE_GC_INTERVAL_MS);
 }
 
 export function parseProjectConcurrencyLimits(env: RuntimeConfigEnv): Record<string, number> | undefined {

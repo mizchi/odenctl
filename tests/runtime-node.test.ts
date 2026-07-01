@@ -338,6 +338,47 @@ test("runtime node cache GC endpoint keeps prepared component files", async () =
   }
 });
 
+test("runtime node runs cache GC on a configured interval and stops it on close", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "wasmplane-runtime-cache-gc-interval-"));
+  const artifactDir = join(dir, "artifacts");
+  const staleArtifact = join(artifactDir, "stale.wasm");
+  await writeRuntimeCacheFile(staleArtifact, "stale artifact", "2026-06-26T08:00:00.000Z");
+  let scheduled: { callback: () => void | Promise<void>; intervalMs: number } | undefined;
+  let cleared: unknown;
+  const app = createRuntimeNodeApp({
+    supervisor: {
+      loadSnapshot() {},
+      async prepareRoute() {
+        throw new Error("not used");
+      },
+    },
+    cacheRetention: {
+      artifactCacheDir: artifactDir,
+      maxAgeMs: 60 * 60 * 1000,
+      nowMs: () => Date.parse("2026-06-26T12:00:00.000Z"),
+    },
+    cacheRetentionIntervalMs: 30_000,
+    cacheRetentionSetInterval(callback, intervalMs) {
+      scheduled = { callback, intervalMs };
+      return "cache-timer";
+    },
+    cacheRetentionClearInterval(timer) {
+      cleared = timer;
+    },
+  });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  assert.ok(server.listening);
+
+  try {
+    assert.equal(scheduled?.intervalMs, 30_000);
+    await scheduled?.callback();
+    assert.equal(await runtimeFileExists(staleArtifact), false);
+  } finally {
+    await app.close();
+  }
+  assert.equal(cleared, "cache-timer");
+});
+
 test("runtime node rejects invalid route snapshots before loading them", async () => {
   const loadedSnapshots: RouteSnapshot[] = [];
   const app = createRuntimeNodeApp({

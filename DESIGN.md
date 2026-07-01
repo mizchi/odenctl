@@ -180,7 +180,8 @@ certificate fingerprint pinning のための contract を提供する。
 runtime cache retention は `WASMPLANE_ARTIFACT_CACHE_DIR` と `WASMPLANE_CACHE_DIR` を対象にする。
 GC は max age を超えた file を先に消し、次に directory ごとの max bytes を超えていれば古い file から
 削除する。現在 prepared deployment が参照している materialized artifact と `.cwasm` は keep path として
-保護し、snapshot switch や warmup 中の hot path を壊さない。
+保護し、snapshot switch や warmup 中の hot path を壊さない。GC は runtime management endpoint から
+手動実行でき、interval env が設定されている場合は runtime node 内で定期実行する。
 
 `RUNTIME_SNAPSHOT_WARMUP=1` の場合、snapshot ACK 前に target deployments を materialize/precompile
 する。これにより deploy switch 後の初回 request latency を抑える。warmup work は

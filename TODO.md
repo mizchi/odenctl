@@ -111,3 +111,4 @@ Production readiness tasks, in implementation order.
 - [x] Protect currently prepared component files from cache GC.
 - [x] Add a runtime management endpoint to trigger cache GC.
 - [x] Add env configuration for max cache bytes and max cache age.
+- [x] Add optional background cache GC interval.

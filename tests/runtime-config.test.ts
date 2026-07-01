@@ -3,6 +3,7 @@ import { test } from "node:test";
 import {
   parseProjectConcurrencyLimits,
   parseProjectRateLimits,
+  parseRuntimeCacheGcIntervalMs,
   parseRuntimeCacheRetentionPolicy,
   parseRuntimeIdentityKeys,
   parseRuntimeLabels,
@@ -112,6 +113,14 @@ test("runtime config parses cache retention policy", () => {
       WASMPLANE_RUNTIME_CACHE_MAX_BYTES: "bad",
       WASMPLANE_RUNTIME_CACHE_MAX_AGE_MS: "0",
     }),
+    undefined,
+  );
+  assert.equal(
+    parseRuntimeCacheGcIntervalMs({ WASMPLANE_RUNTIME_CACHE_GC_INTERVAL_MS: "60000" }),
+    60000,
+  );
+  assert.equal(
+    parseRuntimeCacheGcIntervalMs({ WASMPLANE_RUNTIME_CACHE_GC_INTERVAL_MS: "0" }),
     undefined,
   );
 });
