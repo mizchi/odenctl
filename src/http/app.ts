@@ -34,8 +34,10 @@ import { runtimeSaturationSignals } from "../control-plane/autoscaling.ts";
 import type {
   EnsureVolumeSqliteDatabaseInput,
   ExportVolumeSqliteDatabaseInput,
+  PruneVolumeSqliteBackupsInput,
   RestoreVolumeSqliteDatabaseInput,
   VolumeSqliteBackupRecord,
+  VolumeSqliteBackupGcReport,
   VolumeSqliteDatabaseRecord,
 } from "../control-plane/volume-sqlite.ts";
 
@@ -96,6 +98,7 @@ export interface VolumeSqliteRegistryApi {
   ensureDatabase(input: EnsureVolumeSqliteDatabaseInput): MaybePromise<VolumeSqliteDatabaseRecord>;
   exportDatabase(input: ExportVolumeSqliteDatabaseInput): MaybePromise<VolumeSqliteBackupRecord>;
   restoreDatabase(input: RestoreVolumeSqliteDatabaseInput): MaybePromise<VolumeSqliteDatabaseRecord>;
+  pruneBackups(input?: PruneVolumeSqliteBackupsInput): MaybePromise<VolumeSqliteBackupGcReport>;
   getDatabase(id: string): MaybePromise<VolumeSqliteDatabaseRecord | undefined>;
   listDatabases(): MaybePromise<VolumeSqliteDatabaseRecord[]>;
   listBackups(id?: string): MaybePromise<VolumeSqliteBackupRecord[]>;
@@ -191,6 +194,11 @@ export function createHttpApp(options: HttpAppOptions) {
         return;
       }
       const sqliteDatabaseBackups = sqliteDatabaseBackupsMatch(method, url.pathname);
+      const sqliteDatabaseBackupsGc = sqliteDatabaseBackupsGcMatch(method, url.pathname);
+      if (sqliteDatabaseBackupsGc) {
+        writeJson(response, 200, await pruneSqliteDatabaseBackups(options, sqliteDatabaseBackupsGc.id, request));
+        return;
+      }
       if (sqliteDatabaseBackups && method === "POST") {
         writeJson(response, 201, await createSqliteDatabaseBackup(options, sqliteDatabaseBackups.id, request));
         return;
@@ -494,6 +502,15 @@ async function listSqliteDatabaseBackups(options: HttpAppOptions, id: string) {
   return {
     backups: await requiredVolumeSqliteRegistry(options).listBackups(id),
   };
+}
+
+async function pruneSqliteDatabaseBackups(options: HttpAppOptions, id: string, request: any) {
+  const input = objectRecord(await readJson(request));
+  return requiredVolumeSqliteRegistry(options).pruneBackups({
+    id,
+    keepLatest: typeof input.keepLatest === "number" ? input.keepLatest : undefined,
+    olderThanMs: typeof input.olderThanMs === "number" ? input.olderThanMs : undefined,
+  });
 }
 
 async function restoreSqliteDatabase(options: HttpAppOptions, id: string, request: any) {
@@ -1173,6 +1190,17 @@ function sqliteDatabaseBackupsMatch(method: string, pathname: string): { id: str
     return undefined;
   }
   const match = /^\/sqlite-databases\/([^/]+)\/backups$/.exec(pathname);
+  if (!match) {
+    return undefined;
+  }
+  return { id: decodeURIComponent(match[1]) };
+}
+
+function sqliteDatabaseBackupsGcMatch(method: string, pathname: string): { id: string } | undefined {
+  if (method !== "POST") {
+    return undefined;
+  }
+  const match = /^\/sqlite-databases\/([^/]+)\/backups\/gc$/.exec(pathname);
   if (!match) {
     return undefined;
   }

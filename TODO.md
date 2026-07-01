@@ -223,3 +223,6 @@ Production readiness tasks, in implementation order.
 - [x] Wire project state APIs to the volume SQLite registry.
 - [x] Add backup/export and restore commands for individual database files.
 - [x] Add density benchmarks for database count, open handles, migration time, and write contention.
+- [x] Add per-database writer queues for serialized SQLite mutations.
+- [x] Add per-database write admission control to reject unbounded pending work.
+- [x] Add backup retention GC for count- and age-based pruning.

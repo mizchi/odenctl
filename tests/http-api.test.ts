@@ -282,6 +282,11 @@ test("HTTP API provisions project volume sqlite database units", async () => {
         ["before"],
       );
     });
+    await postJson(baseUrl, "/sqlite-databases/prj_state/backups", { backupId: "http_backup_2" });
+    const gc = await postJsonOk(baseUrl, "/sqlite-databases/prj_state/backups/gc", { keepLatest: 1 });
+    assert.deepEqual(gc.deleted.map((deleted: any) => deleted.id), ["http_backup"]);
+    const backupsAfterGc = await (await fetch(`${baseUrl}/sqlite-databases/prj_state/backups`)).json();
+    assert.deepEqual(backupsAfterGc.backups.map((item: any) => item.id), ["http_backup_2"]);
 
     const missing = await fetch(`${baseUrl}/sqlite-databases/missing`);
     assert.equal(missing.status, 404);

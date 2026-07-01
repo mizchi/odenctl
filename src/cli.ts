@@ -46,7 +46,7 @@ export interface MigrateCommandInput extends ConfiguredControlPlaneMigrationOpti
   action: "apply" | "check";
 }
 
-export type VolumeSqliteCommandAction = "ensure" | "backup" | "restore" | "list";
+export type VolumeSqliteCommandAction = "ensure" | "backup" | "restore" | "gc" | "list";
 
 export interface VolumeSqliteCommandInput {
   action: VolumeSqliteCommandAction;
@@ -58,6 +58,9 @@ export interface VolumeSqliteCommandInput {
   ownerId?: string;
   schemaVersion?: number;
   maxOpenDatabases?: number;
+  maxPendingWritesPerDatabase?: number;
+  keepLatest?: number;
+  olderThanMs?: number;
 }
 
 export type FetchFunction = (input: string, init?: any) => Promise<FetchResponseLike>;
@@ -270,7 +273,7 @@ export async function runMigrateCommand(input: MigrateCommandInput) {
 export function parseVolumeSqliteArgs(args: string[]): VolumeSqliteCommandInput {
   const [action, ...rest] = args;
   if (!isVolumeSqliteAction(action)) {
-    throw new Error("usage: wasmplane volume-sqlite <ensure|backup|restore|list> --root <dir> [--id <database-id>]");
+    throw new Error("usage: wasmplane volume-sqlite <ensure|backup|restore|gc|list> --root <dir> [--id <database-id>]");
   }
   const input: Partial<VolumeSqliteCommandInput> = { action };
   for (let index = 0; index < rest.length; index += 1) {
@@ -310,6 +313,18 @@ export function parseVolumeSqliteArgs(args: string[]): VolumeSqliteCommandInput 
         input.maxOpenDatabases = positiveInteger(requiredValue(flag, value), flag);
         index += 1;
         break;
+      case "--max-pending-writes":
+        input.maxPendingWritesPerDatabase = positiveInteger(requiredValue(flag, value), flag);
+        index += 1;
+        break;
+      case "--keep-latest":
+        input.keepLatest = positiveIntegerOrZero(requiredValue(flag, value), flag);
+        index += 1;
+        break;
+      case "--older-than-ms":
+        input.olderThanMs = positiveIntegerOrZero(requiredValue(flag, value), flag);
+        index += 1;
+        break;
       default:
         throw new Error(`unknown volume-sqlite argument ${flag}`);
     }
@@ -327,6 +342,7 @@ export async function runVolumeSqliteCommand(input: VolumeSqliteCommandInput) {
   const registry = createVolumeSqliteRegistry({
     rootDir: input.rootDir,
     maxOpenDatabases: input.maxOpenDatabases,
+    maxPendingWritesPerDatabase: input.maxPendingWritesPerDatabase,
   });
   try {
     switch (input.action) {
@@ -350,6 +366,12 @@ export async function runVolumeSqliteCommand(input: VolumeSqliteCommandInput) {
           kind: input.kind,
           ownerId: input.ownerId,
           schemaVersion: input.schemaVersion,
+        });
+      case "gc":
+        return registry.pruneBackups({
+          id: input.id,
+          keepLatest: input.keepLatest,
+          olderThanMs: input.olderThanMs,
         });
       case "list":
         return {
@@ -516,7 +538,7 @@ async function main() {
 }
 
 function isVolumeSqliteAction(value: string | undefined): value is VolumeSqliteCommandAction {
-  return value === "ensure" || value === "backup" || value === "restore" || value === "list";
+  return value === "ensure" || value === "backup" || value === "restore" || value === "gc" || value === "list";
 }
 
 function migrationEnvFromProcess(env: Record<string, string | undefined>): Record<string, string | undefined> {

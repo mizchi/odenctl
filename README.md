@@ -296,13 +296,18 @@ SQLite pragmas, tracks schema version and ownership metadata, and uses an LRU `S
 to cap open handles. This is intended for local-first project state on a single attached volume;
 multi-machine writers still need a managed primary such as Postgres or Turso/libSQL. Set
 `WASMPLANE_VOLUME_SQLITE_ROOT=/data/sqlite` to enable the registry in the control API, and tune the
-open handle cap with `WASMPLANE_VOLUME_SQLITE_MAX_OPEN`.
+open handle cap with `WASMPLANE_VOLUME_SQLITE_MAX_OPEN`. `writeDatabase()` provides a per-database
+FIFO writer queue; `WASMPLANE_VOLUME_SQLITE_MAX_PENDING_WRITES` caps active plus queued writes per
+database and rejects excess work with a conflict error instead of allowing unbounded request buildup.
 Individual database files can be exported into `/data/sqlite/backups` with `VACUUM INTO` and
-restored back into the registry without exposing arbitrary SQL execution:
+restored back into the registry without exposing arbitrary SQL execution. Backup retention can be
+applied automatically with `WASMPLANE_VOLUME_SQLITE_MAX_BACKUPS_PER_DATABASE` and
+`WASMPLANE_VOLUME_SQLITE_BACKUP_RETENTION_MS`, or manually with `volume-sqlite gc`:
 
 ```sh
 pnpm wasmplane volume-sqlite backup --root /data/sqlite --id prj_example --backup-id before-migration
 pnpm wasmplane volume-sqlite restore --root /data/sqlite --id prj_example --backup-id before-migration
+pnpm wasmplane volume-sqlite gc --root /data/sqlite --id prj_example --keep-latest 24 --older-than-ms 604800000
 ```
 
 To move the control plane state to managed Postgres, create a Postgres database and set
@@ -467,6 +472,7 @@ pnpm volume-sqlite-bench \
   --root .wasmplane/volume-sqlite-bench \
   --databases 1000 \
   --max-open 64 \
+  --max-pending-writes 64 \
   --schema-version 1 \
   --write-iterations 1000 \
   --write-concurrency 1,4,16 \
@@ -474,8 +480,8 @@ pnpm volume-sqlite-bench \
 ```
 
 The report includes database creation density, LRU open-handle cap behavior, schema-version
-migration time, and write-contention throughput/latency. To run the same probe on the Fly control
-volume, use `just fly-volume-sqlite-bench`.
+migration time, per-database writer admission settings, and write-contention throughput/latency.
+To run the same probe on the Fly control volume, use `just fly-volume-sqlite-bench`.
 
 ## Cost Estimate
 
@@ -634,6 +640,7 @@ Available endpoints:
 - `GET /sqlite-databases/:id`
 - `POST /sqlite-databases/:id/backups`
 - `GET /sqlite-databases/:id/backups`
+- `POST /sqlite-databases/:id/backups/gc`
 - `POST /sqlite-databases/:id/restores`
 - `POST /artifacts`
 - `POST /artifacts/local`

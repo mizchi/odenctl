@@ -42,10 +42,36 @@ export interface VolumeSqliteBackupRecord {
   createdAt: string;
 }
 
+export interface PruneVolumeSqliteBackupsInput {
+  id?: string;
+  keepLatest?: number;
+  olderThanMs?: number;
+}
+
+export interface VolumeSqliteBackupGcReport {
+  deleted: VolumeSqliteBackupRecord[];
+  remaining: number;
+  deletedBytes: number;
+}
+
+export interface VolumeSqliteWriterQueueStats {
+  maxPendingPerDatabase: number;
+  rejectedWrites: number;
+  databases: Array<{
+    id: string;
+    active: boolean;
+    queued: number;
+    pending: number;
+  }>;
+}
+
 export interface VolumeSqliteRegistryOptions {
   rootDir: string;
   catalogPath?: string;
   maxOpenDatabases?: number;
+  maxPendingWritesPerDatabase?: number;
+  maxBackupsPerDatabase?: number;
+  backupRetentionMs?: number;
   busyTimeoutMs?: number;
   now?: () => string;
 }
@@ -72,6 +98,9 @@ export class VolumeSqliteRegistry {
   readonly catalogPath: string;
   private readonly catalog: DatabaseSync;
   private readonly pool: SqliteDatabasePool;
+  private readonly writerQueue: PerDatabaseWriterQueue;
+  private readonly maxBackupsPerDatabase?: number;
+  private readonly backupRetentionMs?: number;
   private readonly now: () => string;
 
   constructor(options: VolumeSqliteRegistryOptions) {
@@ -91,6 +120,17 @@ export class VolumeSqliteRegistry {
       maxOpen: options.maxOpenDatabases ?? 64,
       busyTimeoutMs: options.busyTimeoutMs,
     });
+    this.writerQueue = new PerDatabaseWriterQueue({
+      maxPendingPerDatabase: options.maxPendingWritesPerDatabase ?? 64,
+    });
+    this.maxBackupsPerDatabase = optionalNonnegativeInteger(
+      options.maxBackupsPerDatabase,
+      "volume sqlite max backups per database",
+    );
+    this.backupRetentionMs = optionalNonnegativeInteger(
+      options.backupRetentionMs,
+      "volume sqlite backup retention ms",
+    );
   }
 
   ensureDatabase(input: EnsureVolumeSqliteDatabaseInput): VolumeSqliteDatabaseRecord {
@@ -175,6 +215,9 @@ export class VolumeSqliteRegistry {
         ) values (?, ?, ?, ?, ?)`,
       )
       .run(id, record.id, path, sizeBytes, createdAt);
+    if (this.maxBackupsPerDatabase !== undefined || this.backupRetentionMs !== undefined) {
+      this.pruneBackups({ id: record.id });
+    }
     return { id, databaseId: record.id, path, sizeBytes, createdAt };
   }
 
@@ -241,6 +284,47 @@ export class VolumeSqliteRegistry {
     return rows.map(backupRecordFromRow);
   }
 
+  pruneBackups(input: PruneVolumeSqliteBackupsInput = {}): VolumeSqliteBackupGcReport {
+    const keepLatest = optionalNonnegativeInteger(
+      input.keepLatest ?? this.maxBackupsPerDatabase,
+      "volume sqlite backup retention keepLatest",
+    );
+    const olderThanMs = optionalNonnegativeInteger(
+      input.olderThanMs ?? this.backupRetentionMs,
+      "volume sqlite backup retention olderThanMs",
+    );
+    if (keepLatest === undefined && olderThanMs === undefined) {
+      return { deleted: [], remaining: this.listBackups(input.id).length, deletedBytes: 0 };
+    }
+    const nowMs = Date.parse(this.now());
+    const cutoff = olderThanMs === undefined || Number.isNaN(nowMs)
+      ? undefined
+      : nowMs - olderThanMs;
+    const groups = groupBackupsByDatabase(this.listBackups(input.id));
+    const deleted: VolumeSqliteBackupRecord[] = [];
+
+    for (const backups of groups.values()) {
+      for (let index = 0; index < backups.length; index += 1) {
+        const backup = backups[index];
+        const beyondKeep = keepLatest !== undefined && index >= keepLatest;
+        const expired = cutoff !== undefined
+          && (keepLatest === undefined || index >= keepLatest)
+          && backupCreatedBefore(backup, cutoff);
+        if (!beyondKeep && !expired) {
+          continue;
+        }
+        this.deleteBackup(backup);
+        deleted.push(backup);
+      }
+    }
+
+    return {
+      deleted,
+      remaining: this.listBackups(input.id).length,
+      deletedBytes: deleted.reduce((sum, backup) => sum + backup.sizeBytes, 0),
+    };
+  }
+
   withDatabase<T>(id: string, callback: (db: DatabaseSync, record: VolumeSqliteDatabaseRecord) => T): T {
     const record = this.requiredDatabase(id);
     const lastUsedAt = this.now();
@@ -251,10 +335,23 @@ export class VolumeSqliteRegistry {
     return callback(this.pool.open(updated), updated);
   }
 
+  writeDatabase<T>(
+    id: string,
+    callback: (
+      db: DatabaseSync,
+      record: VolumeSqliteDatabaseRecord,
+    ) => T | Promise<T>,
+  ): Promise<T> {
+    const normalized = databaseId(id);
+    return this.writerQueue.enqueue(normalized, () => this.withDatabase(normalized, callback));
+  }
+
   stats() {
     return {
       databases: this.listDatabases().length,
+      backups: this.listBackups().length,
       pool: this.pool.stats(),
+      writerQueues: this.writerQueue.stats(),
     };
   }
 
@@ -305,6 +402,14 @@ export class VolumeSqliteRegistry {
     return record;
   }
 
+  private deleteBackup(backup: VolumeSqliteBackupRecord): void {
+    const path = resolve(backup.path);
+    assertPathInside(this.backupDir, path, "volume sqlite backup path");
+    removeSqliteSidecars(path);
+    unlinkIfExists(path);
+    this.catalog.prepare("delete from volume_sqlite_backups where id = ?").run(backup.id);
+  }
+
   private initializeDatabaseFile(record: VolumeSqliteDatabaseRecord): void {
     this.withDatabase(record.id, (db) => {
       const current = userVersion(db);
@@ -312,6 +417,73 @@ export class VolumeSqliteRegistry {
         db.exec(`pragma user_version = ${record.schemaVersion}`);
       }
     });
+  }
+}
+
+class PerDatabaseWriterQueue {
+  private readonly maxPendingPerDatabase: number;
+  private readonly states = new Map<string, { tail: Promise<void>; active: boolean; pending: number }>();
+  private rejectedWrites = 0;
+
+  constructor(options: { maxPendingPerDatabase: number }) {
+    this.maxPendingPerDatabase = positiveInteger(
+      options.maxPendingPerDatabase,
+      "volume sqlite writer queue maxPendingPerDatabase",
+    );
+  }
+
+  enqueue<T>(id: string, operation: () => T | Promise<T>): Promise<T> {
+    const normalized = databaseId(id);
+    const state = this.stateFor(normalized);
+    if (state.pending >= this.maxPendingPerDatabase) {
+      this.rejectedWrites += 1;
+      return Promise.reject(
+        new ControlPlaneError("conflict", `volume sqlite writer queue for ${normalized} is full`),
+      );
+    }
+    state.pending += 1;
+    const run = state.tail.then(async () => {
+      state.active = true;
+      try {
+        return await operation();
+      } finally {
+        state.active = false;
+        state.pending -= 1;
+        if (state.pending === 0 && this.states.get(normalized) === state) {
+          this.states.delete(normalized);
+        }
+      }
+    });
+    state.tail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  stats(): VolumeSqliteWriterQueueStats {
+    return {
+      maxPendingPerDatabase: this.maxPendingPerDatabase,
+      rejectedWrites: this.rejectedWrites,
+      databases: [...this.states.entries()]
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([id, state]) => ({
+          id,
+          active: state.active,
+          queued: Math.max(0, state.pending - (state.active ? 1 : 0)),
+          pending: state.pending,
+        })),
+    };
+  }
+
+  private stateFor(id: string): { tail: Promise<void>; active: boolean; pending: number } {
+    const existing = this.states.get(id);
+    if (existing) {
+      return existing;
+    }
+    const state = { tail: Promise.resolve(), active: false, pending: 0 };
+    this.states.set(id, state);
+    return state;
   }
 }
 
@@ -437,6 +609,13 @@ function optionalIdentifier(value: string | undefined, field: string): string | 
   return identifier(value, field);
 }
 
+function optionalNonnegativeInteger(value: number | undefined, field: string): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  return nonnegativeInteger(value, field);
+}
+
 function identifier(value: string, field: string): string {
   if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(value)) {
     throw new ControlPlaneError(
@@ -515,6 +694,24 @@ function unlinkIfExists(path: string): void {
       throw error;
     }
   }
+}
+
+function groupBackupsByDatabase(backups: VolumeSqliteBackupRecord[]): Map<string, VolumeSqliteBackupRecord[]> {
+  const groups = new Map<string, VolumeSqliteBackupRecord[]>();
+  for (const backup of backups) {
+    const group = groups.get(backup.databaseId);
+    if (group) {
+      group.push(backup);
+    } else {
+      groups.set(backup.databaseId, [backup]);
+    }
+  }
+  return groups;
+}
+
+function backupCreatedBefore(backup: VolumeSqliteBackupRecord, cutoffMs: number): boolean {
+  const createdAt = Date.parse(backup.createdAt);
+  return !Number.isNaN(createdAt) && createdAt < cutoffMs;
 }
 
 const catalogSchema = `

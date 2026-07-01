@@ -90,12 +90,15 @@ export {
   VolumeSqliteRegistry,
   type EnsureVolumeSqliteDatabaseInput,
   type ExportVolumeSqliteDatabaseInput,
+  type PruneVolumeSqliteBackupsInput,
   type RestoreVolumeSqliteDatabaseInput,
   type SqliteDatabasePoolEntry,
   type SqliteDatabasePoolOptions,
   type VolumeSqliteBackupRecord,
+  type VolumeSqliteBackupGcReport,
   type VolumeSqliteDatabaseRecord,
   type VolumeSqliteRegistryOptions,
+  type VolumeSqliteWriterQueueStats,
 } from "./control-plane/volume-sqlite.ts";
 export { createWasip3HostArtifactValidator } from "./control-plane/artifact-validation.ts";
 export { ingestLocalArtifact } from "./control-plane/local-artifacts.ts";

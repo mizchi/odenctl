@@ -225,6 +225,26 @@ test("CLI volume-sqlite args parse backup and restore commands", () => {
       schemaVersion: 7,
     },
   );
+  assert.deepEqual(
+    parseVolumeSqliteArgs([
+      "gc",
+      "--root",
+      "/data/sqlite",
+      "--id",
+      "prj_api",
+      "--keep-latest",
+      "2",
+      "--older-than-ms",
+      "86400000",
+    ]),
+    {
+      action: "gc",
+      rootDir: "/data/sqlite",
+      id: "prj_api",
+      keepLatest: 2,
+      olderThanMs: 86400000,
+    },
+  );
 });
 
 test("CLI volume-sqlite command backs up and restores a database", async () => {
@@ -277,6 +297,40 @@ test("CLI volume-sqlite command backs up and restores a database", async () => {
         ["before"],
       );
     });
+  } finally {
+    verified.close();
+  }
+});
+
+test("CLI volume-sqlite command prunes old backups", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "wasmplane-cli-volume-sqlite-gc-"));
+  await runVolumeSqliteCommand({
+    action: "ensure",
+    rootDir: dir,
+    id: "prj_api",
+  });
+  const registry = createVolumeSqliteRegistry({ rootDir: dir });
+  try {
+    registry.withDatabase("prj_api", (db) => {
+      db.exec("create table events (id text primary key)");
+    });
+    registry.exportDatabase({ id: "prj_api", backupId: "backup_1" });
+    registry.exportDatabase({ id: "prj_api", backupId: "backup_2" });
+  } finally {
+    registry.close();
+  }
+
+  const report = await runVolumeSqliteCommand({
+    action: "gc",
+    rootDir: dir,
+    id: "prj_api",
+    keepLatest: 1,
+  });
+
+  assert.deepEqual(report.deleted.map((backup: any) => backup.id), ["backup_1"]);
+  const verified = createVolumeSqliteRegistry({ rootDir: dir });
+  try {
+    assert.deepEqual(verified.listBackups("prj_api").map((backup) => backup.id), ["backup_2"]);
   } finally {
     verified.close();
   }

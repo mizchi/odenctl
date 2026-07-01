@@ -54,6 +54,9 @@ const volumeSqliteRegistry = volumeSqliteRoot
   ? createVolumeSqliteRegistry({
     rootDir: volumeSqliteRoot,
     maxOpenDatabases: positiveInteger(process.env.WASMPLANE_VOLUME_SQLITE_MAX_OPEN, 64),
+    maxPendingWritesPerDatabase: positiveInteger(process.env.WASMPLANE_VOLUME_SQLITE_MAX_PENDING_WRITES, 64),
+    maxBackupsPerDatabase: optionalPositiveInteger(process.env.WASMPLANE_VOLUME_SQLITE_MAX_BACKUPS_PER_DATABASE),
+    backupRetentionMs: optionalPositiveInteger(process.env.WASMPLANE_VOLUME_SQLITE_BACKUP_RETENTION_MS),
     busyTimeoutMs: positiveInteger(process.env.WASMPLANE_VOLUME_SQLITE_BUSY_TIMEOUT_MS, 5000),
   })
   : undefined;

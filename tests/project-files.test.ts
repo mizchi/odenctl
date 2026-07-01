@@ -27,6 +27,10 @@ test("project tooling keeps Wasm E2E portable", async () => {
   assert.match(flyControl, /WASMPLANE_SNAPSHOT_PUBLISH_INTERVAL_MS = "5000"/);
   assert.match(flyControl, /WASMPLANE_VOLUME_SQLITE_ROOT = "\/data\/sqlite"/);
   assert.match(flyControl, /WASMPLANE_VOLUME_SQLITE_MAX_OPEN = "64"/);
+  assert.match(flyControl, /WASMPLANE_VOLUME_SQLITE_MAX_PENDING_WRITES = "64"/);
+  assert.match(flyControl, /WASMPLANE_VOLUME_SQLITE_MAX_BACKUPS_PER_DATABASE = "24"/);
+  assert.match(flyControl, /WASMPLANE_VOLUME_SQLITE_BACKUP_RETENTION_MS = "604800000"/);
+  assert.match(justfile, /--max-pending-writes 64/);
   assert.match(flyRuntime, /RUNTIME_HOST = "::"/);
   assert.match(flyRuntime, /RUNTIME_ROUTE_SNAPSHOT_FILE = "\/data\/route-snapshot\.json"/);
   assert.match(flyRuntime, /path = "\/__runtime\/healthz"/);

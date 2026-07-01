@@ -11,6 +11,7 @@ export interface VolumeSqliteBenchOptions {
   rootDir: string;
   databaseCount: number;
   maxOpenDatabases: number;
+  maxPendingWritesPerDatabase: number;
   schemaVersion: number;
   writeIterations: number;
   writeConcurrency: number[];
@@ -31,6 +32,7 @@ export interface VolumeSqliteBenchmarkReport {
     rootDir: string;
     databaseCount: number;
     maxOpenDatabases: number;
+    maxPendingWritesPerDatabase: number;
     schemaVersion: number;
     writeIterations: number;
     writeConcurrency: number[];
@@ -70,6 +72,7 @@ export async function runVolumeSqliteBenchmarkSuite(
   const registry = createVolumeSqliteRegistry({
     rootDir: options.rootDir,
     maxOpenDatabases: options.maxOpenDatabases,
+    maxPendingWritesPerDatabase: options.maxPendingWritesPerDatabase,
   });
   const ids = Array.from({ length: options.databaseCount }, (_, index) => `bench_${String(index).padStart(6, "0")}`);
   try {
@@ -123,7 +126,7 @@ export async function runVolumeSqliteBenchmarkSuite(
           const current = sequence;
           sequence += 1;
           const id = ids[current % ids.length];
-          registry.withDatabase(id, (db) => {
+          await registry.writeDatabase(id, (db) => {
             db.prepare("insert into bench_writes (id, payload) values (?, ?)").run(
               `${runId}-${concurrency}-${current}`,
               "payload",
@@ -146,6 +149,7 @@ export async function runVolumeSqliteBenchmarkSuite(
         rootDir: options.rootDir,
         databaseCount: options.databaseCount,
         maxOpenDatabases: options.maxOpenDatabases,
+        maxPendingWritesPerDatabase: options.maxPendingWritesPerDatabase,
         schemaVersion: options.schemaVersion,
         writeIterations: options.writeIterations,
         writeConcurrency: options.writeConcurrency,
@@ -182,6 +186,7 @@ export function parseVolumeSqliteBenchArgs(args: string[]): VolumeSqliteBenchOpt
     rootDir: ".wasmplane/volume-sqlite-bench",
     databaseCount: 500,
     maxOpenDatabases: 64,
+    maxPendingWritesPerDatabase: 64,
     schemaVersion: 1,
     writeIterations: 1000,
     writeConcurrency: [1, 4, 16],
@@ -201,6 +206,10 @@ export function parseVolumeSqliteBenchArgs(args: string[]): VolumeSqliteBenchOpt
         break;
       case "--max-open":
         options.maxOpenDatabases = positiveInteger(requiredValue(flag, value), flag);
+        index += 1;
+        break;
+      case "--max-pending-writes":
+        options.maxPendingWritesPerDatabase = positiveInteger(requiredValue(flag, value), flag);
         index += 1;
         break;
       case "--schema-version":
@@ -242,6 +251,7 @@ export function formatVolumeSqliteBenchmarkMarkdown(report: VolumeSqliteBenchmar
     `root: ${report.configuration.rootDir}`,
     `database count: ${report.configuration.databaseCount}`,
     `max open databases: ${report.configuration.maxOpenDatabases}`,
+    `max pending writes per database: ${report.configuration.maxPendingWritesPerDatabase}`,
     "",
     "## Density",
     "",
