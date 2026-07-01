@@ -15,6 +15,7 @@ primary_region = "nrt"
   WASMPLANE_ARTIFACT_DIR = "/data/artifacts"
   WASMPLANE_ARTIFACT_PUBLIC_BASE_URL = "auto"
   WASMPLANE_WASIP3_HOST_BIN = "/usr/local/bin/wasmplane-wasip3-host"
+  WASMPLANE_SNAPSHOT_PUBLISH_INTERVAL_MS = "5000"
 
 [mounts]
   source = "wasmplane_control_data"
