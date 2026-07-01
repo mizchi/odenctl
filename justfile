@@ -56,7 +56,7 @@ volume-sqlite-bench:
     pnpm volume-sqlite-bench --root .wasmplane/volume-sqlite-bench --databases 1000 --max-open 64 --schema-version 1 --write-iterations 1000 --write-concurrency 1,4,16
 
 fly-volume-sqlite-bench:
-    fly ssh console -a "{{ fly_control_app }}" -C "cd /app && pnpm volume-sqlite-bench --root /data/sqlite-bench --databases 1000 --max-open 64 --schema-version 1 --write-iterations 1000 --write-concurrency 1,4,16 --format json --output /data/sqlite-bench/report.json"
+    fly ssh console -a "{{ fly_control_app }}" -C "sh -lc 'cd /app && pnpm volume-sqlite-bench --root /data/sqlite-bench --databases 1000 --max-open 64 --schema-version 1 --write-iterations 1000 --write-concurrency 1,4,16 --format json --output /data/sqlite-bench/report.json'"
 
 perf-regression: rust-build guest-build
     mkdir -p perf-results
