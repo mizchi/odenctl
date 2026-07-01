@@ -1,19 +1,48 @@
 import { DatabaseSync } from "node:sqlite";
 import type {
+  ApiKey,
   Artifact,
   CanaryDecision,
+  CustomDomain,
+  DeployPreview,
   Deployment,
   KvNamespace,
+  Organization,
   Project,
+  ProjectMembership,
   RoutePointer,
   RouteSnapshotPublication,
   RuntimeNode,
   RuntimeNodeStatus,
   Secret,
+  ProjectUsageSummary,
+  UsageEvent,
+  User,
 } from "./contracts.ts";
 import { ControlPlaneError } from "./errors.ts";
 
 export interface ControlPlaneRepository {
+  createOrganization(organization: Organization): Organization;
+  getOrganization(id: string): Organization | undefined;
+  createUser(user: User): User;
+  getUser(id: string): User | undefined;
+  createProjectMembership(membership: ProjectMembership): ProjectMembership;
+  listProjectMemberships(projectId: string): ProjectMembership[];
+  createApiKey(apiKey: ApiKey, tokenHash: string): ApiKey;
+  getApiKeyByTokenHash(tokenHash: string): ApiKey | undefined;
+  listProjectApiKeys(projectId: string): ApiKey[];
+  updateApiKeyLastUsed(id: string, lastUsedAt: string): ApiKey;
+  createUsageEvent(event: UsageEvent): UsageEvent;
+  getProjectUsageSummary(projectId: string, from?: string, to?: string): ProjectUsageSummary;
+  createCustomDomain(domain: CustomDomain): CustomDomain;
+  getCustomDomain(id: string): CustomDomain | undefined;
+  getCustomDomainByHost(host: string): CustomDomain | undefined;
+  listProjectCustomDomains(projectId: string): CustomDomain[];
+  updateCustomDomain(domain: CustomDomain): CustomDomain;
+  createDeployPreview(preview: DeployPreview): DeployPreview;
+  getDeployPreview(id: string): DeployPreview | undefined;
+  listProjectDeployPreviews(projectId: string): DeployPreview[];
+  updateDeployPreview(preview: DeployPreview): DeployPreview;
   createProject(project: Project): Project;
   getProject(id: string): Project | undefined;
   getProjectUsage(projectId: string): ProjectResourceUsage;
@@ -34,6 +63,7 @@ export interface ControlPlaneRepository {
   getDeployment(id: string): Deployment | undefined;
   upsertRoute(route: RoutePointer): RoutePointer;
   getRoute(projectId: string, host: string, pathPrefix: string): RoutePointer | undefined;
+  deleteRoute(projectId: string, host: string, pathPrefix: string): void;
   listRoutes(): RoutePointer[];
   createRuntimeNode(node: RuntimeNode): RuntimeNode;
   getRuntimeNode(id: string): RuntimeNode | undefined;
@@ -81,11 +111,346 @@ class SqliteControlPlaneRepository implements ControlPlaneRepository {
     this.runMigrations();
   }
 
+  createOrganization(organization: Organization): Organization {
+    try {
+      this.db
+        .prepare("insert into organizations (id, name, created_at) values (?, ?, ?)")
+        .run(organization.id, organization.name, organization.createdAt);
+      return organization;
+    } catch (error) {
+      throw writeError("organization", organization.id, error);
+    }
+  }
+
+  getOrganization(id: string): Organization | undefined {
+    const row = this.db.prepare("select * from organizations where id = ?").get(id);
+    return row ? organizationFromRow(row) : undefined;
+  }
+
+  createUser(user: User): User {
+    try {
+      this.db
+        .prepare("insert into users (id, email, name, created_at) values (?, ?, ?, ?)")
+        .run(user.id, user.email, user.name ?? null, user.createdAt);
+      return user;
+    } catch (error) {
+      throw writeError("user", user.id, error);
+    }
+  }
+
+  getUser(id: string): User | undefined {
+    const row = this.db.prepare("select * from users where id = ?").get(id);
+    return row ? userFromRow(row) : undefined;
+  }
+
+  createProjectMembership(membership: ProjectMembership): ProjectMembership {
+    try {
+      this.db
+        .prepare(
+          `insert into project_memberships (
+            project_id,
+            user_id,
+            role,
+            created_at
+          ) values (?, ?, ?, ?)
+          on conflict(project_id, user_id) do update set role = excluded.role`,
+        )
+        .run(membership.projectId, membership.userId, membership.role, membership.createdAt);
+      const row = this.db
+        .prepare("select * from project_memberships where project_id = ? and user_id = ?")
+        .get(membership.projectId, membership.userId);
+      return membershipFromRow(row);
+    } catch (error) {
+      throw writeError("project membership", `${membership.projectId}/${membership.userId}`, error);
+    }
+  }
+
+  listProjectMemberships(projectId: string): ProjectMembership[] {
+    return this.db
+      .prepare("select * from project_memberships where project_id = ? order by user_id asc")
+      .all(projectId)
+      .map(membershipFromRow);
+  }
+
+  createApiKey(apiKey: ApiKey, tokenHash: string): ApiKey {
+    try {
+      this.db
+        .prepare(
+          `insert into api_keys (
+            id,
+            organization_id,
+            project_id,
+            name,
+            token_hash,
+            scopes_json,
+            created_at,
+            last_used_at,
+            revoked_at
+          ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          apiKey.id,
+          apiKey.organizationId ?? null,
+          apiKey.projectId ?? null,
+          apiKey.name,
+          tokenHash,
+          JSON.stringify(apiKey.scopes),
+          apiKey.createdAt,
+          apiKey.lastUsedAt ?? null,
+          apiKey.revokedAt ?? null,
+        );
+      return apiKey;
+    } catch (error) {
+      throw writeError("api key", apiKey.id, error);
+    }
+  }
+
+  getApiKeyByTokenHash(tokenHash: string): ApiKey | undefined {
+    const row = this.db.prepare("select * from api_keys where token_hash = ?").get(tokenHash);
+    return row ? apiKeyFromRow(row) : undefined;
+  }
+
+  listProjectApiKeys(projectId: string): ApiKey[] {
+    return this.db
+      .prepare("select * from api_keys where project_id = ? order by created_at desc, id desc")
+      .all(projectId)
+      .map(apiKeyFromRow);
+  }
+
+  updateApiKeyLastUsed(id: string, lastUsedAt: string): ApiKey {
+    const result = this.db
+      .prepare("update api_keys set last_used_at = ? where id = ?")
+      .run(lastUsedAt, id);
+    if (result.changes === 0) {
+      throw new ControlPlaneError("not_found", `api key ${id} was not found`);
+    }
+    const row = this.db.prepare("select * from api_keys where id = ?").get(id);
+    return apiKeyFromRow(row);
+  }
+
+  createUsageEvent(event: UsageEvent): UsageEvent {
+    try {
+      this.db
+        .prepare(
+          `insert into usage_events (
+            id,
+            organization_id,
+            project_id,
+            metric,
+            quantity,
+            dimensions_json,
+            recorded_at
+          ) values (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          event.id,
+          event.organizationId ?? null,
+          event.projectId,
+          event.metric,
+          event.quantity,
+          event.dimensions ? JSON.stringify(event.dimensions) : null,
+          event.recordedAt,
+        );
+      return event;
+    } catch (error) {
+      throw writeError("usage event", event.id, error);
+    }
+  }
+
+  getProjectUsageSummary(projectId: string, from?: string, to?: string): ProjectUsageSummary {
+    const params: string[] = [projectId];
+    const where = ["project_id = ?"];
+    if (from) {
+      where.push("recorded_at >= ?");
+      params.push(from);
+    }
+    if (to) {
+      where.push("recorded_at < ?");
+      params.push(to);
+    }
+    const row = this.db
+      .prepare(
+        `select
+          coalesce(sum(case when metric = 'invocation' then quantity else 0 end), 0) as invocations,
+          coalesce(sum(case when metric = 'cpu_ms' then quantity else 0 end), 0) as cpu_ms,
+          coalesce(sum(case when metric = 'wall_ms' then quantity else 0 end), 0) as wall_ms,
+          coalesce(sum(case when metric = 'memory_mb_ms' then quantity else 0 end), 0) as memory_mb_ms,
+          coalesce(sum(case when metric = 'egress_bytes' then quantity else 0 end), 0) as egress_bytes,
+          coalesce(sum(case when metric = 'storage_bytes' then quantity else 0 end), 0) as storage_bytes,
+          coalesce(sum(case when metric = 'sqlite_unit' then quantity else 0 end), 0) as sqlite_units
+        from usage_events
+        where ${where.join(" and ")}`,
+      )
+      .get(...params);
+    const project = this.getProject(projectId);
+    return usageSummaryFromRow(projectId, project?.organizationId, from, to, row);
+  }
+
+  createCustomDomain(domain: CustomDomain): CustomDomain {
+    try {
+      this.db
+        .prepare(
+          `insert into custom_domains (
+            id,
+            project_id,
+            host,
+            status,
+            verification_token,
+            verification_record_name,
+            verification_record_value,
+            tls_status,
+            tls_provider,
+            tls_request_id,
+            tls_error,
+            created_at,
+            updated_at,
+            verified_at,
+            tls_provisioned_at
+          ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          domain.id,
+          domain.projectId,
+          domain.host,
+          domain.status,
+          domain.verificationToken,
+          domain.verificationRecordName,
+          domain.verificationRecordValue,
+          domain.tlsStatus,
+          domain.tlsProvider ?? null,
+          domain.tlsRequestId ?? null,
+          domain.tlsError ?? null,
+          domain.createdAt,
+          domain.updatedAt,
+          domain.verifiedAt ?? null,
+          domain.tlsProvisionedAt ?? null,
+        );
+      return domain;
+    } catch (error) {
+      throw writeError("custom domain", domain.id, error);
+    }
+  }
+
+  getCustomDomain(id: string): CustomDomain | undefined {
+    const row = this.db.prepare("select * from custom_domains where id = ?").get(id);
+    return row ? customDomainFromRow(row) : undefined;
+  }
+
+  getCustomDomainByHost(host: string): CustomDomain | undefined {
+    const row = this.db.prepare("select * from custom_domains where host = ?").get(host);
+    return row ? customDomainFromRow(row) : undefined;
+  }
+
+  listProjectCustomDomains(projectId: string): CustomDomain[] {
+    return this.db
+      .prepare("select * from custom_domains where project_id = ? order by host asc, id asc")
+      .all(projectId)
+      .map(customDomainFromRow);
+  }
+
+  updateCustomDomain(domain: CustomDomain): CustomDomain {
+    const result = this.db
+      .prepare(
+        `update custom_domains set
+          status = ?,
+          tls_status = ?,
+          tls_provider = ?,
+          tls_request_id = ?,
+          tls_error = ?,
+          updated_at = ?,
+          verified_at = ?,
+          tls_provisioned_at = ?
+        where id = ?`,
+      )
+      .run(
+        domain.status,
+        domain.tlsStatus,
+        domain.tlsProvider ?? null,
+        domain.tlsRequestId ?? null,
+        domain.tlsError ?? null,
+        domain.updatedAt,
+        domain.verifiedAt ?? null,
+        domain.tlsProvisionedAt ?? null,
+        domain.id,
+      );
+    if (result.changes === 0) {
+      throw new ControlPlaneError("not_found", `custom domain ${domain.id} was not found`);
+    }
+    return this.getCustomDomain(domain.id) as CustomDomain;
+  }
+
+  createDeployPreview(preview: DeployPreview): DeployPreview {
+    try {
+      this.db
+        .prepare(
+          `insert into deploy_previews (
+            id,
+            project_id,
+            deployment_id,
+            host,
+            path_prefix,
+            url,
+            environment_json,
+            previous_route_json,
+            status,
+            created_at,
+            updated_at,
+            rolled_back_at
+          ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          preview.id,
+          preview.projectId,
+          preview.deploymentId,
+          preview.host,
+          preview.pathPrefix,
+          preview.url,
+          JSON.stringify(preview.environment),
+          preview.previousRoute ? JSON.stringify(preview.previousRoute) : null,
+          preview.status,
+          preview.createdAt,
+          preview.updatedAt,
+          preview.rolledBackAt ?? null,
+        );
+      return preview;
+    } catch (error) {
+      throw writeError("deploy preview", preview.id, error);
+    }
+  }
+
+  getDeployPreview(id: string): DeployPreview | undefined {
+    const row = this.db.prepare("select * from deploy_previews where id = ?").get(id);
+    return row ? deployPreviewFromRow(row) : undefined;
+  }
+
+  listProjectDeployPreviews(projectId: string): DeployPreview[] {
+    return this.db
+      .prepare("select * from deploy_previews where project_id = ? order by created_at desc, id desc")
+      .all(projectId)
+      .map(deployPreviewFromRow);
+  }
+
+  updateDeployPreview(preview: DeployPreview): DeployPreview {
+    const result = this.db
+      .prepare(
+        `update deploy_previews set
+          status = ?,
+          updated_at = ?,
+          rolled_back_at = ?
+        where id = ?`,
+      )
+      .run(preview.status, preview.updatedAt, preview.rolledBackAt ?? null, preview.id);
+    if (result.changes === 0) {
+      throw new ControlPlaneError("not_found", `deploy preview ${preview.id} was not found`);
+    }
+    return this.getDeployPreview(preview.id) as DeployPreview;
+  }
+
   createProject(project: Project): Project {
     try {
       this.db
-        .prepare("insert into projects (id, name, created_at) values (?, ?, ?)")
-        .run(project.id, project.name, project.createdAt);
+        .prepare("insert into projects (id, organization_id, name, created_at) values (?, ?, ?, ?)")
+        .run(project.id, project.organizationId ?? null, project.name, project.createdAt);
       return project;
     } catch (error) {
       throw writeError("project", project.id, error);
@@ -344,6 +709,12 @@ class SqliteControlPlaneRepository implements ControlPlaneRepository {
     return row ? routeFromRow(row) : undefined;
   }
 
+  deleteRoute(projectId: string, host: string, pathPrefix: string): void {
+    this.db
+      .prepare("delete from routes where project_id = ? and host = ? and path_prefix = ?")
+      .run(projectId, host, pathPrefix);
+  }
+
   listRoutes(): RoutePointer[] {
     const rows = this.db
       .prepare("select * from routes order by host asc, length(path_prefix) desc, path_prefix asc")
@@ -548,9 +919,98 @@ class SqliteControlPlaneRepository implements ControlPlaneRepository {
   }
 }
 
+function organizationFromRow(row: any): Organization {
+  return {
+    id: row.id,
+    name: row.name,
+    createdAt: row.created_at,
+  };
+}
+
+function userFromRow(row: any): User {
+  return {
+    id: row.id,
+    email: row.email,
+    ...(row.name ? { name: row.name } : {}),
+    createdAt: row.created_at,
+  };
+}
+
+function membershipFromRow(row: any): ProjectMembership {
+  return {
+    projectId: row.project_id,
+    userId: row.user_id,
+    role: row.role,
+    createdAt: row.created_at,
+  };
+}
+
+function apiKeyFromRow(row: any): ApiKey {
+  return {
+    id: row.id,
+    ...(row.organization_id ? { organizationId: row.organization_id } : {}),
+    ...(row.project_id ? { projectId: row.project_id } : {}),
+    name: row.name,
+    scopes: JSON.parse(row.scopes_json),
+    createdAt: row.created_at,
+    ...(row.last_used_at ? { lastUsedAt: row.last_used_at } : {}),
+    ...(row.revoked_at ? { revokedAt: row.revoked_at } : {}),
+  };
+}
+
+function usageEventFromRow(row: any): UsageEvent {
+  return {
+    id: row.id,
+    ...(row.organization_id ? { organizationId: row.organization_id } : {}),
+    projectId: row.project_id,
+    metric: row.metric,
+    quantity: Number(row.quantity),
+    ...(row.dimensions_json ? { dimensions: JSON.parse(row.dimensions_json) } : {}),
+    recordedAt: row.recorded_at,
+  };
+}
+
+function customDomainFromRow(row: any): CustomDomain {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    host: row.host,
+    status: row.status,
+    verificationToken: row.verification_token,
+    verificationRecordName: row.verification_record_name,
+    verificationRecordValue: row.verification_record_value,
+    tlsStatus: row.tls_status,
+    ...(row.tls_provider ? { tlsProvider: row.tls_provider } : {}),
+    ...(row.tls_request_id ? { tlsRequestId: row.tls_request_id } : {}),
+    ...(row.tls_error ? { tlsError: row.tls_error } : {}),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    ...(row.verified_at ? { verifiedAt: row.verified_at } : {}),
+    ...(row.tls_provisioned_at ? { tlsProvisionedAt: row.tls_provisioned_at } : {}),
+  };
+}
+
+function deployPreviewFromRow(row: any): DeployPreview {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    deploymentId: row.deployment_id,
+    host: row.host,
+    pathPrefix: row.path_prefix,
+    url: row.url,
+    environment: JSON.parse(row.environment_json),
+    ...(row.previous_route_json ? { previousRoute: JSON.parse(row.previous_route_json) } : {}),
+    status: row.status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    ...(row.rolled_back_at ? { rolledBackAt: row.rolled_back_at } : {}),
+  };
+}
+
 function projectFromRow(row: any): Project {
   return {
     id: row.id,
+    ...(row.organization_id ? { organizationId: row.organization_id } : {}),
     name: row.name,
     createdAt: row.created_at,
   };
@@ -693,6 +1153,30 @@ function usageFromRow(row: any): ProjectResourceUsage {
   };
 }
 
+function usageSummaryFromRow(
+  projectId: string,
+  organizationId: string | undefined,
+  from: string | undefined,
+  to: string | undefined,
+  row: any,
+): ProjectUsageSummary {
+  return {
+    projectId,
+    ...(organizationId ? { organizationId } : {}),
+    ...(from ? { from } : {}),
+    ...(to ? { to } : {}),
+    totals: {
+      invocations: Number(row?.invocations ?? 0),
+      cpuMs: Number(row?.cpu_ms ?? 0),
+      wallMs: Number(row?.wall_ms ?? 0),
+      memoryMbMs: Number(row?.memory_mb_ms ?? 0),
+      egressBytes: Number(row?.egress_bytes ?? 0),
+      storageBytes: Number(row?.storage_bytes ?? 0),
+      sqliteUnits: Number(row?.sqlite_units ?? 0),
+    },
+  };
+}
+
 function writeError(kind: string, id: string, error: unknown): ControlPlaneError {
   const message = error instanceof Error ? error.message : String(error);
   if (message.includes("UNIQUE constraint failed")) {
@@ -712,11 +1196,90 @@ create table if not exists schema_migrations (
   applied_at text not null
 );
 
-create table if not exists projects (
+create table if not exists organizations (
   id text primary key,
   name text not null unique,
   created_at text not null
 );
+
+create table if not exists users (
+  id text primary key,
+  email text not null unique,
+  name text,
+  created_at text not null
+);
+
+create table if not exists projects (
+  id text primary key,
+  organization_id text,
+  name text not null unique,
+  created_at text not null,
+  foreign key (organization_id) references organizations(id)
+);
+
+create table if not exists project_memberships (
+  project_id text not null,
+  user_id text not null,
+  role text not null,
+  created_at text not null,
+  primary key (project_id, user_id),
+  foreign key (project_id) references projects(id),
+  foreign key (user_id) references users(id)
+);
+
+create table if not exists api_keys (
+  id text primary key,
+  organization_id text,
+  project_id text,
+  name text not null,
+  token_hash text not null unique,
+  scopes_json text not null,
+  created_at text not null,
+  last_used_at text,
+  revoked_at text,
+  foreign key (organization_id) references organizations(id),
+  foreign key (project_id) references projects(id)
+);
+
+create table if not exists usage_events (
+  id text primary key,
+  organization_id text,
+  project_id text not null,
+  metric text not null,
+  quantity real not null,
+  dimensions_json text,
+  recorded_at text not null,
+  foreign key (organization_id) references organizations(id),
+  foreign key (project_id) references projects(id)
+);
+
+create index if not exists usage_events_project_time_idx
+  on usage_events (project_id, recorded_at);
+
+create index if not exists usage_events_org_time_idx
+  on usage_events (organization_id, recorded_at);
+
+create table if not exists custom_domains (
+  id text primary key,
+  project_id text not null,
+  host text not null unique,
+  status text not null,
+  verification_token text not null,
+  verification_record_name text not null,
+  verification_record_value text not null,
+  tls_status text not null,
+  tls_provider text,
+  tls_request_id text,
+  tls_error text,
+  created_at text not null,
+  updated_at text not null,
+  verified_at text,
+  tls_provisioned_at text,
+  foreign key (project_id) references projects(id)
+);
+
+create index if not exists custom_domains_project_idx
+  on custom_domains (project_id, host);
 
 create table if not exists artifacts (
   id text primary key,
@@ -779,6 +1342,26 @@ create table if not exists routes (
   foreign key (project_id) references projects(id),
   foreign key (deployment_id) references deployments(id)
 );
+
+create table if not exists deploy_previews (
+  id text primary key,
+  project_id text not null,
+  deployment_id text not null,
+  host text not null,
+  path_prefix text not null,
+  url text not null,
+  environment_json text not null,
+  previous_route_json text,
+  status text not null,
+  created_at text not null,
+  updated_at text not null,
+  rolled_back_at text,
+  foreign key (project_id) references projects(id),
+  foreign key (deployment_id) references deployments(id)
+);
+
+create index if not exists deploy_previews_project_idx
+  on deploy_previews (project_id, created_at desc, id desc);
 
 create table if not exists runtime_nodes (
   id text primary key,
@@ -981,6 +1564,128 @@ const migrations: SchemaMigration[] = [
           cooldown_until_ms integer,
           updated_at text not null
         )
+      `);
+    },
+  },
+  {
+    id: "202607010004_tenant_identity",
+    apply(db) {
+      db.exec(`
+        create table if not exists organizations (
+          id text primary key,
+          name text not null unique,
+          created_at text not null
+        );
+
+        create table if not exists users (
+          id text primary key,
+          email text not null unique,
+          name text,
+          created_at text not null
+        );
+
+        create table if not exists project_memberships (
+          project_id text not null,
+          user_id text not null,
+          role text not null,
+          created_at text not null,
+          primary key (project_id, user_id),
+          foreign key (project_id) references projects(id),
+          foreign key (user_id) references users(id)
+        );
+
+        create table if not exists api_keys (
+          id text primary key,
+          organization_id text,
+          project_id text,
+          name text not null,
+          token_hash text not null unique,
+          scopes_json text not null,
+          created_at text not null,
+          last_used_at text,
+          revoked_at text,
+          foreign key (organization_id) references organizations(id),
+          foreign key (project_id) references projects(id)
+        );
+      `);
+      ensureColumn(db, "projects", "organization_id", "text references organizations(id)");
+    },
+  },
+  {
+    id: "202607010005_usage_metering",
+    apply(db) {
+      db.exec(`
+        create table if not exists usage_events (
+          id text primary key,
+          organization_id text,
+          project_id text not null,
+          metric text not null,
+          quantity real not null,
+          dimensions_json text,
+          recorded_at text not null,
+          foreign key (organization_id) references organizations(id),
+          foreign key (project_id) references projects(id)
+        );
+
+        create index if not exists usage_events_project_time_idx
+          on usage_events (project_id, recorded_at);
+
+        create index if not exists usage_events_org_time_idx
+          on usage_events (organization_id, recorded_at);
+      `);
+    },
+  },
+  {
+    id: "202607010006_custom_domains",
+    apply(db) {
+      db.exec(`
+        create table if not exists custom_domains (
+          id text primary key,
+          project_id text not null,
+          host text not null unique,
+          status text not null,
+          verification_token text not null,
+          verification_record_name text not null,
+          verification_record_value text not null,
+          tls_status text not null,
+          tls_provider text,
+          tls_request_id text,
+          tls_error text,
+          created_at text not null,
+          updated_at text not null,
+          verified_at text,
+          tls_provisioned_at text,
+          foreign key (project_id) references projects(id)
+        );
+
+        create index if not exists custom_domains_project_idx
+          on custom_domains (project_id, host);
+      `);
+    },
+  },
+  {
+    id: "202607010007_deploy_previews",
+    apply(db) {
+      db.exec(`
+        create table if not exists deploy_previews (
+          id text primary key,
+          project_id text not null,
+          deployment_id text not null,
+          host text not null,
+          path_prefix text not null,
+          url text not null,
+          environment_json text not null,
+          previous_route_json text,
+          status text not null,
+          created_at text not null,
+          updated_at text not null,
+          rolled_back_at text,
+          foreign key (project_id) references projects(id),
+          foreign key (deployment_id) references deployments(id)
+        );
+
+        create index if not exists deploy_previews_project_idx
+          on deploy_previews (project_id, created_at desc, id desc);
       `);
     },
   },

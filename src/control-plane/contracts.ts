@@ -8,11 +8,109 @@ export const MVP_RUNTIME_BACKEND = "wasmtime";
 
 export type RuntimeBackend = typeof MVP_RUNTIME_BACKEND;
 export type WasiVersion = typeof MVP_WASI_VERSION;
+export type ApiScope = "*" | "read" | "write" | "publish";
+export type ProjectRole = "owner" | "developer" | "viewer";
+export const USAGE_METRIC_NAMES = [
+  "invocation",
+  "cpu_ms",
+  "wall_ms",
+  "memory_mb_ms",
+  "egress_bytes",
+  "storage_bytes",
+  "sqlite_unit",
+] as const;
+export type UsageMetricName = (typeof USAGE_METRIC_NAMES)[number];
 
-export interface Project {
+export interface Organization {
   id: string;
   name: string;
   createdAt: string;
+}
+
+export interface User {
+  id: string;
+  email: string;
+  name?: string;
+  createdAt: string;
+}
+
+export interface Project {
+  id: string;
+  organizationId?: string;
+  name: string;
+  createdAt: string;
+}
+
+export interface ProjectMembership {
+  projectId: string;
+  userId: string;
+  role: ProjectRole;
+  createdAt: string;
+}
+
+export interface ApiKey {
+  id: string;
+  organizationId?: string;
+  projectId?: string;
+  name: string;
+  scopes: ApiScope[];
+  createdAt: string;
+  lastUsedAt?: string;
+  revokedAt?: string;
+}
+
+export type UsageDimensions = Record<string, string | number | boolean>;
+
+export interface UsageEvent {
+  id: string;
+  organizationId?: string;
+  projectId: string;
+  metric: UsageMetricName;
+  quantity: number;
+  dimensions?: UsageDimensions;
+  recordedAt: string;
+}
+
+export interface ProjectUsageSummary {
+  projectId: string;
+  organizationId?: string;
+  from?: string;
+  to?: string;
+  totals: {
+    invocations: number;
+    cpuMs: number;
+    wallMs: number;
+    memoryMbMs: number;
+    egressBytes: number;
+    storageBytes: number;
+    sqliteUnits: number;
+  };
+}
+
+export type CustomDomainStatus =
+  | "pending_verification"
+  | "verified"
+  | "tls_pending"
+  | "active"
+  | "tls_failed";
+export type CustomDomainTlsStatus = "none" | "pending" | "provisioned" | "failed";
+
+export interface CustomDomain {
+  id: string;
+  projectId: string;
+  host: string;
+  status: CustomDomainStatus;
+  verificationToken: string;
+  verificationRecordName: string;
+  verificationRecordValue: string;
+  tlsStatus: CustomDomainTlsStatus;
+  tlsProvider?: string;
+  tlsRequestId?: string;
+  tlsError?: string;
+  createdAt: string;
+  updatedAt: string;
+  verifiedAt?: string;
+  tlsProvisionedAt?: string;
 }
 
 export interface Artifact {
@@ -120,6 +218,31 @@ export interface RoutePointer {
 export interface RouteTarget {
   deploymentId: string;
   weight: number;
+}
+
+export type DeployPreviewStatus = "active" | "rolled_back";
+export type DeployPreviewEnvironment = Record<string, string>;
+
+export interface DeployPreviewPreviousRoute {
+  id: string;
+  deploymentId: string;
+  targets: RouteTarget[];
+  updatedAt: string;
+}
+
+export interface DeployPreview {
+  id: string;
+  projectId: string;
+  deploymentId: string;
+  host: string;
+  pathPrefix: string;
+  url: string;
+  environment: DeployPreviewEnvironment;
+  status: DeployPreviewStatus;
+  createdAt: string;
+  updatedAt: string;
+  previousRoute?: DeployPreviewPreviousRoute;
+  rolledBackAt?: string;
 }
 
 export type RuntimeNodeStatus = "active" | "draining" | "offline";
@@ -269,6 +392,127 @@ export function normalizeProjectName(value: unknown): string {
     throw new ControlPlaneError("validation", "project name must be between 1 and 80 characters");
   }
   return name;
+}
+
+export function normalizeOrganizationName(value: unknown): string {
+  if (typeof value !== "string") {
+    throw new ControlPlaneError("validation", "organization name must be a string");
+  }
+  const name = value.trim();
+  if (name.length < 1 || name.length > 120) {
+    throw new ControlPlaneError("validation", "organization name must be between 1 and 120 characters");
+  }
+  return name;
+}
+
+export function normalizeUserEmail(value: unknown): string {
+  if (typeof value !== "string") {
+    throw new ControlPlaneError("validation", "user email must be a string");
+  }
+  const email = value.trim().toLowerCase();
+  if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    throw new ControlPlaneError("validation", "user email must be an email address");
+  }
+  return email;
+}
+
+export function normalizeUserName(value: unknown): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const name = nonEmptyString(value, "user name");
+  if (name.length > 120 || /[\u0000-\u001f\u007f]/.test(name)) {
+    throw new ControlPlaneError("validation", "user name must be a printable string up to 120 characters");
+  }
+  return name;
+}
+
+export function normalizeProjectRole(value: unknown): ProjectRole {
+  if (value === "owner" || value === "developer" || value === "viewer") {
+    return value;
+  }
+  throw new ControlPlaneError("validation", "project membership role must be owner, developer, or viewer");
+}
+
+export function normalizeApiKeyName(value: unknown): string {
+  const name = nonEmptyString(value, "api key name");
+  if (name.length > 120 || /[\u0000-\u001f\u007f]/.test(name)) {
+    throw new ControlPlaneError("validation", "api key name must be between 1 and 120 printable characters");
+  }
+  return name;
+}
+
+export function normalizeApiScopes(value: unknown): ApiScope[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new ControlPlaneError("validation", "api key scopes must be a non-empty array");
+  }
+  const scopes: ApiScope[] = [];
+  for (const item of value) {
+    if (item !== "*" && item !== "read" && item !== "write" && item !== "publish") {
+      throw new ControlPlaneError("validation", "api key scopes must be read, write, publish, or *");
+    }
+    if (!scopes.includes(item)) {
+      scopes.push(item);
+    }
+  }
+  return scopes;
+}
+
+export function normalizeUsageMetricName(value: unknown): UsageMetricName {
+  if (USAGE_METRIC_NAMES.includes(value as UsageMetricName)) {
+    return value as UsageMetricName;
+  }
+  throw new ControlPlaneError(
+    "validation",
+    `usage metric must be one of ${USAGE_METRIC_NAMES.join(", ")}`,
+  );
+}
+
+export function normalizeUsageQuantity(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    throw new ControlPlaneError("validation", "usage quantity must be a positive finite number");
+  }
+  return value;
+}
+
+export function normalizeUsageDimensions(value: unknown): UsageDimensions | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const record = objectRecord(value, "usage dimensions");
+  const dimensions: UsageDimensions = {};
+  for (const [key, dimensionValue] of Object.entries(record).sort(([left], [right]) => left.localeCompare(right))) {
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9_.:-]*$/.test(key)) {
+      throw new ControlPlaneError("validation", "usage dimension keys must be dimension ids");
+    }
+    if (
+      typeof dimensionValue !== "string"
+      && typeof dimensionValue !== "number"
+      && typeof dimensionValue !== "boolean"
+    ) {
+      throw new ControlPlaneError("validation", `usage dimension ${key} must be a scalar value`);
+    }
+    if (typeof dimensionValue === "number" && !Number.isFinite(dimensionValue)) {
+      throw new ControlPlaneError("validation", `usage dimension ${key} must be finite`);
+    }
+    dimensions[key] = dimensionValue;
+  }
+  return dimensions;
+}
+
+export function normalizeUsageTimestamp(value: unknown, field: string): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "string") {
+    throw new ControlPlaneError("validation", `${field} must be an ISO timestamp`);
+  }
+  const timestamp = value.trim();
+  const parsed = Date.parse(timestamp);
+  if (!Number.isFinite(parsed)) {
+    throw new ControlPlaneError("validation", `${field} must be an ISO timestamp`);
+  }
+  return new Date(parsed).toISOString();
 }
 
 export function normalizeDigest(value: unknown): string {

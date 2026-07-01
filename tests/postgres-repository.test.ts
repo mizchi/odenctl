@@ -24,7 +24,20 @@ test(
     });
 
     try {
-      const project = await control.createProject({ name: `pg-${suffix}` });
+      const organization = await control.createOrganization({
+        id: `org_${suffix}`,
+        name: `pg-org-${suffix}`,
+      });
+      const project = await control.createProject({
+        name: `pg-${suffix}`,
+        organizationId: organization.id,
+      });
+      const key = await control.createApiKey({
+        id: `key_${suffix}`,
+        projectId: project.id,
+        name: "pg key",
+        scopes: ["read", "write"],
+      });
       const artifact = await control.createArtifact({
         projectId: project.id,
         digest: digest(`pg-${suffix}`),
@@ -61,9 +74,56 @@ test(
         pathPrefix: "/",
         deploymentId: deployment.id,
       });
+      const preview = await control.createDeployPreview({
+        id: `prv_${suffix}`,
+        projectId: project.id,
+        deploymentId: deployment.id,
+        host: `${suffix}.preview.example.dev`,
+        environment: { FEATURE_FLAG: "on" },
+      });
+      const customDomain = await control.createCustomDomain({
+        id: `dom_${suffix}`,
+        projectId: project.id,
+        host: `${suffix}.custom.example.dev`,
+      });
+      await control.verifyCustomDomainOwnership({
+        id: customDomain.id,
+        txtRecords: [customDomain.verificationRecordValue],
+      });
+      await control.requestCustomDomainTlsProvisioning({
+        id: customDomain.id,
+        provider: "test",
+        requestId: `cert_${suffix}`,
+      });
+      await control.completeCustomDomainTlsProvisioning({
+        id: customDomain.id,
+        ok: true,
+        provider: "test",
+        requestId: `cert_${suffix}`,
+      });
+      await control.recordUsageEvent({
+        id: `use_${suffix}`,
+        projectId: project.id,
+        metric: "invocation",
+        quantity: 1,
+      });
 
       const snapshot = await control.createRouteSnapshot();
       assert.equal(snapshot.routes.some((route) => route.deploymentId === deployment.id), true);
+      assert.equal((await control.authenticateApiToken({ token: key.token }))?.apiKeyId, key.apiKey.id);
+      assert.equal(
+        (await control.getProjectUsageSummary({ projectId: project.id })).totals.invocations,
+        1,
+      );
+      assert.equal(
+        (await control.listProjectCustomDomains({ projectId: project.id }))[0]?.status,
+        "active",
+      );
+      assert.equal(
+        (await control.listProjectDeployPreviews({ projectId: project.id }))[0]?.id,
+        preview.id,
+      );
+      assert.equal((await control.rollbackDeployPreview({ id: preview.id })).status, "rolled_back");
     } finally {
       await repository.close();
     }

@@ -1,11 +1,21 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type {
+  ApiKey,
+  ApiScope,
   Artifact,
   CanaryDecision,
   CapabilityPolicy,
+  CustomDomain,
+  DeployPreview,
+  DeployPreviewEnvironment,
+  DeployPreviewPreviousRoute,
   Deployment,
   KvNamespace,
+  Organization,
   Project,
+  ProjectMembership,
+  ProjectRole,
+  ProjectUsageSummary,
   RoutePointer,
   RouteSnapshot,
   RouteSnapshotPublication,
@@ -17,9 +27,15 @@ import type {
   RuntimeLimits,
   RuntimeSpec,
   Secret,
+  UsageDimensions,
+  UsageEvent,
+  UsageMetricName,
+  User,
 } from "./contracts.ts";
 import {
   normalizeCapabilities,
+  normalizeApiKeyName,
+  normalizeApiScopes,
   normalizeArtifactProvenance,
   normalizeArtifactSignature,
   normalizeDigest,
@@ -27,7 +43,9 @@ import {
   normalizeKvNamespaceName,
   normalizeLimits,
   normalizeLocation,
+  normalizeOrganizationName,
   normalizePathPrefix,
+  normalizeProjectRole,
   normalizeProjectName,
   normalizeRuntime,
   normalizeRouteTargets,
@@ -42,15 +60,27 @@ import {
   normalizeSecretName,
   normalizeSecretValue,
   normalizeSizeBytes,
+  normalizeUsageDimensions,
+  normalizeUsageMetricName,
+  normalizeUsageQuantity,
+  normalizeUsageTimestamp,
+  normalizeUserEmail,
+  normalizeUserName,
   normalizeWorld,
   optionalId,
   workerWorldVersion,
 } from "./contracts.ts";
 import { ControlPlaneError } from "./errors.ts";
+import type { ApiToken } from "./authz.ts";
 import type { SecretCipher } from "./secret-encryption.ts";
 import type { ProjectResourceUsage } from "./repository.ts";
 import { enforceProjectQuota, type ProjectQuotaResource, type ProjectQuotas } from "./quotas.ts";
 import type { ArtifactSignatureVerifier } from "./artifact-signing.ts";
+import {
+  enforceArtifactAdmissionPolicy,
+  enforceDeploymentAdmissionPolicy,
+  type ControlPlaneAdmissionPolicy,
+} from "./admission.ts";
 import {
   analyzeCanaryEvents,
   type CanaryAnalysisThresholds,
@@ -58,6 +88,27 @@ import {
 } from "./canary-analysis.ts";
 
 export interface AsyncControlPlaneRepository {
+  createOrganization(organization: Organization): Promise<Organization>;
+  getOrganization(id: string): Promise<Organization | undefined>;
+  createUser(user: User): Promise<User>;
+  getUser(id: string): Promise<User | undefined>;
+  createProjectMembership(membership: ProjectMembership): Promise<ProjectMembership>;
+  listProjectMemberships(projectId: string): Promise<ProjectMembership[]>;
+  createApiKey(apiKey: ApiKey, tokenHash: string): Promise<ApiKey>;
+  getApiKeyByTokenHash(tokenHash: string): Promise<ApiKey | undefined>;
+  listProjectApiKeys(projectId: string): Promise<ApiKey[]>;
+  updateApiKeyLastUsed(id: string, lastUsedAt: string): Promise<ApiKey>;
+  createUsageEvent(event: UsageEvent): Promise<UsageEvent>;
+  getProjectUsageSummary(projectId: string, from?: string, to?: string): Promise<ProjectUsageSummary>;
+  createCustomDomain(domain: CustomDomain): Promise<CustomDomain>;
+  getCustomDomain(id: string): Promise<CustomDomain | undefined>;
+  getCustomDomainByHost(host: string): Promise<CustomDomain | undefined>;
+  listProjectCustomDomains(projectId: string): Promise<CustomDomain[]>;
+  updateCustomDomain(domain: CustomDomain): Promise<CustomDomain>;
+  createDeployPreview(preview: DeployPreview): Promise<DeployPreview>;
+  getDeployPreview(id: string): Promise<DeployPreview | undefined>;
+  listProjectDeployPreviews(projectId: string): Promise<DeployPreview[]>;
+  updateDeployPreview(preview: DeployPreview): Promise<DeployPreview>;
   createProject(project: Project): Promise<Project>;
   getProject(id: string): Promise<Project | undefined>;
   getProjectUsage(projectId: string): Promise<ProjectResourceUsage>;
@@ -78,6 +129,7 @@ export interface AsyncControlPlaneRepository {
   getDeployment(id: string): Promise<Deployment | undefined>;
   upsertRoute(route: RoutePointer): Promise<RoutePointer>;
   getRoute(projectId: string, host: string, pathPrefix: string): Promise<RoutePointer | undefined>;
+  deleteRoute(projectId: string, host: string, pathPrefix: string): Promise<void>;
   listRoutes(): Promise<RoutePointer[]>;
   createRuntimeNode(node: RuntimeNode): Promise<RuntimeNode>;
   getRuntimeNode(id: string): Promise<RuntimeNode | undefined>;
@@ -101,11 +153,116 @@ export interface AsyncControlPlaneOptions {
   secretCipher?: SecretCipher;
   projectQuotas?: ProjectQuotas;
   artifactSignatureVerifier?: ArtifactSignatureVerifier;
+  admissionPolicy?: ControlPlaneAdmissionPolicy;
 }
 
 export interface CreateProjectInput {
   id?: string;
+  organizationId?: string;
   name: string;
+}
+
+export interface CreateOrganizationInput {
+  id?: string;
+  name: string;
+}
+
+export interface CreateUserInput {
+  id?: string;
+  email: string;
+  name?: string;
+}
+
+export interface AddProjectMembershipInput {
+  projectId: string;
+  userId: string;
+  role: ProjectRole;
+}
+
+export interface ListProjectMembershipsInput {
+  projectId: string;
+}
+
+export interface CreateApiKeyInput {
+  id?: string;
+  organizationId?: string;
+  projectId?: string;
+  name: string;
+  scopes: ApiScope[];
+}
+
+export interface CreateApiKeyOutput {
+  apiKey: ApiKey;
+  token: string;
+}
+
+export interface AuthenticateApiTokenInput {
+  token: string;
+}
+
+export interface ListProjectApiKeysInput {
+  projectId: string;
+}
+
+export interface RecordUsageEventInput {
+  id?: string;
+  projectId: string;
+  metric: UsageMetricName;
+  quantity: number;
+  dimensions?: UsageDimensions;
+  recordedAt?: string;
+}
+
+export interface GetProjectUsageSummaryInput {
+  projectId: string;
+  from?: string;
+  to?: string;
+}
+
+export interface CreateCustomDomainInput {
+  id?: string;
+  projectId: string;
+  host: string;
+}
+
+export interface ListProjectCustomDomainsInput {
+  projectId: string;
+}
+
+export interface VerifyCustomDomainOwnershipInput {
+  id: string;
+  txtRecords: unknown;
+}
+
+export interface RequestCustomDomainTlsProvisioningInput {
+  id: string;
+  provider?: string;
+  requestId?: string;
+}
+
+export interface CompleteCustomDomainTlsProvisioningInput {
+  id: string;
+  ok: boolean;
+  provider?: string;
+  requestId?: string;
+  error?: string;
+}
+
+export interface CreateDeployPreviewInput {
+  id?: string;
+  projectId: string;
+  deploymentId: string;
+  host?: string;
+  pathPrefix?: string;
+  environment?: unknown;
+}
+
+export interface ListProjectDeployPreviewsInput {
+  projectId: string;
+}
+
+export interface RollbackDeployPreviewInput {
+  id: string;
 }
 
 export interface CreateArtifactInput {
@@ -268,14 +425,290 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
   const secretCipher = options.secretCipher;
   const projectQuotas = options.projectQuotas;
   const artifactSignatureVerifier = options.artifactSignatureVerifier;
+  const admissionPolicy = options.admissionPolicy;
+
+  async function createOrganization(input: CreateOrganizationInput): Promise<Organization> {
+    const organization: Organization = {
+      id: optionalId(input.id, "organization id") ?? idGenerator("org"),
+      name: normalizeOrganizationName(input.name),
+      createdAt: now(),
+    };
+    return repository.createOrganization(organization);
+  }
+
+  async function createUser(input: CreateUserInput): Promise<User> {
+    const user: User = {
+      id: optionalId(input.id, "user id") ?? idGenerator("usr"),
+      email: normalizeUserEmail(input.email),
+      ...(input.name === undefined ? {} : { name: normalizeUserName(input.name) }),
+      createdAt: now(),
+    };
+    return repository.createUser(user);
+  }
 
   async function createProject(input: CreateProjectInput): Promise<Project> {
+    if (input.organizationId) {
+      await requireOrganization(repository, input.organizationId);
+    }
     const project: Project = {
       id: optionalId(input.id, "project id") ?? idGenerator("prj"),
+      ...(input.organizationId ? { organizationId: input.organizationId } : {}),
       name: normalizeProjectName(input.name),
       createdAt: now(),
     };
     return repository.createProject(project);
+  }
+
+  async function addProjectMembership(
+    input: AddProjectMembershipInput,
+  ): Promise<ProjectMembership> {
+    await requireProject(repository, input.projectId);
+    await requireUser(repository, input.userId);
+    return repository.createProjectMembership({
+      projectId: input.projectId,
+      userId: input.userId,
+      role: normalizeProjectRole(input.role),
+      createdAt: now(),
+    });
+  }
+
+  async function listProjectMemberships(
+    input: ListProjectMembershipsInput,
+  ): Promise<ProjectMembership[]> {
+    await requireProject(repository, input.projectId);
+    return repository.listProjectMemberships(input.projectId);
+  }
+
+  async function createApiKey(input: CreateApiKeyInput): Promise<CreateApiKeyOutput> {
+    const project = input.projectId ? await requireProject(repository, input.projectId) : undefined;
+    const organizationId = input.organizationId ?? project?.organizationId;
+    if (organizationId) {
+      await requireOrganization(repository, organizationId);
+    }
+    if (!organizationId && !project) {
+      throw new ControlPlaneError("validation", "api key requires organizationId or projectId");
+    }
+    const token = `wmp_${randomBytes(16).toString("hex")}`;
+    const apiKey: ApiKey = {
+      id: optionalId(input.id, "api key id") ?? idGenerator("key"),
+      ...(organizationId ? { organizationId } : {}),
+      ...(project ? { projectId: project.id } : {}),
+      name: normalizeApiKeyName(input.name),
+      scopes: normalizeApiScopes(input.scopes),
+      createdAt: now(),
+    };
+    return {
+      apiKey: await repository.createApiKey(apiKey, hashApiToken(token)),
+      token,
+    };
+  }
+
+  async function listProjectApiKeys(input: ListProjectApiKeysInput): Promise<ApiKey[]> {
+    await requireProject(repository, input.projectId);
+    return repository.listProjectApiKeys(input.projectId);
+  }
+
+  async function authenticateApiToken(
+    input: AuthenticateApiTokenInput,
+  ): Promise<ApiToken | undefined> {
+    const token = typeof input.token === "string" ? input.token.trim() : "";
+    if (token.length === 0) {
+      return undefined;
+    }
+    const apiKey = await repository.getApiKeyByTokenHash(hashApiToken(token));
+    if (!apiKey || apiKey.revokedAt) {
+      return undefined;
+    }
+    const used = await repository.updateApiKeyLastUsed(apiKey.id, now());
+    return {
+      token,
+      scopes: used.scopes,
+      principal: `api-key:${used.id}`,
+      apiKeyId: used.id,
+      organizationId: used.organizationId,
+      projectId: used.projectId,
+    };
+  }
+
+  async function recordUsageEvent(input: RecordUsageEventInput): Promise<UsageEvent> {
+    const project = await requireProject(repository, input.projectId);
+    const dimensions = normalizeUsageDimensions(input.dimensions);
+    const event: UsageEvent = {
+      id: optionalId(input.id, "usage event id") ?? idGenerator("use"),
+      ...(project.organizationId ? { organizationId: project.organizationId } : {}),
+      projectId: project.id,
+      metric: normalizeUsageMetricName(input.metric),
+      quantity: normalizeUsageQuantity(input.quantity),
+      ...(dimensions ? { dimensions } : {}),
+      recordedAt: normalizeUsageTimestamp(input.recordedAt, "usage recordedAt") ?? now(),
+    };
+    return repository.createUsageEvent(event);
+  }
+
+  async function getProjectUsageSummary(
+    input: GetProjectUsageSummaryInput,
+  ): Promise<ProjectUsageSummary> {
+    await requireProject(repository, input.projectId);
+    const from = normalizeUsageTimestamp(input.from, "usage from");
+    const to = normalizeUsageTimestamp(input.to, "usage to");
+    if (from && to && Date.parse(from) >= Date.parse(to)) {
+      throw new ControlPlaneError("validation", "usage from must be before usage to");
+    }
+    return repository.getProjectUsageSummary(input.projectId, from, to);
+  }
+
+  async function createCustomDomain(input: CreateCustomDomainInput): Promise<CustomDomain> {
+    await requireProject(repository, input.projectId);
+    const host = normalizeHost(input.host);
+    const token = `wmpdv_${randomBytes(16).toString("hex")}`;
+    const domain: CustomDomain = {
+      id: optionalId(input.id, "custom domain id") ?? idGenerator("dom"),
+      projectId: input.projectId,
+      host,
+      status: "pending_verification",
+      verificationToken: token,
+      verificationRecordName: customDomainVerificationRecordName(host),
+      verificationRecordValue: customDomainVerificationRecordValue(token),
+      tlsStatus: "none",
+      createdAt: now(),
+      updatedAt: now(),
+    };
+    return repository.createCustomDomain(domain);
+  }
+
+  async function listProjectCustomDomains(
+    input: ListProjectCustomDomainsInput,
+  ): Promise<CustomDomain[]> {
+    await requireProject(repository, input.projectId);
+    return repository.listProjectCustomDomains(input.projectId);
+  }
+
+  async function verifyCustomDomainOwnership(
+    input: VerifyCustomDomainOwnershipInput,
+  ): Promise<CustomDomain> {
+    const domain = await requireCustomDomain(repository, input.id);
+    const records = txtRecordValues(input.txtRecords);
+    if (!records.includes(domain.verificationRecordValue)) {
+      throw new ControlPlaneError(
+        "validation",
+        `custom domain ${domain.host} ownership TXT record was not found`,
+      );
+    }
+    return repository.updateCustomDomain({
+      ...domain,
+      status: "verified",
+      verifiedAt: now(),
+      updatedAt: now(),
+    });
+  }
+
+  async function requestCustomDomainTlsProvisioning(
+    input: RequestCustomDomainTlsProvisioningInput,
+  ): Promise<CustomDomain> {
+    const domain = await requireCustomDomain(repository, input.id);
+    if (domain.status !== "verified" && domain.status !== "tls_failed" && domain.status !== "active") {
+      throw new ControlPlaneError("validation", `custom domain ${domain.host} is not verified`);
+    }
+    return repository.updateCustomDomain({
+      ...domain,
+      status: "tls_pending",
+      tlsStatus: "pending",
+      ...(input.provider ? { tlsProvider: normalizeProvider(input.provider, "tls provider") } : {}),
+      ...(input.requestId ? { tlsRequestId: normalizeProvider(input.requestId, "tls requestId") } : {}),
+      tlsError: undefined,
+      updatedAt: now(),
+    });
+  }
+
+  async function completeCustomDomainTlsProvisioning(
+    input: CompleteCustomDomainTlsProvisioningInput,
+  ): Promise<CustomDomain> {
+    const domain = await requireCustomDomain(repository, input.id);
+    if (typeof input.ok !== "boolean") {
+      throw new ControlPlaneError("validation", "custom domain tls completion ok must be a boolean");
+    }
+    return repository.updateCustomDomain({
+      ...domain,
+      status: input.ok ? "active" : "tls_failed",
+      tlsStatus: input.ok ? "provisioned" : "failed",
+      ...(input.provider ? { tlsProvider: normalizeProvider(input.provider, "tls provider") } : {}),
+      ...(input.requestId ? { tlsRequestId: normalizeProvider(input.requestId, "tls requestId") } : {}),
+      tlsError: input.ok ? undefined : optionalNonEmpty(input.error, "tls error"),
+      updatedAt: now(),
+      ...(input.ok ? { tlsProvisionedAt: now() } : {}),
+    });
+  }
+
+  async function createDeployPreview(input: CreateDeployPreviewInput): Promise<DeployPreview> {
+    await requireProject(repository, input.projectId);
+    const deployment = await requireDeployment(repository, input.deploymentId);
+    if (deployment.projectId !== input.projectId) {
+      throw new ControlPlaneError("validation", "deploy preview deployment must belong to the same project");
+    }
+    const host = normalizeHost(input.host ?? defaultDeployPreviewHost(input.projectId, input.deploymentId));
+    const pathPrefix = normalizePathPrefix(input.pathPrefix ?? "/");
+    const environment = normalizeDeployPreviewEnvironment(input.environment);
+    await enforceRouteCustomDomain(repository, input.projectId, host);
+    const existingRoute = await repository.getRoute(input.projectId, host, pathPrefix);
+    if (!existingRoute) {
+      await enforceQuota(input.projectId, "route");
+    }
+    const preview: DeployPreview = {
+      id: optionalId(input.id, "deploy preview id") ?? idGenerator("prv"),
+      projectId: input.projectId,
+      deploymentId: deployment.id,
+      host,
+      pathPrefix,
+      url: deployPreviewUrl(host, pathPrefix),
+      environment,
+      status: "active",
+      createdAt: now(),
+      updatedAt: now(),
+      ...(existingRoute ? { previousRoute: deployPreviewPreviousRoute(existingRoute) } : {}),
+    };
+    await repository.upsertRoute({
+      id: existingRoute?.id ?? idGenerator("rte"),
+      projectId: input.projectId,
+      host,
+      pathPrefix,
+      deploymentId: deployment.id,
+      targets: [{ deploymentId: deployment.id, weight: 100 }],
+      updatedAt: now(),
+    });
+    return repository.createDeployPreview(preview);
+  }
+
+  async function listProjectDeployPreviews(
+    input: ListProjectDeployPreviewsInput,
+  ): Promise<DeployPreview[]> {
+    await requireProject(repository, input.projectId);
+    return repository.listProjectDeployPreviews(input.projectId);
+  }
+
+  async function rollbackDeployPreview(input: RollbackDeployPreviewInput): Promise<DeployPreview> {
+    const preview = await requireDeployPreview(repository, input.id);
+    if (preview.status === "rolled_back") {
+      return preview;
+    }
+    if (preview.previousRoute) {
+      await repository.upsertRoute({
+        id: preview.previousRoute.id,
+        projectId: preview.projectId,
+        host: preview.host,
+        pathPrefix: preview.pathPrefix,
+        deploymentId: preview.previousRoute.deploymentId,
+        targets: preview.previousRoute.targets,
+        updatedAt: now(),
+      });
+    } else {
+      await repository.deleteRoute(preview.projectId, preview.host, preview.pathPrefix);
+    }
+    return repository.updateDeployPreview({
+      ...preview,
+      status: "rolled_back",
+      updatedAt: now(),
+      rolledBackAt: now(),
+    });
   }
 
   async function createArtifact(input: CreateArtifactInput): Promise<Artifact> {
@@ -291,6 +724,7 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
       provenance: normalizeArtifactProvenance(input.provenance),
       createdAt: now(),
     };
+    enforceArtifactAdmissionPolicy(admissionPolicy, artifact);
     return repository.createArtifact(artifact);
   }
 
@@ -374,19 +808,28 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
     if (artifact.projectId !== input.projectId) {
       throw new ControlPlaneError("validation", "deployment artifact must belong to the same project");
     }
-    artifactSignatureVerifier?.verify(artifact);
     const capabilities = normalizeCapabilities(input.capabilities);
+    const world = normalizeWorld(input.world);
+    const worldVersion = workerWorldVersion(world);
+    const runtime = normalizeRuntime(input.runtime);
+    artifactSignatureVerifier?.verify(artifact);
+    enforceDeploymentAdmissionPolicy(admissionPolicy, {
+      artifact,
+      world,
+      worldVersion,
+      runtime,
+      capabilities,
+    });
     await requireDeploymentKvNamespaces(repository, input.projectId, capabilities);
     await requireDeploymentSecrets(repository, input.projectId, capabilities);
 
-    const world = normalizeWorld(input.world);
     const deployment: Deployment = {
       id: optionalId(input.id, "deployment id") ?? idGenerator("dep"),
       projectId: input.projectId,
       artifactId: input.artifactId,
       world,
-      worldVersion: workerWorldVersion(world),
-      runtime: normalizeRuntime(input.runtime),
+      worldVersion,
+      runtime,
       limits: normalizeLimits(input.limits),
       capabilities,
       createdAt: now(),
@@ -406,6 +849,7 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
 
     const host = normalizeHost(input.host);
     const pathPrefix = normalizePathPrefix(input.pathPrefix);
+    await enforceRouteCustomDomain(repository, input.projectId, host);
     if (!(await repository.getRoute(input.projectId, host, pathPrefix))) {
       await enforceQuota(input.projectId, "route");
     }
@@ -621,7 +1065,24 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
   }
 
   return {
+    createOrganization,
+    createUser,
     createProject,
+    addProjectMembership,
+    listProjectMemberships,
+    createApiKey,
+    listProjectApiKeys,
+    authenticateApiToken,
+    recordUsageEvent,
+    getProjectUsageSummary,
+    createCustomDomain,
+    listProjectCustomDomains,
+    verifyCustomDomainOwnership,
+    requestCustomDomainTlsProvisioning,
+    completeCustomDomainTlsProvisioning,
+    createDeployPreview,
+    listProjectDeployPreviews,
+    rollbackDeployPreview,
     getProjectUsage,
     createArtifact,
     getProjectArtifactByDigest,
@@ -728,12 +1189,70 @@ function runtimeNodeObservedAtMs(node: RuntimeNode): number {
   return Date.parse(node.lastSeenAt ?? node.registeredAt);
 }
 
+async function requireOrganization(
+  repository: AsyncControlPlaneRepository,
+  id: string,
+): Promise<Organization> {
+  const organization = await repository.getOrganization(id);
+  if (!organization) {
+    throw new ControlPlaneError("not_found", `organization ${id} was not found`);
+  }
+  return organization;
+}
+
+async function requireUser(repository: AsyncControlPlaneRepository, id: string): Promise<User> {
+  const user = await repository.getUser(id);
+  if (!user) {
+    throw new ControlPlaneError("not_found", `user ${id} was not found`);
+  }
+  return user;
+}
+
 async function requireProject(repository: AsyncControlPlaneRepository, id: string): Promise<Project> {
   const project = await repository.getProject(id);
   if (!project) {
     throw new ControlPlaneError("not_found", `project ${id} was not found`);
   }
   return project;
+}
+
+async function requireCustomDomain(
+  repository: AsyncControlPlaneRepository,
+  id: string,
+): Promise<CustomDomain> {
+  const domain = await repository.getCustomDomain(id);
+  if (!domain) {
+    throw new ControlPlaneError("not_found", `custom domain ${id} was not found`);
+  }
+  return domain;
+}
+
+async function requireDeployPreview(
+  repository: AsyncControlPlaneRepository,
+  id: string,
+): Promise<DeployPreview> {
+  const preview = await repository.getDeployPreview(id);
+  if (!preview) {
+    throw new ControlPlaneError("not_found", `deploy preview ${id} was not found`);
+  }
+  return preview;
+}
+
+async function enforceRouteCustomDomain(
+  repository: AsyncControlPlaneRepository,
+  projectId: string,
+  host: string,
+) {
+  const domain = await repository.getCustomDomainByHost(host);
+  if (!domain) {
+    return;
+  }
+  if (domain.projectId !== projectId) {
+    throw new ControlPlaneError("validation", `custom domain ${host} is owned by another project`);
+  }
+  if (domain.status !== "active") {
+    throw new ControlPlaneError("validation", `custom domain ${host} is not active`);
+  }
 }
 
 async function requireArtifact(repository: AsyncControlPlaneRepository, id: string): Promise<Artifact> {
@@ -842,4 +1361,94 @@ function snapshotId(generatedAt: string, routes: RouteSnapshot["routes"]): strin
     .digest("hex")
     .slice(0, 16);
   return `snap_${digest}`;
+}
+
+function hashApiToken(token: string): string {
+  return createHash("sha256").update(token).digest("hex");
+}
+
+function customDomainVerificationRecordName(host: string): string {
+  return `_wasmplane-challenge.${host}`;
+}
+
+function customDomainVerificationRecordValue(token: string): string {
+  return `wasmplane-domain-verification=${token}`;
+}
+
+function txtRecordValues(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    throw new ControlPlaneError("validation", "custom domain txtRecords must be an array");
+  }
+  return value.map((item) => {
+    if (typeof item !== "string") {
+      throw new ControlPlaneError("validation", "custom domain txtRecords must be strings");
+    }
+    return item.trim();
+  });
+}
+
+function normalizeDeployPreviewEnvironment(value: unknown): DeployPreviewEnvironment {
+  if (value === undefined) {
+    return {};
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new ControlPlaneError("validation", "deploy preview environment must be an object");
+  }
+  const environment: DeployPreviewEnvironment = {};
+  for (const [key, bindingValue] of Object.entries(value).sort(([left], [right]) => left.localeCompare(right))) {
+    if (!/^[A-Z_][A-Z0-9_]*$/.test(key)) {
+      throw new ControlPlaneError("validation", "deploy preview environment binding keys must be env var names");
+    }
+    if (typeof bindingValue !== "string") {
+      throw new ControlPlaneError("validation", `deploy preview environment binding ${key} must be a string`);
+    }
+    if (bindingValue.length > 4096 || /[\u0000]/.test(bindingValue)) {
+      throw new ControlPlaneError(
+        "validation",
+        `deploy preview environment binding ${key} must be a string up to 4096 characters`,
+      );
+    }
+    environment[key] = bindingValue;
+  }
+  return environment;
+}
+
+function deployPreviewPreviousRoute(route: RoutePointer): DeployPreviewPreviousRoute {
+  return {
+    id: route.id,
+    deploymentId: route.deploymentId,
+    targets: route.targets,
+    updatedAt: route.updatedAt,
+  };
+}
+
+function deployPreviewUrl(host: string, pathPrefix: string): string {
+  return `https://${host}${pathPrefix}`;
+}
+
+function defaultDeployPreviewHost(projectId: string, deploymentId: string): string {
+  return `${dnsLabel(deploymentId)}.${dnsLabel(projectId)}.preview.wasmplane.local`;
+}
+
+function dnsLabel(value: string): string {
+  const label = value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return label.slice(0, 63) || "preview";
+}
+
+function normalizeProvider(value: unknown, field: string): string {
+  if (typeof value !== "string") {
+    throw new ControlPlaneError("validation", `${field} must be a string`);
+  }
+  const normalized = value.trim();
+  if (normalized.length === 0 || normalized.length > 120 || /[\u0000-\u001f\u007f]/.test(normalized)) {
+    throw new ControlPlaneError("validation", `${field} must be a printable string up to 120 characters`);
+  }
+  return normalized;
+}
+
+function optionalNonEmpty(value: unknown, field: string): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  return normalizeProvider(value, field);
 }

@@ -228,3 +228,27 @@ Production readiness tasks, in implementation order.
 - [x] Add backup retention GC for count- and age-based pruning.
 - [x] Add AES-256-GCM encryption for volume SQLite backup files.
 - [x] Harden volume SQLite directory/file permissions and backup restore path validation.
+
+## 30. Multi-tenant hosting product layer
+
+- [x] Add organization, user, project membership, and project-scoped API key models.
+- [x] Resolve DB-backed API keys during HTTP authorization in addition to bootstrap env tokens.
+- [x] Add usage metering for invocations, CPU ms, wall ms, memory, egress, storage, and tenant SQLite units.
+- [x] Add admission policies for required artifact signatures, WIT world/version constraints, capability allowlists, and artifact size limits.
+- [x] Add custom domain registration with ownership verification and TLS provisioning hooks.
+- [x] Add deploy previews with preview URLs, environment bindings, and one-command rollback.
+- [ ] Add scheduled encrypted volume SQLite backups, retention policy, and restore drills.
+
+## 31. Platform developer experience
+
+- [ ] Add `wasmplane dev` with local runtime, WIT validation, log tailing, and route preview.
+- [ ] Add worker templates and generated WIT SDK helpers for common languages.
+- [ ] Add deployment diff output for routes, capabilities, secrets, KV bindings, and runtime limits.
+- [ ] Add project/deployment scoped metrics, logs, traces, and log drain configuration.
+
+## 32. Runtime packing and isolation
+
+- [ ] Add per-tenant runtime packing policy for warm deployments, idle instance pools, and LRU eviction.
+- [ ] Add per-tenant memory, CPU, storage, concurrency, and rate enforcement reports.
+- [ ] Add forced tenant drain and isolation-pool routing for noisy-neighbor mitigation.
+- [ ] Add billing-ready quota enforcement tied to usage ledgers.

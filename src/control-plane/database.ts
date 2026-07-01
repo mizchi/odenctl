@@ -2,6 +2,7 @@ import { createControlPlane } from "./service.ts";
 import { createSqliteRepository } from "./repository.ts";
 import { createConfiguredSecretCipherAsync } from "./secret-encryption.ts";
 import { projectQuotasFromEnv } from "./quotas.ts";
+import { admissionPolicyFromEnv } from "./admission.ts";
 import {
   applyControlPlaneMigrations,
   checkControlPlaneMigrations,
@@ -47,6 +48,7 @@ export async function createConfiguredControlPlane(
   const config = resolveControlPlaneDatabaseConfig(env);
   const secretCipher = await createConfiguredSecretCipherAsync({ env });
   const projectQuotas = projectQuotasFromEnv(env);
+  const admissionPolicy = admissionPolicyFromEnv(env);
   if (config.kind === "postgres") {
     const [{ createAsyncControlPlane }, { createPostgresRepository }] = await Promise.all([
       import("./async-service.ts"),
@@ -62,6 +64,7 @@ export async function createConfiguredControlPlane(
       runtimeNodeActiveTtlMs: options.runtimeNodeActiveTtlMs,
       secretCipher,
       projectQuotas,
+      admissionPolicy,
     });
     assertMigrationStatus(await checkControlPlaneMigrations(config));
     return controlPlane;
@@ -71,6 +74,7 @@ export async function createConfiguredControlPlane(
     runtimeNodeActiveTtlMs: options.runtimeNodeActiveTtlMs,
     secretCipher,
     projectQuotas,
+    admissionPolicy,
   });
   assertMigrationStatus(await checkControlPlaneMigrations(config));
   return controlPlane;

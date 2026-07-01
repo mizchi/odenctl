@@ -7,7 +7,33 @@ export {
   decodeLocalArtifactBytes,
 } from "./control-plane/artifact-store.ts";
 export { createJsonlAuditSink } from "./control-plane/audit.ts";
-export { parseApiTokens, tokenAllows } from "./control-plane/authz.ts";
+export { parseApiTokens, tokenAllows, type ApiScope, type ApiToken } from "./control-plane/authz.ts";
+export {
+  admissionPolicyFromEnv,
+  enforceArtifactAdmissionPolicy,
+  enforceDeploymentAdmissionPolicy,
+  type ControlPlaneAdmissionPolicy,
+  type DeploymentAdmissionInput,
+} from "./control-plane/admission.ts";
+export {
+  USAGE_METRIC_NAMES,
+  type ApiKey,
+  type CustomDomain,
+  type CustomDomainStatus,
+  type CustomDomainTlsStatus,
+  type DeployPreview,
+  type DeployPreviewEnvironment,
+  type DeployPreviewPreviousRoute,
+  type DeployPreviewStatus,
+  type Organization,
+  type ProjectMembership,
+  type ProjectRole,
+  type ProjectUsageSummary,
+  type UsageDimensions,
+  type UsageEvent,
+  type UsageMetricName,
+  type User,
+} from "./control-plane/contracts.ts";
 export {
   applyConfiguredControlPlaneMigrations,
   checkConfiguredControlPlaneMigrations,

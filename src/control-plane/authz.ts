@@ -1,9 +1,14 @@
-export type ApiScope = "*" | "read" | "write" | "publish";
+import type { ApiScope } from "./contracts.ts";
+
+export type { ApiScope } from "./contracts.ts";
 
 export interface ApiToken {
   token: string;
   scopes: ApiScope[];
   principal: string;
+  apiKeyId?: string;
+  organizationId?: string;
+  projectId?: string;
 }
 
 export function parseApiTokens(env: Record<string, string | undefined> = process.env): ApiToken[] {

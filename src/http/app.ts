@@ -45,7 +45,24 @@ type MaybePromise<T> = T | Promise<T>;
 
 export interface HttpAppOptions {
   controlPlane: {
+    createOrganization(input: any): MaybePromise<unknown>;
+    createUser(input: any): MaybePromise<unknown>;
     createProject(input: any): MaybePromise<unknown>;
+    addProjectMembership(input: any): MaybePromise<unknown>;
+    listProjectMemberships(input: any): MaybePromise<unknown>;
+    createApiKey(input: any): MaybePromise<unknown>;
+    listProjectApiKeys(input: any): MaybePromise<unknown>;
+    authenticateApiToken?(input: any): MaybePromise<ApiToken | undefined>;
+    recordUsageEvent(input: any): MaybePromise<unknown>;
+    getProjectUsageSummary(input: any): MaybePromise<unknown>;
+    createCustomDomain(input: any): MaybePromise<unknown>;
+    listProjectCustomDomains(input: any): MaybePromise<unknown>;
+    verifyCustomDomainOwnership(input: any): MaybePromise<unknown>;
+    requestCustomDomainTlsProvisioning(input: any): MaybePromise<unknown>;
+    completeCustomDomainTlsProvisioning(input: any): MaybePromise<unknown>;
+    createDeployPreview(input: any): MaybePromise<unknown>;
+    listProjectDeployPreviews(input: any): MaybePromise<unknown>;
+    rollbackDeployPreview(input: any): MaybePromise<unknown>;
     getProjectUsage(input: any): MaybePromise<unknown>;
     createArtifact(input: any): MaybePromise<unknown>;
     getProjectArtifactByDigest(input: any): MaybePromise<any | undefined>;
@@ -125,7 +142,7 @@ export function createHttpApp(options: HttpAppOptions) {
         return;
       }
       const requiredScope = requiredScopeFor(method, url.pathname);
-      const authorization = authorizeRequest(options, request.headers, requiredScope);
+      const authorization = await authorizeRequest(options, request.headers, requiredScope);
       if (!authorization.ok) {
         writeJson(
           response,
@@ -180,8 +197,129 @@ export function createHttpApp(options: HttpAppOptions) {
         writeRedirect(response, "/admin?notice=runtime-node-gc");
         return;
       }
+      if (method === "POST" && url.pathname === "/organizations") {
+        writeJson(response, 201, await options.controlPlane.createOrganization(await readJson(request)));
+        return;
+      }
+      if (method === "POST" && url.pathname === "/users") {
+        writeJson(response, 201, await options.controlPlane.createUser(await readJson(request)));
+        return;
+      }
+      if (method === "POST" && url.pathname === "/api-keys") {
+        writeJson(response, 201, await options.controlPlane.createApiKey(await readJson(request)));
+        return;
+      }
+      if (method === "POST" && url.pathname === "/usage/events") {
+        writeJson(response, 201, await options.controlPlane.recordUsageEvent(await readJson(request)));
+        return;
+      }
+      if (method === "POST" && url.pathname === "/custom-domains") {
+        writeJson(response, 201, await options.controlPlane.createCustomDomain(await readJson(request)));
+        return;
+      }
+      if (method === "POST" && url.pathname === "/deploy-previews") {
+        writeJson(response, 201, await options.controlPlane.createDeployPreview(await readJson(request)));
+        return;
+      }
       if (method === "POST" && url.pathname === "/projects") {
         writeJson(response, 201, await options.controlPlane.createProject(await readJson(request)));
+        return;
+      }
+      const projectCustomDomains = projectCustomDomainsMatch(method, url.pathname);
+      if (projectCustomDomains) {
+        writeJson(
+          response,
+          200,
+          { domains: await options.controlPlane.listProjectCustomDomains({ projectId: projectCustomDomains.projectId }) },
+        );
+        return;
+      }
+      const projectDeployPreviews = projectDeployPreviewsMatch(method, url.pathname);
+      if (projectDeployPreviews) {
+        writeJson(
+          response,
+          200,
+          {
+            previews: await options.controlPlane.listProjectDeployPreviews({
+              projectId: projectDeployPreviews.projectId,
+            }),
+          },
+        );
+        return;
+      }
+      const deployPreviewRollback = deployPreviewRollbackMatch(method, url.pathname);
+      if (deployPreviewRollback) {
+        writeJson(
+          response,
+          200,
+          await options.controlPlane.rollbackDeployPreview({
+            ...(await readJson(request)),
+            id: deployPreviewRollback.id,
+          }),
+        );
+        return;
+      }
+      const customDomainVerify = customDomainVerifyMatch(method, url.pathname);
+      if (customDomainVerify) {
+        writeJson(
+          response,
+          200,
+          await options.controlPlane.verifyCustomDomainOwnership({
+            ...(await readJson(request)),
+            id: customDomainVerify.id,
+          }),
+        );
+        return;
+      }
+      const customDomainTls = customDomainTlsMatch(method, url.pathname);
+      if (customDomainTls) {
+        writeJson(
+          response,
+          200,
+          await options.controlPlane.requestCustomDomainTlsProvisioning({
+            ...(await readJson(request)),
+            id: customDomainTls.id,
+          }),
+        );
+        return;
+      }
+      const customDomainTlsComplete = customDomainTlsCompleteMatch(method, url.pathname);
+      if (customDomainTlsComplete) {
+        writeJson(
+          response,
+          200,
+          await options.controlPlane.completeCustomDomainTlsProvisioning({
+            ...(await readJson(request)),
+            id: customDomainTlsComplete.id,
+          }),
+        );
+        return;
+      }
+      const projectMemberships = projectMembershipsMatch(method, url.pathname);
+      if (projectMemberships && method === "POST") {
+        const input = objectRecord(await readJson(request));
+        writeJson(response, 201, await options.controlPlane.addProjectMembership({
+          projectId: projectMemberships.projectId,
+          userId: input.userId,
+          role: input.role,
+        }));
+        return;
+      }
+      if (projectMemberships && method === "GET") {
+        writeJson(
+          response,
+          200,
+          { memberships: await options.controlPlane.listProjectMemberships({ projectId: projectMemberships.projectId }) },
+        );
+        return;
+      }
+      const projectApiKeys = projectApiKeysMatch(method, url.pathname);
+      if (projectApiKeys) {
+        writeJson(
+          response,
+          200,
+          { apiKeys: await options.controlPlane.listProjectApiKeys({ projectId: projectApiKeys.projectId }) },
+        );
         return;
       }
       const projectSqliteDatabases = projectSqliteDatabasesMatch(method, url.pathname);
@@ -227,6 +365,19 @@ export function createHttpApp(options: HttpAppOptions) {
           response,
           200,
           await options.controlPlane.getProjectUsage({ projectId: projectQuotaUsage.projectId }),
+        );
+        return;
+      }
+      const projectUsage = projectUsageMatch(method, url.pathname);
+      if (projectUsage) {
+        writeJson(
+          response,
+          200,
+          await options.controlPlane.getProjectUsageSummary({
+            projectId: projectUsage.projectId,
+            from: url.searchParams.get("from") ?? undefined,
+            to: url.searchParams.get("to") ?? undefined,
+          }),
         );
         return;
       }
@@ -567,18 +718,20 @@ type AuthorizationResult =
   | { ok: true; token?: ApiToken }
   | { ok: false; status: 401 | 403; code: "unauthorized" | "forbidden"; message: string };
 
-function authorizeRequest(
+async function authorizeRequest(
   options: HttpAppOptions,
   headers: Record<string, string | string[] | undefined>,
   requiredScope: ApiScope,
-): AuthorizationResult {
+): Promise<AuthorizationResult> {
   const tokens = configuredApiTokens(options);
   if (tokens.length === 0) {
     return { ok: true };
   }
   const authorization = firstHeader(headers.authorization);
   const bearer = authorization?.startsWith("Bearer ") ? authorization.slice("Bearer ".length) : undefined;
-  const token = bearer ? tokens.find((candidate) => candidate.token === bearer) : undefined;
+  const token = bearer
+    ? tokens.find((candidate) => candidate.token === bearer) ?? await authenticateDbApiToken(options, bearer)
+    : undefined;
   if (!token) {
     return {
       ok: false,
@@ -596,6 +749,10 @@ function authorizeRequest(
     };
   }
   return { ok: true, token };
+}
+
+async function authenticateDbApiToken(options: HttpAppOptions, token: string): Promise<ApiToken | undefined> {
+  return await options.controlPlane.authenticateApiToken?.({ token });
 }
 
 function configuredApiTokens(options: HttpAppOptions): ApiToken[] {
@@ -1157,6 +1314,105 @@ function projectQuotaUsageMatch(method: string, pathname: string): { projectId: 
     return undefined;
   }
   const match = /^\/projects\/([^/]+)\/quota-usage$/.exec(pathname);
+  if (!match) {
+    return undefined;
+  }
+  return { projectId: decodeURIComponent(match[1]) };
+}
+
+function projectUsageMatch(method: string, pathname: string): { projectId: string } | undefined {
+  if (method !== "GET") {
+    return undefined;
+  }
+  const match = /^\/projects\/([^/]+)\/usage$/.exec(pathname);
+  if (!match) {
+    return undefined;
+  }
+  return { projectId: decodeURIComponent(match[1]) };
+}
+
+function projectCustomDomainsMatch(method: string, pathname: string): { projectId: string } | undefined {
+  if (method !== "GET") {
+    return undefined;
+  }
+  const match = /^\/projects\/([^/]+)\/custom-domains$/.exec(pathname);
+  if (!match) {
+    return undefined;
+  }
+  return { projectId: decodeURIComponent(match[1]) };
+}
+
+function projectDeployPreviewsMatch(method: string, pathname: string): { projectId: string } | undefined {
+  if (method !== "GET") {
+    return undefined;
+  }
+  const match = /^\/projects\/([^/]+)\/deploy-previews$/.exec(pathname);
+  if (!match) {
+    return undefined;
+  }
+  return { projectId: decodeURIComponent(match[1]) };
+}
+
+function deployPreviewRollbackMatch(method: string, pathname: string): { id: string } | undefined {
+  if (method !== "POST") {
+    return undefined;
+  }
+  const match = /^\/deploy-previews\/([^/]+)\/rollback$/.exec(pathname);
+  if (!match) {
+    return undefined;
+  }
+  return { id: decodeURIComponent(match[1]) };
+}
+
+function customDomainVerifyMatch(method: string, pathname: string): { id: string } | undefined {
+  if (method !== "POST") {
+    return undefined;
+  }
+  const match = /^\/custom-domains\/([^/]+)\/verify$/.exec(pathname);
+  if (!match) {
+    return undefined;
+  }
+  return { id: decodeURIComponent(match[1]) };
+}
+
+function customDomainTlsMatch(method: string, pathname: string): { id: string } | undefined {
+  if (method !== "POST") {
+    return undefined;
+  }
+  const match = /^\/custom-domains\/([^/]+)\/tls$/.exec(pathname);
+  if (!match) {
+    return undefined;
+  }
+  return { id: decodeURIComponent(match[1]) };
+}
+
+function customDomainTlsCompleteMatch(method: string, pathname: string): { id: string } | undefined {
+  if (method !== "POST") {
+    return undefined;
+  }
+  const match = /^\/custom-domains\/([^/]+)\/tls\/complete$/.exec(pathname);
+  if (!match) {
+    return undefined;
+  }
+  return { id: decodeURIComponent(match[1]) };
+}
+
+function projectMembershipsMatch(method: string, pathname: string): { projectId: string } | undefined {
+  if (method !== "GET" && method !== "POST") {
+    return undefined;
+  }
+  const match = /^\/projects\/([^/]+)\/memberships$/.exec(pathname);
+  if (!match) {
+    return undefined;
+  }
+  return { projectId: decodeURIComponent(match[1]) };
+}
+
+function projectApiKeysMatch(method: string, pathname: string): { projectId: string } | undefined {
+  if (method !== "GET") {
+    return undefined;
+  }
+  const match = /^\/projects\/([^/]+)\/api-keys$/.exec(pathname);
   if (!match) {
     return undefined;
   }

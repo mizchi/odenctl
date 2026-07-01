@@ -3,16 +3,24 @@ import pg from "pg";
 import type { AsyncControlPlaneRepository } from "./async-service.ts";
 import type { ProjectResourceUsage } from "./repository.ts";
 import type {
+  ApiKey,
   Artifact,
   CanaryDecision,
+  CustomDomain,
+  DeployPreview,
   Deployment,
   KvNamespace,
+  Organization,
   Project,
+  ProjectMembership,
+  ProjectUsageSummary,
   RoutePointer,
   RouteSnapshotPublication,
   RuntimeNode,
   RuntimeNodeStatus,
   Secret,
+  UsageEvent,
+  User,
 } from "./contracts.ts";
 import { ControlPlaneError } from "./errors.ts";
 
@@ -76,13 +84,349 @@ export class PostgresControlPlaneRepository implements AsyncControlPlaneReposito
     await this.pool.end();
   }
 
+  async createOrganization(organization: Organization): Promise<Organization> {
+    try {
+      await this.pool.query(
+        "insert into organizations (id, name, created_at) values ($1, $2, $3)",
+        [organization.id, organization.name, organization.createdAt],
+      );
+      return organization;
+    } catch (error) {
+      throw writeError("organization", organization.id, error);
+    }
+  }
+
+  async getOrganization(id: string): Promise<Organization | undefined> {
+    const result = await this.pool.query("select * from organizations where id = $1", [id]);
+    return result.rows[0] ? organizationFromRow(result.rows[0]) : undefined;
+  }
+
+  async createUser(user: User): Promise<User> {
+    try {
+      await this.pool.query(
+        "insert into users (id, email, name, created_at) values ($1, $2, $3, $4)",
+        [user.id, user.email, user.name ?? null, user.createdAt],
+      );
+      return user;
+    } catch (error) {
+      throw writeError("user", user.id, error);
+    }
+  }
+
+  async getUser(id: string): Promise<User | undefined> {
+    const result = await this.pool.query("select * from users where id = $1", [id]);
+    return result.rows[0] ? userFromRow(result.rows[0]) : undefined;
+  }
+
+  async createProjectMembership(
+    membership: ProjectMembership,
+  ): Promise<ProjectMembership> {
+    try {
+      const result = await this.pool.query(
+        `insert into project_memberships (project_id, user_id, role, created_at)
+         values ($1, $2, $3, $4)
+         on conflict (project_id, user_id) do update set role = excluded.role
+         returning *`,
+        [membership.projectId, membership.userId, membership.role, membership.createdAt],
+      );
+      return membershipFromRow(result.rows[0]);
+    } catch (error) {
+      throw writeError("project membership", `${membership.projectId}/${membership.userId}`, error);
+    }
+  }
+
+  async listProjectMemberships(projectId: string): Promise<ProjectMembership[]> {
+    const result = await this.pool.query(
+      "select * from project_memberships where project_id = $1 order by user_id asc",
+      [projectId],
+    );
+    return result.rows.map(membershipFromRow);
+  }
+
+  async createApiKey(apiKey: ApiKey, tokenHash: string): Promise<ApiKey> {
+    try {
+      await this.pool.query(
+        `insert into api_keys (
+          id,
+          organization_id,
+          project_id,
+          name,
+          token_hash,
+          scopes_json,
+          created_at,
+          last_used_at,
+          revoked_at
+        ) values ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9)`,
+        [
+          apiKey.id,
+          apiKey.organizationId ?? null,
+          apiKey.projectId ?? null,
+          apiKey.name,
+          tokenHash,
+          JSON.stringify(apiKey.scopes),
+          apiKey.createdAt,
+          apiKey.lastUsedAt ?? null,
+          apiKey.revokedAt ?? null,
+        ],
+      );
+      return apiKey;
+    } catch (error) {
+      throw writeError("api key", apiKey.id, error);
+    }
+  }
+
+  async getApiKeyByTokenHash(tokenHash: string): Promise<ApiKey | undefined> {
+    const result = await this.pool.query("select * from api_keys where token_hash = $1", [tokenHash]);
+    return result.rows[0] ? apiKeyFromRow(result.rows[0]) : undefined;
+  }
+
+  async listProjectApiKeys(projectId: string): Promise<ApiKey[]> {
+    const result = await this.pool.query(
+      "select * from api_keys where project_id = $1 order by created_at desc, id desc",
+      [projectId],
+    );
+    return result.rows.map(apiKeyFromRow);
+  }
+
+  async updateApiKeyLastUsed(id: string, lastUsedAt: string): Promise<ApiKey> {
+    const result = await this.pool.query(
+      `update api_keys set last_used_at = $1
+       where id = $2
+       returning *`,
+      [lastUsedAt, id],
+    );
+    if (result.rowCount === 0) {
+      throw new ControlPlaneError("not_found", `api key ${id} was not found`);
+    }
+    return apiKeyFromRow(result.rows[0]);
+  }
+
+  async createUsageEvent(event: UsageEvent): Promise<UsageEvent> {
+    try {
+      await this.pool.query(
+        `insert into usage_events (
+          id,
+          organization_id,
+          project_id,
+          metric,
+          quantity,
+          dimensions_json,
+          recorded_at
+        ) values ($1, $2, $3, $4, $5, $6::jsonb, $7)`,
+        [
+          event.id,
+          event.organizationId ?? null,
+          event.projectId,
+          event.metric,
+          event.quantity,
+          event.dimensions ? JSON.stringify(event.dimensions) : null,
+          event.recordedAt,
+        ],
+      );
+      return event;
+    } catch (error) {
+      throw writeError("usage event", event.id, error);
+    }
+  }
+
+  async getProjectUsageSummary(
+    projectId: string,
+    from?: string,
+    to?: string,
+  ): Promise<ProjectUsageSummary> {
+    const params: string[] = [projectId];
+    const where = ["project_id = $1"];
+    if (from) {
+      params.push(from);
+      where.push(`recorded_at >= $${params.length}`);
+    }
+    if (to) {
+      params.push(to);
+      where.push(`recorded_at < $${params.length}`);
+    }
+    const result = await this.pool.query(
+      `select
+        coalesce(sum(case when metric = 'invocation' then quantity else 0 end), 0)::float8 as invocations,
+        coalesce(sum(case when metric = 'cpu_ms' then quantity else 0 end), 0)::float8 as cpu_ms,
+        coalesce(sum(case when metric = 'wall_ms' then quantity else 0 end), 0)::float8 as wall_ms,
+        coalesce(sum(case when metric = 'memory_mb_ms' then quantity else 0 end), 0)::float8 as memory_mb_ms,
+        coalesce(sum(case when metric = 'egress_bytes' then quantity else 0 end), 0)::float8 as egress_bytes,
+        coalesce(sum(case when metric = 'storage_bytes' then quantity else 0 end), 0)::float8 as storage_bytes,
+        coalesce(sum(case when metric = 'sqlite_unit' then quantity else 0 end), 0)::float8 as sqlite_units
+       from usage_events
+       where ${where.join(" and ")}`,
+      params,
+    );
+    const project = await this.getProject(projectId);
+    return usageSummaryFromRow(projectId, project?.organizationId, from, to, result.rows[0]);
+  }
+
+  async createCustomDomain(domain: CustomDomain): Promise<CustomDomain> {
+    try {
+      await this.pool.query(
+        `insert into custom_domains (
+          id,
+          project_id,
+          host,
+          status,
+          verification_token,
+          verification_record_name,
+          verification_record_value,
+          tls_status,
+          tls_provider,
+          tls_request_id,
+          tls_error,
+          created_at,
+          updated_at,
+          verified_at,
+          tls_provisioned_at
+        ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+        [
+          domain.id,
+          domain.projectId,
+          domain.host,
+          domain.status,
+          domain.verificationToken,
+          domain.verificationRecordName,
+          domain.verificationRecordValue,
+          domain.tlsStatus,
+          domain.tlsProvider ?? null,
+          domain.tlsRequestId ?? null,
+          domain.tlsError ?? null,
+          domain.createdAt,
+          domain.updatedAt,
+          domain.verifiedAt ?? null,
+          domain.tlsProvisionedAt ?? null,
+        ],
+      );
+      return domain;
+    } catch (error) {
+      throw writeError("custom domain", domain.id, error);
+    }
+  }
+
+  async getCustomDomain(id: string): Promise<CustomDomain | undefined> {
+    const result = await this.pool.query("select * from custom_domains where id = $1", [id]);
+    return result.rows[0] ? customDomainFromRow(result.rows[0]) : undefined;
+  }
+
+  async getCustomDomainByHost(host: string): Promise<CustomDomain | undefined> {
+    const result = await this.pool.query("select * from custom_domains where host = $1", [host]);
+    return result.rows[0] ? customDomainFromRow(result.rows[0]) : undefined;
+  }
+
+  async listProjectCustomDomains(projectId: string): Promise<CustomDomain[]> {
+    const result = await this.pool.query(
+      "select * from custom_domains where project_id = $1 order by host asc, id asc",
+      [projectId],
+    );
+    return result.rows.map(customDomainFromRow);
+  }
+
+  async updateCustomDomain(domain: CustomDomain): Promise<CustomDomain> {
+    const result = await this.pool.query(
+      `update custom_domains set
+        status = $1,
+        tls_status = $2,
+        tls_provider = $3,
+        tls_request_id = $4,
+        tls_error = $5,
+        updated_at = $6,
+        verified_at = $7,
+        tls_provisioned_at = $8
+       where id = $9
+       returning *`,
+      [
+        domain.status,
+        domain.tlsStatus,
+        domain.tlsProvider ?? null,
+        domain.tlsRequestId ?? null,
+        domain.tlsError ?? null,
+        domain.updatedAt,
+        domain.verifiedAt ?? null,
+        domain.tlsProvisionedAt ?? null,
+        domain.id,
+      ],
+    );
+    if (result.rowCount === 0) {
+      throw new ControlPlaneError("not_found", `custom domain ${domain.id} was not found`);
+    }
+    return customDomainFromRow(result.rows[0]);
+  }
+
+  async createDeployPreview(preview: DeployPreview): Promise<DeployPreview> {
+    try {
+      await this.pool.query(
+        `insert into deploy_previews (
+          id,
+          project_id,
+          deployment_id,
+          host,
+          path_prefix,
+          url,
+          environment_json,
+          previous_route_json,
+          status,
+          created_at,
+          updated_at,
+          rolled_back_at
+        ) values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9, $10, $11, $12)`,
+        [
+          preview.id,
+          preview.projectId,
+          preview.deploymentId,
+          preview.host,
+          preview.pathPrefix,
+          preview.url,
+          JSON.stringify(preview.environment),
+          preview.previousRoute ? JSON.stringify(preview.previousRoute) : null,
+          preview.status,
+          preview.createdAt,
+          preview.updatedAt,
+          preview.rolledBackAt ?? null,
+        ],
+      );
+      return preview;
+    } catch (error) {
+      throw writeError("deploy preview", preview.id, error);
+    }
+  }
+
+  async getDeployPreview(id: string): Promise<DeployPreview | undefined> {
+    const result = await this.pool.query("select * from deploy_previews where id = $1", [id]);
+    return result.rows[0] ? deployPreviewFromRow(result.rows[0]) : undefined;
+  }
+
+  async listProjectDeployPreviews(projectId: string): Promise<DeployPreview[]> {
+    const result = await this.pool.query(
+      "select * from deploy_previews where project_id = $1 order by created_at desc, id desc",
+      [projectId],
+    );
+    return result.rows.map(deployPreviewFromRow);
+  }
+
+  async updateDeployPreview(preview: DeployPreview): Promise<DeployPreview> {
+    const result = await this.pool.query(
+      `update deploy_previews set
+        status = $1,
+        updated_at = $2,
+        rolled_back_at = $3
+       where id = $4
+       returning *`,
+      [preview.status, preview.updatedAt, preview.rolledBackAt ?? null, preview.id],
+    );
+    if (result.rowCount === 0) {
+      throw new ControlPlaneError("not_found", `deploy preview ${preview.id} was not found`);
+    }
+    return deployPreviewFromRow(result.rows[0]);
+  }
+
   async createProject(project: Project): Promise<Project> {
     try {
-      await this.pool.query("insert into projects (id, name, created_at) values ($1, $2, $3)", [
-        project.id,
-        project.name,
-        project.createdAt,
-      ]);
+      await this.pool.query(
+        "insert into projects (id, organization_id, name, created_at) values ($1, $2, $3, $4)",
+        [project.id, project.organizationId ?? null, project.name, project.createdAt],
+      );
       return project;
     } catch (error) {
       throw writeError("project", project.id, error);
@@ -330,6 +674,13 @@ export class PostgresControlPlaneRepository implements AsyncControlPlaneReposito
     return result.rows[0] ? routeFromRow(result.rows[0]) : undefined;
   }
 
+  async deleteRoute(projectId: string, host: string, pathPrefix: string): Promise<void> {
+    await this.pool.query(
+      "delete from routes where project_id = $1 and host = $2 and path_prefix = $3",
+      [projectId, host, pathPrefix],
+    );
+  }
+
   async createRuntimeNode(node: RuntimeNode): Promise<RuntimeNode> {
     try {
       await this.pool.query(
@@ -509,9 +860,86 @@ export class PostgresControlPlaneRepository implements AsyncControlPlaneReposito
   }
 }
 
+function organizationFromRow(row: any): Organization {
+  return {
+    id: row.id,
+    name: row.name,
+    createdAt: row.created_at,
+  };
+}
+
+function userFromRow(row: any): User {
+  return {
+    id: row.id,
+    email: row.email,
+    ...(row.name ? { name: row.name } : {}),
+    createdAt: row.created_at,
+  };
+}
+
+function membershipFromRow(row: any): ProjectMembership {
+  return {
+    projectId: row.project_id,
+    userId: row.user_id,
+    role: row.role,
+    createdAt: row.created_at,
+  };
+}
+
+function apiKeyFromRow(row: any): ApiKey {
+  return {
+    id: row.id,
+    ...(row.organization_id ? { organizationId: row.organization_id } : {}),
+    ...(row.project_id ? { projectId: row.project_id } : {}),
+    name: row.name,
+    scopes: jsonValue(row.scopes_json),
+    createdAt: row.created_at,
+    ...(row.last_used_at ? { lastUsedAt: row.last_used_at } : {}),
+    ...(row.revoked_at ? { revokedAt: row.revoked_at } : {}),
+  };
+}
+
+function customDomainFromRow(row: any): CustomDomain {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    host: row.host,
+    status: row.status,
+    verificationToken: row.verification_token,
+    verificationRecordName: row.verification_record_name,
+    verificationRecordValue: row.verification_record_value,
+    tlsStatus: row.tls_status,
+    ...(row.tls_provider ? { tlsProvider: row.tls_provider } : {}),
+    ...(row.tls_request_id ? { tlsRequestId: row.tls_request_id } : {}),
+    ...(row.tls_error ? { tlsError: row.tls_error } : {}),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    ...(row.verified_at ? { verifiedAt: row.verified_at } : {}),
+    ...(row.tls_provisioned_at ? { tlsProvisionedAt: row.tls_provisioned_at } : {}),
+  };
+}
+
+function deployPreviewFromRow(row: any): DeployPreview {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    deploymentId: row.deployment_id,
+    host: row.host,
+    pathPrefix: row.path_prefix,
+    url: row.url,
+    environment: jsonValue(row.environment_json),
+    ...(row.previous_route_json ? { previousRoute: jsonValue(row.previous_route_json) } : {}),
+    status: row.status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    ...(row.rolled_back_at ? { rolledBackAt: row.rolled_back_at } : {}),
+  };
+}
+
 function projectFromRow(row: any): Project {
   return {
     id: row.id,
+    ...(row.organization_id ? { organizationId: row.organization_id } : {}),
     name: row.name,
     createdAt: row.created_at,
   };
@@ -651,6 +1079,30 @@ function usageFromRow(row: any): ProjectResourceUsage {
     routes: Number(row.routes ?? 0),
     secrets: Number(row.secrets ?? 0),
     kvNamespaces: Number(row.kv_namespaces ?? 0),
+  };
+}
+
+function usageSummaryFromRow(
+  projectId: string,
+  organizationId: string | undefined,
+  from: string | undefined,
+  to: string | undefined,
+  row: any,
+): ProjectUsageSummary {
+  return {
+    projectId,
+    ...(organizationId ? { organizationId } : {}),
+    ...(from ? { from } : {}),
+    ...(to ? { to } : {}),
+    totals: {
+      invocations: Number(row?.invocations ?? 0),
+      cpuMs: Number(row?.cpu_ms ?? 0),
+      wallMs: Number(row?.wall_ms ?? 0),
+      memoryMbMs: Number(row?.memory_mb_ms ?? 0),
+      egressBytes: Number(row?.egress_bytes ?? 0),
+      storageBytes: Number(row?.storage_bytes ?? 0),
+      sqliteUnits: Number(row?.sqlite_units ?? 0),
+    },
   };
 }
 

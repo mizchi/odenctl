@@ -99,6 +99,180 @@ test("creates immutable wasmtime deployments with denied-by-default host capabil
   );
 });
 
+test("manages tenant memberships and project scoped API keys", () => {
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+  });
+
+  const organization = control.createOrganization({ id: "org_acme", name: "Acme" });
+  const user = control.createUser({ id: "usr_alice", email: "ALICE@example.com", name: "Alice" });
+  const project = control.createProject({
+    id: "prj_acme",
+    name: "edge-app",
+    organizationId: organization.id,
+  });
+  const membership = control.addProjectMembership({
+    projectId: project.id,
+    userId: user.id,
+    role: "owner",
+  });
+  const createdKey = control.createApiKey({
+    id: "key_read",
+    projectId: project.id,
+    name: "Read key",
+    scopes: ["read"],
+  });
+
+  assert.equal(project.organizationId, "org_acme");
+  assert.deepEqual(membership, {
+    projectId: "prj_acme",
+    userId: "usr_alice",
+    role: "owner",
+    createdAt: fixedNow(),
+  });
+  assert.deepEqual(control.listProjectMemberships({ projectId: project.id }), [membership]);
+  assert.match(createdKey.token, /^wmp_[a-z0-9]{32}$/);
+  assert.deepEqual(createdKey.apiKey, {
+    id: "key_read",
+    organizationId: "org_acme",
+    projectId: "prj_acme",
+    name: "Read key",
+    scopes: ["read"],
+    createdAt: fixedNow(),
+  });
+
+  const authenticated = control.authenticateApiToken({ token: createdKey.token });
+  assert.deepEqual(authenticated, {
+    token: createdKey.token,
+    scopes: ["read"],
+    principal: "api-key:key_read",
+    apiKeyId: "key_read",
+    organizationId: "org_acme",
+    projectId: "prj_acme",
+  });
+  assert.equal(control.authenticateApiToken({ token: "wmp_missing" }), undefined);
+});
+
+test("control plane records project usage metering events", () => {
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+  });
+
+  const organization = control.createOrganization({ id: "org_metered", name: "Metered" });
+  const project = control.createProject({
+    id: "prj_metered",
+    name: "metered",
+    organizationId: organization.id,
+  });
+  const from = "2026-07-01T00:00:00.000Z";
+  const to = "2026-07-01T01:00:00.000Z";
+
+  const invocation = control.recordUsageEvent({
+    id: "use_invocation",
+    projectId: project.id,
+    metric: "invocation",
+    quantity: 1,
+    dimensions: { deploymentId: "dep_1", status: 200, cached: false },
+    recordedAt: from,
+  });
+  control.recordUsageEvent({ id: "use_cpu", projectId: project.id, metric: "cpu_ms", quantity: 12.5, recordedAt: from });
+  control.recordUsageEvent({ id: "use_wall", projectId: project.id, metric: "wall_ms", quantity: 30, recordedAt: from });
+  control.recordUsageEvent({ id: "use_mem", projectId: project.id, metric: "memory_mb_ms", quantity: 2048, recordedAt: from });
+  control.recordUsageEvent({ id: "use_egress", projectId: project.id, metric: "egress_bytes", quantity: 512, recordedAt: from });
+  control.recordUsageEvent({ id: "use_storage", projectId: project.id, metric: "storage_bytes", quantity: 4096, recordedAt: from });
+  control.recordUsageEvent({ id: "use_sqlite", projectId: project.id, metric: "sqlite_unit", quantity: 2, recordedAt: from });
+  control.recordUsageEvent({
+    id: "use_old",
+    projectId: project.id,
+    metric: "invocation",
+    quantity: 99,
+    recordedAt: "2026-06-30T23:59:59.000Z",
+  });
+
+  assert.deepEqual(invocation, {
+    id: "use_invocation",
+    organizationId: organization.id,
+    projectId: project.id,
+    metric: "invocation",
+    quantity: 1,
+    dimensions: { cached: false, deploymentId: "dep_1", status: 200 },
+    recordedAt: from,
+  });
+  assert.deepEqual(control.getProjectUsageSummary({ projectId: project.id, from, to }), {
+    projectId: project.id,
+    organizationId: organization.id,
+    from,
+    to,
+    totals: {
+      invocations: 1,
+      cpuMs: 12.5,
+      wallMs: 30,
+      memoryMbMs: 2048,
+      egressBytes: 512,
+      storageBytes: 4096,
+      sqliteUnits: 2,
+    },
+  });
+  assert.throws(
+    () => control.recordUsageEvent({ projectId: project.id, metric: "requests", quantity: 1 }),
+    /usage metric/,
+  );
+});
+
+test("async control plane manages tenant API keys and usage meters", async () => {
+  const control = createAsyncControlPlane({
+    repository: asyncRepository(createMemoryRepository()),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+  });
+
+  const organization = await control.createOrganization({ id: "org_async", name: "Async Org" });
+  const user = await control.createUser({ id: "usr_async", email: "async@example.com" });
+  const project = await control.createProject({
+    id: "prj_async_tenant",
+    name: "async tenant",
+    organizationId: organization.id,
+  });
+  await control.addProjectMembership({ projectId: project.id, userId: user.id, role: "developer" });
+  const key = await control.createApiKey({
+    id: "key_async",
+    projectId: project.id,
+    name: "Async key",
+    scopes: ["read", "write"],
+  });
+  await control.recordUsageEvent({
+    id: "use_async",
+    projectId: project.id,
+    metric: "sqlite_unit",
+    quantity: 3,
+  });
+
+  assert.equal((await control.authenticateApiToken({ token: key.token }))?.apiKeyId, "key_async");
+  assert.deepEqual(await control.listProjectMemberships({ projectId: project.id }), [{
+    projectId: project.id,
+    userId: user.id,
+    role: "developer",
+    createdAt: fixedNow(),
+  }]);
+  assert.deepEqual(await control.getProjectUsageSummary({ projectId: project.id }), {
+    projectId: project.id,
+    organizationId: organization.id,
+    totals: {
+      invocations: 0,
+      cpuMs: 0,
+      wallMs: 0,
+      memoryMbMs: 0,
+      egressBytes: 0,
+      storageBytes: 0,
+      sqliteUnits: 3,
+    },
+  });
+});
+
 test("async control plane preserves deployment validation", async () => {
   const control = createAsyncControlPlane({
     repository: asyncRepository(createMemoryRepository()),
@@ -221,6 +395,283 @@ test("artifact signatures are verified before deployment and provenance is surfa
       }),
     /signature verification failed/,
   );
+});
+
+test("control plane admission policy gates artifacts and deployment capabilities", () => {
+  const signature = signArtifactDigest(digest("admission"), { algorithm: "sha256-hmac", keyId: "ci" }, "secret-key");
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+    admissionPolicy: {
+      requireArtifactSignature: true,
+      allowedArtifactSignatureKeyIds: ["ci"],
+      maxArtifactSizeBytes: 128,
+      allowedWorlds: ["myedge:runtime/worker@0.1.0"],
+      allowedWorldVersions: ["0.1.0"],
+      allowedOutboundHttpPrefixes: ["https://api.example.com/v1"],
+      allowedKvNamespaceIds: ["kv_allowed"],
+      allowedSecretIds: ["sec_allowed"],
+    },
+  });
+  const project = control.createProject({ id: "prj_admission", name: "admission" });
+  control.createKvNamespace({ id: "kv_allowed", projectId: project.id, name: "Allowed KV" });
+  control.createKvNamespace({ id: "kv_blocked", projectId: project.id, name: "Blocked KV" });
+  control.createSecret({ id: "sec_allowed", projectId: project.id, name: "Allowed secret", value: "ok" });
+  control.createSecret({ id: "sec_blocked", projectId: project.id, name: "Blocked secret", value: "no" });
+
+  assert.throws(
+    () =>
+      control.createArtifact({
+        id: "art_unsigned",
+        projectId: project.id,
+        digest: digest("unsigned-admission"),
+        location: "oci://registry.example.com/mizchi/unsigned:v1",
+        sizeBytes: 42,
+      }),
+    /signature is required/,
+  );
+  assert.throws(
+    () =>
+      control.createArtifact({
+        id: "art_large",
+        projectId: project.id,
+        digest: digest("large-admission"),
+        location: "oci://registry.example.com/mizchi/large:v1",
+        sizeBytes: 129,
+        signature: signArtifactDigest(digest("large-admission"), { algorithm: "sha256-hmac", keyId: "ci" }, "secret-key"),
+      }),
+    /artifact size/,
+  );
+  assert.throws(
+    () =>
+      control.createArtifact({
+        id: "art_wrong_key",
+        projectId: project.id,
+        digest: digest("wrong-key-admission"),
+        location: "oci://registry.example.com/mizchi/wrong-key:v1",
+        sizeBytes: 42,
+        signature: { ...signature, keyId: "dev" },
+      }),
+    /signature key/,
+  );
+
+  const artifact = control.createArtifact({
+    id: "art_admission",
+    projectId: project.id,
+    digest: digest("admission"),
+    location: "oci://registry.example.com/mizchi/admission:v1",
+    sizeBytes: 42,
+    signature,
+  });
+  const deployment = control.createDeployment({
+    ...seedDeployment("dep_admission", artifact.id),
+    projectId: project.id,
+    capabilities: {
+      outboundHttp: { enabled: true, allow: ["https://api.example.com/v1/users"] },
+      kv: [{ binding: "MAIN", namespaceId: "kv_allowed" }],
+      secrets: [{ binding: "API_KEY", secretId: "sec_allowed" }],
+    },
+  });
+  assert.equal(deployment.id, "dep_admission");
+
+  assert.throws(
+    () =>
+      control.createDeployment({
+        ...seedDeployment("dep_blocked_outbound", artifact.id),
+        projectId: project.id,
+        capabilities: {
+          outboundHttp: { enabled: true, allow: ["https://api.example.com/v2/users"] },
+          kv: [{ binding: "MAIN", namespaceId: "kv_allowed" }],
+          secrets: [{ binding: "API_KEY", secretId: "sec_allowed" }],
+        },
+      }),
+    /outbound HTTP/,
+  );
+  assert.throws(
+    () =>
+      control.createDeployment({
+        ...seedDeployment("dep_blocked_kv", artifact.id),
+        projectId: project.id,
+        capabilities: {
+          outboundHttp: { enabled: false, allow: [] },
+          kv: [{ binding: "MAIN", namespaceId: "kv_blocked" }],
+          secrets: [{ binding: "API_KEY", secretId: "sec_allowed" }],
+        },
+      }),
+    /kv namespace/,
+  );
+  assert.throws(
+    () =>
+      control.createDeployment({
+        ...seedDeployment("dep_blocked_secret", artifact.id),
+        projectId: project.id,
+        capabilities: {
+          outboundHttp: { enabled: false, allow: [] },
+          kv: [{ binding: "MAIN", namespaceId: "kv_allowed" }],
+          secrets: [{ binding: "API_KEY", secretId: "sec_blocked" }],
+        },
+      }),
+    /secret/,
+  );
+});
+
+test("async control plane admission policy enforces WIT world constraints", async () => {
+  const control = createAsyncControlPlane({
+    repository: asyncRepository(createMemoryRepository()),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+    admissionPolicy: {
+      allowedWorldVersions: ["0.2.0"],
+    },
+  });
+  const project = await control.createProject({ id: "prj_async_admission", name: "async admission" });
+  const artifact = await control.createArtifact({
+    id: "art_async_admission",
+    projectId: project.id,
+    digest: digest("async-admission"),
+    location: "oci://registry.example.com/mizchi/async-admission:v1",
+    sizeBytes: 42,
+  });
+
+  await assert.rejects(
+    () =>
+      control.createDeployment({
+        ...seedDeployment("dep_async_admission", artifact.id),
+        projectId: project.id,
+      }),
+    /worldVersion/,
+  );
+});
+
+test("control plane manages custom domain verification and TLS hooks", () => {
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+  });
+  const project = control.createProject({ id: "prj_domain", name: "domain" });
+  const domain = control.createCustomDomain({
+    id: "dom_app",
+    projectId: project.id,
+    host: "App.Example.Dev",
+  });
+
+  assert.equal(domain.host, "app.example.dev");
+  assert.equal(domain.status, "pending_verification");
+  assert.equal(domain.tlsStatus, "none");
+  assert.equal(domain.verificationRecordName, "_wasmplane-challenge.app.example.dev");
+  assert.match(domain.verificationRecordValue, /^wasmplane-domain-verification=wmpdv_[a-f0-9]{32}$/);
+  assert.deepEqual(control.listProjectCustomDomains({ projectId: project.id }), [domain]);
+
+  const artifact = control.createArtifact({
+    id: "art_domain",
+    projectId: project.id,
+    digest: digest("domain"),
+    location: "oci://registry.example.com/mizchi/domain:v1",
+    sizeBytes: 42,
+  });
+  const deployment = control.createDeployment({
+    ...seedDeployment("dep_domain", artifact.id),
+    projectId: project.id,
+  });
+  assert.throws(
+    () =>
+      control.pointRoute({
+        projectId: project.id,
+        host: domain.host,
+        pathPrefix: "/",
+        deploymentId: deployment.id,
+      }),
+    /custom domain .* is not active/,
+  );
+
+  const verified = control.verifyCustomDomainOwnership({
+    id: domain.id,
+    txtRecords: ["ignored", domain.verificationRecordValue],
+  });
+  assert.equal(verified.status, "verified");
+  assert.equal(verified.verifiedAt, fixedNow());
+
+  const pendingTls = control.requestCustomDomainTlsProvisioning({
+    id: domain.id,
+    provider: "fly",
+    requestId: "cert_1",
+  });
+  assert.equal(pendingTls.status, "tls_pending");
+  assert.equal(pendingTls.tlsStatus, "pending");
+  assert.equal(pendingTls.tlsProvider, "fly");
+  assert.equal(pendingTls.tlsRequestId, "cert_1");
+
+  const active = control.completeCustomDomainTlsProvisioning({
+    id: domain.id,
+    ok: true,
+    provider: "fly",
+    requestId: "cert_1",
+  });
+  assert.equal(active.status, "active");
+  assert.equal(active.tlsStatus, "provisioned");
+  assert.equal(active.tlsProvisionedAt, fixedNow());
+
+  const route = control.pointRoute({
+    projectId: project.id,
+    host: domain.host,
+    pathPrefix: "/",
+    deploymentId: deployment.id,
+  });
+  assert.equal(route.host, domain.host);
+
+  const other = control.createProject({ id: "prj_other_domain", name: "other domain" });
+  const otherArtifact = control.createArtifact({
+    id: "art_other_domain",
+    projectId: other.id,
+    digest: digest("other-domain"),
+    location: "oci://registry.example.com/mizchi/other-domain:v1",
+    sizeBytes: 42,
+  });
+  const otherDeployment = control.createDeployment({
+    ...seedDeployment("dep_other_domain", otherArtifact.id),
+    projectId: other.id,
+  });
+  assert.throws(
+    () =>
+      control.pointRoute({
+        projectId: other.id,
+        host: domain.host,
+        pathPrefix: "/",
+        deploymentId: otherDeployment.id,
+      }),
+    /owned by another project/,
+  );
+});
+
+test("async control plane manages custom domain hooks", async () => {
+  const control = createAsyncControlPlane({
+    repository: asyncRepository(createMemoryRepository()),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+  });
+  const project = await control.createProject({ id: "prj_async_domain", name: "async domain" });
+  const domain = await control.createCustomDomain({
+    id: "dom_async",
+    projectId: project.id,
+    host: "async.example.dev",
+  });
+  await control.verifyCustomDomainOwnership({
+    id: domain.id,
+    txtRecords: [domain.verificationRecordValue],
+  });
+  const failed = await control.completeCustomDomainTlsProvisioning({
+    id: domain.id,
+    ok: false,
+    provider: "fly",
+    requestId: "cert_async",
+    error: "dns not ready",
+  });
+
+  assert.equal(failed.status, "tls_failed");
+  assert.equal(failed.tlsStatus, "failed");
+  assert.equal(failed.tlsError, "dns not ready");
 });
 
 test("registers project secrets and validates deployment secret bindings", () => {
@@ -606,6 +1057,87 @@ test("route pointers can roll forward and back without mutating deployments", ()
   assert.equal(snapshot.routes[0]?.deploymentId, "dep_v1");
   assert.equal(snapshot.routes[0]?.artifact.digest, digest("v1"));
   assert.equal(snapshot.routes[0]?.runtime.backend, "wasmtime");
+});
+
+test("deploy previews expose preview URLs with environment bindings and one-command rollback", () => {
+  const control = createSeededControlPlane();
+  const stable = control.createDeployment(seedDeployment("dep_stable", "art_v1"));
+  const candidate = control.createDeployment(seedDeployment("dep_candidate", "art_v2"));
+  control.pointRoute({
+    id: "rte_preview",
+    projectId: stable.projectId,
+    host: "preview.example.dev",
+    pathPrefix: "/preview",
+    deploymentId: stable.id,
+  });
+
+  const preview = control.createDeployPreview({
+    id: "prv_candidate",
+    projectId: stable.projectId,
+    deploymentId: candidate.id,
+    host: "Preview.Example.Dev",
+    pathPrefix: "/preview",
+    environment: {
+      FEATURE_FLAG: "on",
+      API_BASE_URL: "https://api.example.dev",
+    },
+  });
+
+  assert.equal(preview.url, "https://preview.example.dev/preview");
+  assert.equal(preview.status, "active");
+  assert.deepEqual(preview.environment, {
+    API_BASE_URL: "https://api.example.dev",
+    FEATURE_FLAG: "on",
+  });
+  assert.deepEqual(preview.previousRoute, {
+    id: "rte_preview",
+    deploymentId: stable.id,
+    targets: [{ deploymentId: stable.id, weight: 100 }],
+    updatedAt: fixedNow(),
+  });
+  assert.equal(control.createRouteSnapshot().routes[0]?.deploymentId, candidate.id);
+  assert.deepEqual(control.listProjectDeployPreviews({ projectId: stable.projectId }), [preview]);
+
+  const rolledBack = control.rollbackDeployPreview({ id: preview.id });
+
+  assert.equal(rolledBack.status, "rolled_back");
+  assert.equal(rolledBack.rolledBackAt, fixedNow());
+  assert.equal(control.createRouteSnapshot().routes[0]?.deploymentId, stable.id);
+});
+
+test("deploy preview rollback removes preview routes that had no previous route", () => {
+  const control = createSeededControlPlane();
+  const candidate = control.createDeployment(seedDeployment("dep_candidate", "art_v2"));
+
+  const preview = control.createDeployPreview({
+    projectId: candidate.projectId,
+    deploymentId: candidate.id,
+    host: "ephemeral.example.dev",
+    pathPrefix: "/",
+  });
+  assert.equal(preview.id, "prv_1");
+  assert.equal(preview.url, "https://ephemeral.example.dev/");
+  assert.equal(control.createRouteSnapshot().routes.length, 1);
+
+  control.rollbackDeployPreview({ id: preview.id });
+
+  assert.equal(control.createRouteSnapshot().routes.length, 0);
+});
+
+test("deploy preview environment bindings reject invalid keys", () => {
+  const control = createSeededControlPlane();
+  const deployment = control.createDeployment(seedDeployment("dep_candidate", "art_v2"));
+
+  assert.throws(
+    () =>
+      control.createDeployPreview({
+        projectId: deployment.projectId,
+        deploymentId: deployment.id,
+        host: "preview.example.dev",
+        environment: { "bad-name": "1" },
+      }),
+    /environment binding keys/,
+  );
 });
 
 test("deployment contract rejects runtimes and worlds outside the MVP contract", () => {
@@ -1056,6 +1588,10 @@ test("sqlite repository records schema migrations and upgrades existing database
     "202607010001_runtime_node_identity",
     "202607010002_runtime_node_host_info",
     "202607010003_fly_autoscaler_coordination",
+    "202607010004_tenant_identity",
+    "202607010005_usage_metering",
+    "202607010006_custom_domains",
+    "202607010007_deploy_previews",
   ]);
   assert.ok(routeColumns.includes("targets_json"));
   const artifactColumns = db
@@ -1077,6 +1613,18 @@ test("sqlite repository records schema migrations and upgrades existing database
   assert.ok(runtimeNodeColumns.includes("host_json"));
   assert.ok(secretColumns.includes("value"));
   assert.ok(kvNamespaceColumns.includes("project_id"));
+  const projectColumns = db
+    .prepare("pragma table_info(projects)")
+    .all()
+    .map((row: any) => row.name);
+  assert.ok(projectColumns.includes("organization_id"));
+  assert.equal(db.prepare("select count(*) as count from organizations").get().count, 0);
+  assert.equal(db.prepare("select count(*) as count from users").get().count, 0);
+  assert.equal(db.prepare("select count(*) as count from project_memberships").get().count, 0);
+  assert.equal(db.prepare("select count(*) as count from api_keys").get().count, 0);
+  assert.equal(db.prepare("select count(*) as count from usage_events").get().count, 0);
+  assert.equal(db.prepare("select count(*) as count from custom_domains").get().count, 0);
+  assert.equal(db.prepare("select count(*) as count from deploy_previews").get().count, 0);
   assert.equal(db.prepare("select count(*) as count from route_snapshot_publications").get().count, 1);
   const publicationColumns = db
     .prepare("pragma table_info(route_snapshot_publications)")

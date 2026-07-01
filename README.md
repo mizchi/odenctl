@@ -39,8 +39,10 @@ Set `WASMPLANE_API_TOKEN` to require `Authorization: Bearer <token>` on all cont
 endpoints except `GET /healthz`; this legacy token has all scopes. For scoped tokens, set
 `WASMPLANE_API_TOKENS` as semicolon-separated `token=scope,scope` entries, for example
 `reader=read;publisher=publish,read;writer=write,read`. Supported scopes are `read`, `write`,
-`publish`, and `*`. Set `WASMPLANE_AUDIT_LOG=/data/audit.jsonl` to append authenticated mutation
-audit events as JSONL.
+`publish`, and `*`. Once a bootstrap token is configured, project-scoped API keys stored in the
+control-plane repository can also authenticate requests; API key values are returned only at creation
+time, while the repository stores a SHA-256 token hash. Set `WASMPLANE_AUDIT_LOG=/data/audit.jsonl`
+to append authenticated mutation audit events as JSONL.
 Set `WASMPLANE_RUNTIME_TOKEN` on the control plane to sign route snapshot publishes sent to runtime
 nodes.
 Set `WASMPLANE_RUNTIME_IDENTITY_KEYS` on the control plane and runtime nodes as a comma-separated
@@ -627,6 +629,10 @@ canary analysis uses `POST /routes/canary/analyze` with runtime event samples, a
 deployment id, and thresholds such as `minRequests`, `p95Ms`, `errorRate`, and `rejectCount`.
 When a threshold fails, the route is rolled back and the decision is stored in
 `GET /canary-decisions`.
+Deploy previews can be created with `POST /deploy-previews`. A preview points a host/path at a
+candidate deployment, stores environment bindings for preview metadata, and records the previous
+route pointer. `POST /deploy-previews/:id/rollback` restores that previous pointer or removes the
+preview route when no prior route existed.
 
 ## API
 
@@ -641,7 +647,23 @@ Available endpoints:
 - `GET /admin`
 - `POST /admin/routes/canary`
 - `POST /admin/routes/rollback`
+- `POST /organizations`
+- `POST /users`
 - `POST /projects`
+- `POST /projects/:id/memberships`
+- `GET /projects/:id/memberships`
+- `POST /api-keys`
+- `GET /projects/:id/api-keys`
+- `POST /usage/events`
+- `GET /projects/:id/usage`
+- `POST /custom-domains`
+- `GET /projects/:id/custom-domains`
+- `POST /custom-domains/:id/verify`
+- `POST /custom-domains/:id/tls`
+- `POST /custom-domains/:id/tls/complete`
+- `POST /deploy-previews`
+- `GET /projects/:id/deploy-previews`
+- `POST /deploy-previews/:id/rollback`
 - `GET /projects/:id/quota-usage`
 - `POST /projects/:id/sqlite-databases`
 - `GET /projects/:id/sqlite-databases`
@@ -689,6 +711,26 @@ Artifacts may include signature and provenance metadata. `signature` currently s
 deployment creation when the artifact signature is missing or invalid. `provenance` records CI/build
 context such as builder, source, revision, and build id; artifact responses and route snapshots
 surface this metadata for deploy audit and runtime publication checks.
+Production admission guardrails can be enabled through environment variables: set
+`WASMPLANE_ADMISSION_REQUIRE_ARTIFACT_SIGNATURE=1`, optionally restrict signature key ids with
+`WASMPLANE_ADMISSION_ARTIFACT_SIGNATURE_KEY_IDS`, cap artifact metadata size with
+`WASMPLANE_ADMISSION_MAX_ARTIFACT_SIZE_BYTES`, restrict WIT contracts with
+`WASMPLANE_ADMISSION_ALLOWED_WORLDS` and `WASMPLANE_ADMISSION_ALLOWED_WORLD_VERSIONS`, and restrict
+deployment capabilities with `WASMPLANE_ADMISSION_OUTBOUND_HTTP_PREFIXES`,
+`WASMPLANE_ADMISSION_KV_NAMESPACE_IDS`, and `WASMPLANE_ADMISSION_SECRET_IDS`.
+
+Custom domains are registered before routing through `POST /custom-domains`. The response includes
+a DNS TXT challenge under `_wasmplane-challenge.<host>`; submit observed TXT values to
+`POST /custom-domains/:id/verify` to mark ownership verified. TLS provisioning is intentionally a
+hook for Fly/ACME/provider automation: `POST /custom-domains/:id/tls` records an external
+provisioning request, and `POST /custom-domains/:id/tls/complete` records success or failure. Once
+the domain is active, routes for that host can be pointed by the owning project; registered domains
+cannot be claimed by another project.
+
+Deploy previews create temporary route pointers with preview URLs. If `host` is omitted, the
+control plane derives a DNS-safe `*.preview.wasmplane.local` host from the project/deployment ids.
+Environment bindings must use environment-variable-style keys and string values; they are stored as
+control-plane metadata for preview orchestration, not injected into runtime snapshots yet.
 
 `POST /snapshots/routes/publish` creates a fresh compact route snapshot and pushes it to each
 active registered runtime node, plus statically configured runtime nodes, through

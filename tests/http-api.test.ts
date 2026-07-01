@@ -219,6 +219,132 @@ test("HTTP API exposes project quota usage", async () => {
   }
 });
 
+test("HTTP API records and reads project usage metering", async () => {
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+  });
+  const app = createHttpApp({ controlPlane: control });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+  const from = "2026-07-01T00:00:00.000Z";
+  const to = "2026-07-01T01:00:00.000Z";
+
+  try {
+    const organization = await postJson(baseUrl, "/organizations", { id: "org_http_usage", name: "HTTP Usage" });
+    const project = await postJson(baseUrl, "/projects", {
+      id: "prj_http_usage",
+      name: "http usage",
+      organizationId: organization.id,
+    });
+    const event = await postJson(baseUrl, "/usage/events", {
+      id: "use_http_invocation",
+      projectId: project.id,
+      metric: "invocation",
+      quantity: 2,
+      dimensions: { deploymentId: "dep_http", status: 200 },
+      recordedAt: from,
+    });
+    await postJson(baseUrl, "/usage/events", {
+      id: "use_http_egress",
+      projectId: project.id,
+      metric: "egress_bytes",
+      quantity: 128,
+      recordedAt: from,
+    });
+    await postJson(baseUrl, "/usage/events", {
+      id: "use_http_old",
+      projectId: project.id,
+      metric: "egress_bytes",
+      quantity: 999,
+      recordedAt: "2026-06-30T23:59:59.000Z",
+    });
+
+    assert.deepEqual(event, {
+      id: "use_http_invocation",
+      organizationId: organization.id,
+      projectId: project.id,
+      metric: "invocation",
+      quantity: 2,
+      dimensions: { deploymentId: "dep_http", status: 200 },
+      recordedAt: from,
+    });
+    const response = await fetch(
+      `${baseUrl}/projects/${project.id}/usage?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+    );
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      projectId: project.id,
+      organizationId: organization.id,
+      from,
+      to,
+      totals: {
+        invocations: 2,
+        cpuMs: 0,
+        wallMs: 0,
+        memoryMbMs: 0,
+        egressBytes: 128,
+        storageBytes: 0,
+        sqliteUnits: 0,
+      },
+    });
+  } finally {
+    await app.close();
+  }
+});
+
+test("HTTP API manages custom domain verification and TLS hooks", async () => {
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+  });
+  const app = createHttpApp({ controlPlane: control });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const project = await postJson(baseUrl, "/projects", { id: "prj_http_domain", name: "http domain" });
+    const domain = await postJson(baseUrl, "/custom-domains", {
+      id: "dom_http",
+      projectId: project.id,
+      host: "Http.Example.Dev",
+    });
+    assert.equal(domain.host, "http.example.dev");
+    assert.equal(domain.status, "pending_verification");
+
+    const list = await fetch(`${baseUrl}/projects/${project.id}/custom-domains`);
+    assert.equal(list.status, 200);
+    assert.deepEqual((await list.json()).domains, [domain]);
+
+    const verified = await postJsonOk(baseUrl, "/custom-domains/dom_http/verify", {
+      txtRecords: [domain.verificationRecordValue],
+    });
+    assert.equal(verified.status, "verified");
+    const pending = await postJsonOk(baseUrl, "/custom-domains/dom_http/tls", {
+      provider: "fly",
+      requestId: "cert_http",
+    });
+    assert.equal(pending.tlsStatus, "pending");
+    const active = await postJsonOk(baseUrl, "/custom-domains/dom_http/tls/complete", {
+      ok: true,
+      provider: "fly",
+      requestId: "cert_http",
+    });
+    assert.equal(active.status, "active");
+    assert.equal(active.tlsStatus, "provisioned");
+  } finally {
+    await app.close();
+  }
+});
+
 test("HTTP API provisions project volume sqlite database units", async () => {
   const dir = await mkdtemp(join(tmpdir(), "wasmplane-http-volume-sqlite-"));
   const control = createControlPlane({
@@ -574,6 +700,51 @@ test("HTTP API requires bearer token when API auth is configured", async () => {
       assert.fail(await ok.text());
     }
     assert.equal((await ok.json()).name, "hello");
+  } finally {
+    await app.close();
+  }
+});
+
+test("HTTP API accepts DB-backed scoped API keys", async () => {
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+  });
+  const organization = control.createOrganization({ id: "org_api", name: "API Org" });
+  const project = control.createProject({ id: "prj_api_key", name: "api-keyed", organizationId: organization.id });
+  const key = control.createApiKey({
+    id: "key_reader",
+    projectId: project.id,
+    name: "Reader",
+    scopes: ["read"],
+  });
+  const app = createHttpApp({ controlPlane: control, apiToken: "bootstrap-admin" });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const read = await fetch(`${baseUrl}/projects/${project.id}/quota-usage`, {
+      headers: { authorization: `Bearer ${key.token}` },
+    });
+    assert.equal(read.status, 200);
+    assert.deepEqual(await read.json(), {
+      artifacts: 0,
+      deployments: 0,
+      routes: 0,
+      secrets: 0,
+      kvNamespaces: 0,
+    });
+
+    const write = await fetch(`${baseUrl}/projects`, {
+      method: "POST",
+      headers: jsonHeaders(key.token),
+      body: JSON.stringify({ name: "should fail" }),
+    });
+    assert.equal(write.status, 403);
   } finally {
     await app.close();
   }
@@ -991,6 +1162,76 @@ test("HTTP API starts canary and rolls back routes", async () => {
       pathPrefix: "/",
     });
     assert.deepEqual(rollback.targets, [{ deploymentId: stable.id, weight: 100 }]);
+  } finally {
+    await app.close();
+  }
+});
+
+test("HTTP API creates deploy previews and rolls them back", async () => {
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+  });
+  const app = createHttpApp({ controlPlane: control });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const { project, deployment: stable } = await createHelloRoute(baseUrl);
+    const artifact = await postJson(baseUrl, "/artifacts", {
+      projectId: project.id,
+      digest: digest("preview-candidate"),
+      location: "oci://registry.example.com/mizchi/hello:preview",
+      sizeBytes: 43,
+    });
+    const candidate = await postJson(baseUrl, "/deployments", {
+      projectId: project.id,
+      artifactId: artifact.id,
+      world: "myedge:runtime/worker@0.1.0",
+      runtime: { backend: "wasmtime", version: "wasmtime-43", wasi: "wasip3" },
+      limits: {
+        cpuMs: 50,
+        memoryMb: 64,
+        wallMs: 1000,
+        requestBytes: 1048576,
+        subrequests: 20,
+        hostCalls: 100,
+        responseBytes: 1048576,
+      },
+      capabilities: { outboundHttp: { enabled: false, allow: [] }, kv: [], secrets: [] },
+    });
+
+    const preview = await postJson(baseUrl, "/deploy-previews", {
+      projectId: project.id,
+      deploymentId: candidate.id,
+      host: "hello.example.dev",
+      pathPrefix: "/",
+      environment: { FEATURE_FLAG: "on" },
+    });
+
+    assert.match(preview.id, /^prv_/);
+    assert.equal(preview.url, "https://hello.example.dev/");
+    assert.equal(preview.previousRoute.deploymentId, stable.id);
+    assert.deepEqual(preview.environment, { FEATURE_FLAG: "on" });
+
+    const previewsResponse = await fetch(`${baseUrl}/projects/${project.id}/deploy-previews`);
+    assert.equal(previewsResponse.status, 200);
+    const { previews } = await previewsResponse.json();
+    assert.equal(previews.length, 1);
+    assert.equal(previews[0].deploymentId, candidate.id);
+
+    const snapshotBeforeRollback = await (await fetch(`${baseUrl}/snapshots/routes`)).json();
+    assert.equal(snapshotBeforeRollback.routes[0].deploymentId, candidate.id);
+
+    const rollback = await postJsonOk(baseUrl, `/deploy-previews/${preview.id}/rollback`, {});
+    assert.equal(rollback.status, "rolled_back");
+
+    const snapshotAfterRollback = await (await fetch(`${baseUrl}/snapshots/routes`)).json();
+    assert.equal(snapshotAfterRollback.routes[0].deploymentId, stable.id);
   } finally {
     await app.close();
   }
