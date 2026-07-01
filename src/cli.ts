@@ -10,6 +10,10 @@ import {
   createWasip3HostArtifactValidator,
   type LocalArtifactValidator,
 } from "./control-plane/artifact-validation.ts";
+import {
+  createDeploymentDiff,
+  type DeploymentDiff,
+} from "./deployment-diff.ts";
 import { publishRouteSnapshot } from "./control-plane/snapshot-publisher.ts";
 import {
   createConfiguredVolumeSqliteBackupCipher,
@@ -26,7 +30,10 @@ import {
   MVP_RUNTIME_BACKEND,
   MVP_WASI_PROFILE,
   MVP_WORKER_WORLD,
+  MVP_WORKER_WORLD_VERSION,
   type CapabilityPolicy,
+  type RouteSnapshot,
+  type RouteSnapshotEntry,
   type RuntimeLimits,
   type RuntimeSpec,
 } from "./control-plane/contracts.ts";
@@ -47,6 +54,7 @@ export interface DeployComponentInput {
   secrets?: Array<{ binding: string; secretId: string }>;
   token?: string;
   publish?: boolean;
+  diff?: boolean;
   fetch?: FetchFunction;
 }
 
@@ -55,6 +63,7 @@ export interface DeployComponentResult {
   deployment: any;
   route: any;
   publish?: any;
+  diff?: DeploymentDiff;
 }
 
 export interface DevCommandInput {
@@ -163,6 +172,9 @@ export async function deployComponent(input: DeployComponentInput): Promise<Depl
     arbitrarySockets: false,
     processSpawn: false,
   };
+  const currentSnapshot = input.diff
+    ? await getJson(fetchImpl, input.controlPlaneUrl, "/snapshots/routes", input.token) as RouteSnapshot
+    : undefined;
 
   const artifact = await postJson(fetchImpl, input.controlPlaneUrl, "/artifacts/local", input.token, {
     id: artifactId,
@@ -188,8 +200,32 @@ export async function deployComponent(input: DeployComponentInput): Promise<Depl
   const publish = input.publish === false
     ? undefined
     : await postJson(fetchImpl, input.controlPlaneUrl, "/snapshots/routes/publish", input.token, {});
+  const diff = currentSnapshot
+    ? createDeploymentDiff({
+      before: currentSnapshot,
+      after: deploymentDiffRouteEntry({
+        projectId: input.projectId,
+        host: input.host,
+        pathPrefix: input.pathPrefix ?? "/",
+        artifact,
+        artifactFallback: {
+          id: artifactId,
+          digest,
+          location: pathToFileURL(input.componentPath).href,
+        },
+        deployment,
+        deploymentFallback: {
+          id: deploymentId,
+          runtime,
+          limits,
+          capabilities,
+        },
+        route,
+      }),
+    })
+    : undefined;
 
-  return { artifact, deployment, route, publish };
+  return { artifact, deployment, route, publish, diff };
 }
 
 export async function runDevCommand(input: DevCommandInput): Promise<DevCommandResult> {
@@ -284,6 +320,7 @@ export function parseDeployArgs(args: string[], env: Record<string, string | und
     kv: [],
     secrets: [],
     publish: true,
+    diff: false,
   };
   for (let index = 0; index < args.length; index += 1) {
     const flag = args[index];
@@ -350,6 +387,12 @@ export function parseDeployArgs(args: string[], env: Record<string, string | und
         break;
       case "--no-publish":
         input.publish = false;
+        break;
+      case "--diff":
+        input.diff = true;
+        break;
+      case "--no-diff":
+        input.diff = false;
         break;
       default:
         throw new Error(`unknown deploy argument ${flag}`);
@@ -776,6 +819,59 @@ function routePreview(runtimeUrl: string, host: string, pathPrefix: string) {
   };
 }
 
+function deploymentDiffRouteEntry(input: {
+  projectId: string;
+  host: string;
+  pathPrefix: string;
+  artifact: any;
+  artifactFallback: { id: string; digest: string; location: string };
+  deployment: any;
+  deploymentFallback: {
+    id: string;
+    runtime: RuntimeSpec;
+    limits: RuntimeLimits;
+    capabilities: CapabilityPolicy;
+  };
+  route: any;
+}): RouteSnapshotEntry {
+  const deploymentId = input.deployment.id ?? input.deploymentFallback.id;
+  const runtime = input.deployment.runtime ?? input.deploymentFallback.runtime;
+  const limits = input.deployment.limits ?? input.deploymentFallback.limits;
+  const capabilities = input.deployment.capabilities ?? input.deploymentFallback.capabilities;
+  const artifact = {
+    id: input.artifact.id ?? input.artifactFallback.id,
+    digest: input.artifact.digest ?? input.artifactFallback.digest,
+    location: input.artifact.location ?? input.artifactFallback.location,
+    ...(input.artifact.signature ? { signature: input.artifact.signature } : {}),
+    ...(input.artifact.provenance ? { provenance: input.artifact.provenance } : {}),
+  };
+  const targets = Array.isArray(input.route.targets) && input.route.targets.length > 0
+    ? input.route.targets
+    : [{ deploymentId, weight: 100 }];
+  return {
+    host: input.route.host ?? input.host,
+    pathPrefix: input.route.pathPrefix ?? input.pathPrefix,
+    projectId: input.route.projectId ?? input.projectId,
+    deploymentId: input.route.deploymentId ?? deploymentId,
+    targets: targets.map((target: any) => ({
+      deploymentId: target.deploymentId,
+      weight: target.weight,
+      world: input.deployment.world ?? MVP_WORKER_WORLD,
+      worldVersion: input.deployment.worldVersion ?? MVP_WORKER_WORLD_VERSION,
+      runtime,
+      limits,
+      capabilities,
+      artifact,
+    })),
+    world: input.deployment.world ?? MVP_WORKER_WORLD,
+    worldVersion: input.deployment.worldVersion ?? MVP_WORKER_WORLD_VERSION,
+    runtime,
+    limits,
+    capabilities,
+    artifact,
+  };
+}
+
 function parseBinding(value: string, targetKey: "namespaceId" | "secretId") {
   const [binding, target, extra] = value.split("=");
   if (!binding || !target || extra !== undefined) {
@@ -852,6 +948,7 @@ function printDeployResult(result: DeployComponentResult) {
         deploymentId: result.deployment.id,
         routeId: result.route.id,
         published: result.publish?.ok,
+        ...(result.diff ? { diff: result.diff } : {}),
       },
       null,
       2,

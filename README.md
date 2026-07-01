@@ -626,7 +626,9 @@ pnpm wasmplane deploy \
 The command uploads bytes through `POST /artifacts/local`, creates an immutable deployment, points
 the route, then publishes a route snapshot unless `--no-publish` is passed. Limit overrides use
 `--limit name=value`, for example `--limit wallMs=2500 --limit cpuMs=100`. The CLI also reads
-`WASMPLANE_CONTROL_PLANE_TOKEN` when `--token` is omitted.
+`WASMPLANE_CONTROL_PLANE_TOKEN` when `--token` is omitted. Pass `--diff` to fetch the current route
+snapshot before deploying and include JSON diff output for the route pointer, rollout targets,
+runtime version, limits, outbound allowlist, KV bindings, and secret bindings.
 
 Worker projects can be bootstrapped from the canonical WIT package with generated SDK helpers:
 

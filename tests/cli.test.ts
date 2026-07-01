@@ -20,6 +20,7 @@ import {
   MVP_RUNTIME_BACKEND,
   MVP_WASI_PROFILE,
   MVP_WORKER_WORLD,
+  MVP_WORKER_WORLD_VERSION,
 } from "../src/control-plane/contracts.ts";
 import { createVolumeSqliteRegistry } from "../src/control-plane/volume-sqlite.ts";
 
@@ -137,6 +138,7 @@ test("CLI deploy args parse capability bindings and limit overrides", () => {
       "wallMs=2500",
       "--token",
       "control-secret",
+      "--diff",
       "--no-publish",
     ],
     { WASMPLANE_CONTROL_PLANE_URL: "http://127.0.0.1:9999" },
@@ -148,6 +150,7 @@ test("CLI deploy args parse capability bindings and limit overrides", () => {
   assert.deepEqual(input.outboundAllow, ["https://api.example.dev/"]);
   assert.deepEqual(input.limits, { wallMs: 2500 });
   assert.equal(input.token, "control-secret");
+  assert.equal(input.diff, true);
   assert.equal(input.publish, false);
 });
 
@@ -168,6 +171,88 @@ test("CLI deploy args read token from environment", () => {
   );
 
   assert.equal(input.token, "env-secret");
+});
+
+test("CLI deploy diff compares current route snapshot with the new deployment", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "wasmplane-cli-deploy-diff-"));
+  const componentPath = join(dir, "worker.component.wasm");
+  const componentBytes = Buffer.from("component bytes");
+  await writeFile(componentPath, componentBytes);
+  const calls: Array<{ path: string; method: string; body: any }> = [];
+  const currentSnapshot = {
+    schemaVersion: 1,
+    generatedAt: "2026-07-01T00:00:00.000Z",
+    routes: [snapshotRoute({
+      deploymentId: "dep_old",
+      runtimeVersion: "wasmtime-41",
+      limits: { wallMs: 1000 },
+      kv: [{ binding: "MAIN", namespaceId: "kv_old" }],
+      secrets: [{ binding: "API_KEY", secretId: "sec_old" }],
+    })],
+  };
+
+  const result = await deployComponent({
+    controlPlaneUrl: "http://control-plane.local",
+    projectId: "prj_hello",
+    componentPath,
+    artifactId: "art_new",
+    deploymentId: "dep_new",
+    host: "hello.example.dev",
+    pathPrefix: "/api",
+    kv: [{ binding: "MAIN", namespaceId: "kv_main" }],
+    secrets: [{ binding: "API_KEY", secretId: "sec_api_key" }],
+    limits: { wallMs: 2500 },
+    diff: true,
+    fetch: async (url, init) => {
+      const parsed = new URL(url);
+      const body = init?.body ? JSON.parse(init.body) : {};
+      calls.push({ path: parsed.pathname, method: init?.method ?? "GET", body });
+      if (parsed.pathname === "/snapshots/routes") {
+        return jsonResponse(200, currentSnapshot);
+      }
+      if (parsed.pathname === "/artifacts/local") {
+        return jsonResponse(201, {
+          id: body.id,
+          projectId: body.projectId,
+          digest: `sha256:${createHash("sha256").update(componentBytes).digest("hex")}`,
+          location: "file:///tmp/artifact.component.wasm",
+          sizeBytes: componentBytes.byteLength,
+        });
+      }
+      if (parsed.pathname === "/deployments") {
+        return jsonResponse(201, { ...body, worldVersion: MVP_WORKER_WORLD_VERSION, createdAt: "now" });
+      }
+      if (parsed.pathname === "/routes") {
+        return jsonResponse(200, {
+          ...body,
+          targets: [{ deploymentId: body.deploymentId, weight: 100 }],
+          updatedAt: "now",
+        });
+      }
+      if (parsed.pathname === "/snapshots/routes/publish") {
+        return jsonResponse(200, { ok: true, targets: [] });
+      }
+      return jsonResponse(404, { error: { code: "not_found" } });
+    },
+  });
+
+  assert.deepEqual(
+    calls.map((call) => [call.method, call.path]),
+    [
+      ["GET", "/snapshots/routes"],
+      ["POST", "/artifacts/local"],
+      ["POST", "/deployments"],
+      ["PUT", "/routes"],
+      ["POST", "/snapshots/routes/publish"],
+    ],
+  );
+  assert.equal(result.diff?.route.action, "update");
+  assert.equal(result.diff?.route.beforeDeploymentId, "dep_old");
+  assert.equal(result.diff?.route.afterDeploymentId, "dep_new");
+  assert.ok(result.diff?.changes.some((change: any) => change.path === "runtime.version"));
+  assert.ok(result.diff?.changes.some((change: any) => change.path === "limits.wallMs"));
+  assert.ok(result.diff?.changes.some((change: any) => change.path === "capabilities.kv"));
+  assert.ok(result.diff?.changes.some((change: any) => change.path === "capabilities.secrets"));
 });
 
 test("CLI dev args default to local control plane and runtime with WIT validation and log tailing", () => {
@@ -512,5 +597,59 @@ function jsonResponse(status: number, body: any) {
     async text() {
       return JSON.stringify(body);
     },
+  };
+}
+
+function snapshotRoute(input: {
+  deploymentId: string;
+  runtimeVersion: string;
+  limits: { wallMs: number };
+  kv: Array<{ binding: string; namespaceId: string }>;
+  secrets: Array<{ binding: string; secretId: string }>;
+}) {
+  const limits = {
+    cpuMs: 50,
+    memoryMb: 64,
+    wallMs: input.limits.wallMs,
+    requestBytes: 1048576,
+    responseBytes: 1048576,
+    subrequests: 20,
+    hostCalls: 100,
+  };
+  const capabilities = {
+    outboundHttp: { enabled: false, allow: [] },
+    kv: input.kv,
+    secrets: input.secrets,
+    arbitraryFilesystem: false,
+    arbitrarySockets: false,
+    processSpawn: false,
+  };
+  const runtime = { backend: MVP_RUNTIME_BACKEND, version: input.runtimeVersion, wasi: MVP_WASI_PROFILE };
+  const artifact = {
+    id: `art_${input.deploymentId}`,
+    digest: `sha256:${input.deploymentId}`,
+    location: `file:///tmp/${input.deploymentId}.wasm`,
+  };
+  return {
+    host: "hello.example.dev",
+    pathPrefix: "/api",
+    projectId: "prj_hello",
+    deploymentId: input.deploymentId,
+    targets: [{
+      deploymentId: input.deploymentId,
+      weight: 100,
+      world: MVP_WORKER_WORLD,
+      worldVersion: MVP_WORKER_WORLD_VERSION,
+      runtime,
+      limits,
+      capabilities,
+      artifact,
+    }],
+    world: MVP_WORKER_WORLD,
+    worldVersion: MVP_WORKER_WORLD_VERSION,
+    runtime,
+    limits,
+    capabilities,
+    artifact,
   };
 }
