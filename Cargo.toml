@@ -1,6 +1,6 @@
 [workspace]
 members = ["crates/wasip3-host"]
-exclude = ["examples/hello-worker"]
+exclude = ["examples/hello-worker", "examples/reset-worker"]
 resolver = "3"
 
 [workspace.package]

@@ -167,7 +167,7 @@ Production readiness tasks, in implementation order.
 - [x] Add a `guest-reset-v1` export contract and reject reuse for components that do not implement it.
 - [x] Call the `wasmplane-reset: func() -> ()` export before returning instances to the idle pool.
 - [x] Document `stateless-v1` versus `guest-reset-v1` reuse modes.
-- [ ] Add a conforming reset-export Wasm fixture that proves a mutable guest can be reset and reused.
+- [x] Add a conforming reset-export Wasm fixture that proves a mutable guest can be reset and reused.
 
 ## 23. Durable autoscaler coordination store
 

@@ -2317,6 +2317,67 @@ mod tests {
     }
 
     #[test]
+    fn guest_reset_contract_resets_mutable_guest_before_reuse() {
+        let dir = temp_dir("runtime-reuse-reset-fixture");
+        let component_path = build_reset_worker_component(&dir);
+        let stateless_runtime = Wasip3Runtime::with_options(Wasip3RuntimeOptions {
+            max_prepared_components: 4,
+            max_reusable_instances_per_component: 1,
+            instance_reuse_contract: InstanceReuseContract::StatelessV1,
+            pooling: None,
+        })
+        .expect("stateless runtime");
+        let first = stateless_runtime
+            .invoke_component_handle_with_limits_and_policy(
+                &component_path,
+                hello_request(),
+                InvocationLimits::default(),
+                HostPolicy::deny_all(),
+            )
+            .expect("first stateless invoke");
+        let second = stateless_runtime
+            .invoke_component_handle_with_limits_and_policy(
+                &component_path,
+                hello_request(),
+                InvocationLimits::default(),
+                HostPolicy::deny_all(),
+            )
+            .expect("second stateless invoke");
+
+        assert_eq!(response_text(&first), "count=1");
+        assert_eq!(response_text(&second), "count=2");
+        assert_eq!(stateless_runtime.reusable_instance_count(), 1);
+
+        let reset_runtime = Wasip3Runtime::with_options(Wasip3RuntimeOptions {
+            max_prepared_components: 4,
+            max_reusable_instances_per_component: 1,
+            instance_reuse_contract: InstanceReuseContract::GuestResetV1,
+            pooling: None,
+        })
+        .expect("reset runtime");
+        let first = reset_runtime
+            .invoke_component_handle_with_limits_and_policy(
+                &component_path,
+                hello_request(),
+                InvocationLimits::default(),
+                HostPolicy::deny_all(),
+            )
+            .expect("first reset invoke");
+        let second = reset_runtime
+            .invoke_component_handle_with_limits_and_policy(
+                &component_path,
+                hello_request(),
+                InvocationLimits::default(),
+                HostPolicy::deny_all(),
+            )
+            .expect("second reset invoke");
+
+        assert_eq!(response_text(&first), "count=1");
+        assert_eq!(response_text(&second), "count=1");
+        assert_eq!(reset_runtime.reusable_instance_count(), 1);
+    }
+
+    #[test]
     fn precompile_component_serializes_component_artifact() {
         let dir = std::env::temp_dir().join(format!("wasmplane-host-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("tmp dir");
@@ -2364,6 +2425,10 @@ mod tests {
             headers: Vec::new(),
             body: Vec::new(),
         }
+    }
+
+    fn response_text(response: &HttpResponseOutput) -> String {
+        String::from_utf8(response.body.clone()).expect("utf8 response body")
     }
 
     #[test]
@@ -3064,6 +3129,73 @@ mod tests {
             .status()
             .expect("run wasm-tools component new");
         assert!(status.success(), "wasm-tools component new failed");
+
+        component_path
+    }
+
+    fn build_reset_worker_component(dir: &Path) -> PathBuf {
+        let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .canonicalize()
+            .expect("repo root");
+        let manifest_path = repo_root.join("examples/reset-worker/Cargo.toml");
+        let rustc = Command::new("rustup")
+            .args(["which", "rustc", "--toolchain", "stable"])
+            .output()
+            .ok()
+            .and_then(|output| {
+                if output.status.success() {
+                    Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+                } else {
+                    None
+                }
+            });
+        let mut cargo = Command::new("rustup");
+        cargo.args([
+            "run",
+            "stable",
+            "cargo",
+            "build",
+            "--manifest-path",
+            manifest_path.to_str().expect("utf8 manifest path"),
+            "--target",
+            "wasm32-wasip1",
+        ]);
+        if let Some(rustc) = rustc {
+            cargo.env("RUSTC", rustc);
+        }
+        let status = cargo.status().expect("build reset worker");
+        assert!(status.success(), "reset worker cargo build failed");
+
+        let adapter_path = std::env::var_os("WASI_PREVIEW1_ADAPTER")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                repo_root.join(
+                    "node_modules/@bytecodealliance/jco/lib/wasi_snapshot_preview1.reactor.wasm",
+                )
+            });
+        assert!(
+            adapter_path.is_file(),
+            "missing WASI preview1 adapter at {}",
+            adapter_path.display()
+        );
+
+        let core_path =
+            repo_root.join("examples/reset-worker/target/wasm32-wasip1/debug/reset_worker.wasm");
+        let component_path = dir.join("reset-worker.component.wasm");
+        let status = Command::new("wasm-tools")
+            .args([
+                "component",
+                "new",
+                core_path.to_str().expect("utf8 core path"),
+                "--adapt",
+                adapter_path.to_str().expect("utf8 adapter path"),
+                "-o",
+                component_path.to_str().expect("utf8 component path"),
+            ])
+            .status()
+            .expect("run wasm-tools component new for reset worker");
+        assert!(status.success(), "reset worker component new failed");
 
         component_path
     }
