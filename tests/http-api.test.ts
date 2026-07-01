@@ -297,6 +297,72 @@ test("HTTP API records and reads project usage metering", async () => {
   }
 });
 
+test("HTTP API exposes project enforcement report", async () => {
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+    projectEnforcementPolicies: {
+      prj_http_enforce: {
+        cpuMs: 100,
+        memoryMbMs: 4096,
+        storageBytes: 1024,
+        concurrency: 8,
+        rate: { requestsPerSecond: 50 },
+      },
+    },
+  });
+  const app = createHttpApp({ controlPlane: control });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+  const from = "2026-07-01T00:00:00.000Z";
+  const to = "2026-07-01T01:00:00.000Z";
+
+  try {
+    const organization = await postJson(baseUrl, "/organizations", {
+      id: "org_http_enforce",
+      name: "HTTP Enforce",
+    });
+    const project = await postJson(baseUrl, "/projects", {
+      id: "prj_http_enforce",
+      name: "http enforce",
+      organizationId: organization.id,
+    });
+    await postJson(baseUrl, "/usage/events", {
+      id: "use_http_enforce_cpu",
+      projectId: project.id,
+      metric: "cpu_ms",
+      quantity: 25,
+      recordedAt: from,
+    });
+    await postJson(baseUrl, "/usage/events", {
+      id: "use_http_enforce_storage",
+      projectId: project.id,
+      metric: "storage_bytes",
+      quantity: 2048,
+      recordedAt: from,
+    });
+
+    const response = await fetch(
+      `${baseUrl}/projects/${project.id}/enforcement-report?from=${encodeURIComponent(from)}&to=${
+        encodeURIComponent(to)
+      }`,
+    );
+    assert.equal(response.status, 200);
+    const report = await response.json();
+    assert.equal(report.projectId, project.id);
+    assert.deepEqual(report.enforcement.cpu, { used: 25, limit: 100, remaining: 75, status: "ok" });
+    assert.deepEqual(report.enforcement.storage, { used: 2048, limit: 1024, remaining: 0, status: "exceeded" });
+    assert.deepEqual(report.enforcement.concurrency, { limit: 8, status: "configured" });
+    assert.deepEqual(report.enforcement.rate, { requestsPerSecond: 50, status: "configured" });
+  } finally {
+    await app.close();
+  }
+});
+
 test("HTTP API manages custom domain verification and TLS hooks", async () => {
   const control = createControlPlane({
     repository: createMemoryRepository(),

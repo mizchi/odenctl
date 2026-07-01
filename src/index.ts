@@ -75,6 +75,13 @@ export {
   signArtifactDigest,
 } from "./control-plane/artifact-signing.ts";
 export {
+  createProjectEnforcementReport,
+  projectEnforcementPoliciesFromEnv,
+  type ProjectEnforcementPolicies,
+  type ProjectEnforcementPolicy,
+  type ProjectEnforcementReport,
+} from "./control-plane/enforcement-report.ts";
+export {
   enforceProjectQuota,
   projectQuotasFromEnv,
 } from "./control-plane/quotas.ts";

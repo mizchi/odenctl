@@ -55,6 +55,7 @@ export interface HttpAppOptions {
     authenticateApiToken?(input: any): MaybePromise<ApiToken | undefined>;
     recordUsageEvent(input: any): MaybePromise<unknown>;
     getProjectUsageSummary(input: any): MaybePromise<unknown>;
+    getProjectEnforcementReport(input: any): MaybePromise<unknown>;
     createCustomDomain(input: any): MaybePromise<unknown>;
     listProjectCustomDomains(input: any): MaybePromise<unknown>;
     verifyCustomDomainOwnership(input: any): MaybePromise<unknown>;
@@ -375,6 +376,19 @@ export function createHttpApp(options: HttpAppOptions) {
           200,
           await options.controlPlane.getProjectUsageSummary({
             projectId: projectUsage.projectId,
+            from: url.searchParams.get("from") ?? undefined,
+            to: url.searchParams.get("to") ?? undefined,
+          }),
+        );
+        return;
+      }
+      const projectEnforcementReport = projectEnforcementReportMatch(method, url.pathname);
+      if (projectEnforcementReport) {
+        writeJson(
+          response,
+          200,
+          await options.controlPlane.getProjectEnforcementReport({
+            projectId: projectEnforcementReport.projectId,
             from: url.searchParams.get("from") ?? undefined,
             to: url.searchParams.get("to") ?? undefined,
           }),
@@ -1325,6 +1339,17 @@ function projectUsageMatch(method: string, pathname: string): { projectId: strin
     return undefined;
   }
   const match = /^\/projects\/([^/]+)\/usage$/.exec(pathname);
+  if (!match) {
+    return undefined;
+  }
+  return { projectId: decodeURIComponent(match[1]) };
+}
+
+function projectEnforcementReportMatch(method: string, pathname: string): { projectId: string } | undefined {
+  if (method !== "GET") {
+    return undefined;
+  }
+  const match = /^\/projects\/([^/]+)\/enforcement-report$/.exec(pathname);
   if (!match) {
     return undefined;
   }

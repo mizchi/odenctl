@@ -86,6 +86,11 @@ import {
   type CanaryAnalysisThresholds,
   type CanaryMetricEvent,
 } from "./canary-analysis.ts";
+import {
+  createProjectEnforcementReport,
+  type ProjectEnforcementPolicies,
+  type ProjectEnforcementReport,
+} from "./enforcement-report.ts";
 
 export interface AsyncControlPlaneRepository {
   createOrganization(organization: Organization): Promise<Organization>;
@@ -152,6 +157,7 @@ export interface AsyncControlPlaneOptions {
   runtimeNodeActiveTtlMs?: number;
   secretCipher?: SecretCipher;
   projectQuotas?: ProjectQuotas;
+  projectEnforcementPolicies?: ProjectEnforcementPolicies;
   artifactSignatureVerifier?: ArtifactSignatureVerifier;
   admissionPolicy?: ControlPlaneAdmissionPolicy;
 }
@@ -214,6 +220,12 @@ export interface RecordUsageEventInput {
 }
 
 export interface GetProjectUsageSummaryInput {
+  projectId: string;
+  from?: string;
+  to?: string;
+}
+
+export interface GetProjectEnforcementReportInput {
   projectId: string;
   from?: string;
   to?: string;
@@ -424,6 +436,7 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
   const runtimeNodeActiveTtlMs = options.runtimeNodeActiveTtlMs;
   const secretCipher = options.secretCipher;
   const projectQuotas = options.projectQuotas;
+  const projectEnforcementPolicies = options.projectEnforcementPolicies;
   const artifactSignatureVerifier = options.artifactSignatureVerifier;
   const admissionPolicy = options.admissionPolicy;
 
@@ -555,6 +568,27 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
       throw new ControlPlaneError("validation", "usage from must be before usage to");
     }
     return repository.getProjectUsageSummary(input.projectId, from, to);
+  }
+
+  async function getProjectEnforcementReport(
+    input: GetProjectEnforcementReportInput,
+  ): Promise<ProjectEnforcementReport> {
+    await requireProject(repository, input.projectId);
+    const from = normalizeUsageTimestamp(input.from, "enforcement report from");
+    const to = normalizeUsageTimestamp(input.to, "enforcement report to");
+    if (from && to && Date.parse(from) >= Date.parse(to)) {
+      throw new ControlPlaneError("validation", "enforcement report from must be before to");
+    }
+    const [summary, resources] = await Promise.all([
+      repository.getProjectUsageSummary(input.projectId, from, to),
+      repository.getProjectUsage(input.projectId),
+    ]);
+    return createProjectEnforcementReport({
+      summary,
+      resources,
+      policy: projectEnforcementPolicies?.[input.projectId],
+      generatedAt: now(),
+    });
   }
 
   async function createCustomDomain(input: CreateCustomDomainInput): Promise<CustomDomain> {
@@ -1075,6 +1109,7 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
     authenticateApiToken,
     recordUsageEvent,
     getProjectUsageSummary,
+    getProjectEnforcementReport,
     createCustomDomain,
     listProjectCustomDomains,
     verifyCustomDomainOwnership,

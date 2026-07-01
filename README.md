@@ -56,6 +56,11 @@ Set `WASMPLANE_QUOTA_MAX_ARTIFACTS`, `WASMPLANE_QUOTA_MAX_DEPLOYMENTS`,
 `WASMPLANE_QUOTA_MAX_ROUTES`, `WASMPLANE_QUOTA_MAX_SECRETS`, and
 `WASMPLANE_QUOTA_MAX_KV_NAMESPACES` to enforce per-project resource quotas before writes are
 accepted.
+Set `WASMPLANE_ENFORCEMENT_CPU_MS_LIMITS`,
+`WASMPLANE_ENFORCEMENT_MEMORY_MB_MS_LIMITS`, `WASMPLANE_ENFORCEMENT_STORAGE_BYTES_LIMITS`,
+`WASMPLANE_ENFORCEMENT_CONCURRENCY_LIMITS`, and `WASMPLANE_ENFORCEMENT_RATE_LIMITS` to expose
+per-project enforcement reports from usage ledgers. Values are comma-separated `project=value`
+pairs; rate limits use `project=rps` or `project=rps:burst`.
 Set `WASMPLANE_SNAPSHOT_PUBLISH_INTERVAL_MS` to run a background publish job that periodically
 generates the current route snapshot and publishes it to configured/registered active runtime
 nodes. Each generated route snapshot includes a content-derived `snap_<hash>` id, and publish
@@ -715,6 +720,7 @@ Available endpoints:
 - `GET /projects/:id/deploy-previews`
 - `POST /deploy-previews/:id/rollback`
 - `GET /projects/:id/quota-usage`
+- `GET /projects/:id/enforcement-report`
 - `POST /projects/:id/sqlite-databases`
 - `GET /projects/:id/sqlite-databases`
 - `GET /sqlite-databases`

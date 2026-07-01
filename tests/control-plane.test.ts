@@ -223,6 +223,137 @@ test("control plane records project usage metering events", () => {
   );
 });
 
+test("control plane reports per-tenant enforcement status", () => {
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+    projectEnforcementPolicies: {
+      prj_enforce: {
+        cpuMs: 10,
+        memoryMbMs: 4096,
+        storageBytes: 8192,
+        concurrency: 4,
+        rate: { requestsPerSecond: 100, burst: 200 },
+      },
+    },
+  });
+  const organization = control.createOrganization({ id: "org_enforce", name: "Enforce Org" });
+  const project = control.createProject({
+    id: "prj_enforce",
+    name: "enforce",
+    organizationId: organization.id,
+  });
+  const from = "2026-07-01T00:00:00.000Z";
+  const to = "2026-07-01T01:00:00.000Z";
+  control.recordUsageEvent({
+    id: "use_enforce_cpu",
+    projectId: project.id,
+    metric: "cpu_ms",
+    quantity: 12,
+    recordedAt: from,
+  });
+  control.recordUsageEvent({
+    id: "use_enforce_mem",
+    projectId: project.id,
+    metric: "memory_mb_ms",
+    quantity: 1024,
+    recordedAt: from,
+  });
+  control.recordUsageEvent({
+    id: "use_enforce_storage",
+    projectId: project.id,
+    metric: "storage_bytes",
+    quantity: 2048,
+    recordedAt: from,
+  });
+
+  assert.deepEqual(control.getProjectEnforcementReport({ projectId: project.id, from, to }), {
+    projectId: project.id,
+    organizationId: organization.id,
+    generatedAt: fixedNow(),
+    from,
+    to,
+    policy: {
+      cpuMs: 10,
+      memoryMbMs: 4096,
+      storageBytes: 8192,
+      concurrency: 4,
+      rate: { requestsPerSecond: 100, burst: 200 },
+    },
+    usage: {
+      cpuMs: 12,
+      memoryMbMs: 1024,
+      storageBytes: 2048,
+    },
+    resources: {
+      artifacts: 0,
+      deployments: 0,
+      routes: 0,
+      secrets: 0,
+      kvNamespaces: 0,
+    },
+    enforcement: {
+      cpu: { used: 12, limit: 10, remaining: 0, status: "exceeded" },
+      memory: { used: 1024, limit: 4096, remaining: 3072, status: "ok" },
+      storage: { used: 2048, limit: 8192, remaining: 6144, status: "ok" },
+      concurrency: { limit: 4, status: "configured" },
+      rate: { requestsPerSecond: 100, burst: 200, status: "configured" },
+    },
+  });
+});
+
+test("async control plane reports per-tenant enforcement status", async () => {
+  const control = createAsyncControlPlane({
+    repository: asyncRepository(createMemoryRepository()),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+    projectEnforcementPolicies: {
+      prj_async_enforce: {
+        cpuMs: 100,
+        memoryMbMs: 4096,
+        storageBytes: 1024,
+        concurrency: 8,
+        rate: { requestsPerSecond: 50 },
+      },
+    },
+  });
+  const organization = await control.createOrganization({
+    id: "org_async_enforce",
+    name: "Async Enforce Org",
+  });
+  const project = await control.createProject({
+    id: "prj_async_enforce",
+    name: "async enforce",
+    organizationId: organization.id,
+  });
+  const from = "2026-07-01T00:00:00.000Z";
+  const to = "2026-07-01T01:00:00.000Z";
+  await control.recordUsageEvent({
+    id: "use_async_enforce_cpu",
+    projectId: project.id,
+    metric: "cpu_ms",
+    quantity: 25,
+    recordedAt: from,
+  });
+  await control.recordUsageEvent({
+    id: "use_async_enforce_storage",
+    projectId: project.id,
+    metric: "storage_bytes",
+    quantity: 2048,
+    recordedAt: from,
+  });
+
+  const report = await control.getProjectEnforcementReport({ projectId: project.id, from, to });
+  assert.equal(report.projectId, project.id);
+  assert.equal(report.organizationId, organization.id);
+  assert.equal(report.generatedAt, fixedNow());
+  assert.deepEqual(report.enforcement.cpu, { used: 25, limit: 100, remaining: 75, status: "ok" });
+  assert.deepEqual(report.enforcement.storage, { used: 2048, limit: 1024, remaining: 0, status: "exceeded" });
+  assert.deepEqual(report.enforcement.concurrency, { limit: 8, status: "configured" });
+  assert.deepEqual(report.enforcement.rate, { requestsPerSecond: 50, status: "configured" });
+});
+
 test("async control plane manages tenant API keys and usage meters", async () => {
   const control = createAsyncControlPlane({
     repository: asyncRepository(createMemoryRepository()),
