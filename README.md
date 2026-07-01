@@ -312,8 +312,13 @@ files can be encrypted with AES-256-GCM by setting `WASMPLANE_VOLUME_SQLITE_BACK
 32-byte base64 key. Set `WASMPLANE_VOLUME_SQLITE_BACKUP_KEY_ID` for the active key id, and keep old
 decrypt-only keys in `WASMPLANE_VOLUME_SQLITE_BACKUP_KEYS_BASE64` as comma-separated
 `keyId=base64` entries during rotation. The CLI uses the same environment, so encrypted backups can
-be restored with `volume-sqlite restore` as long as the matching key id is configured. Retention can
-also be applied manually with `volume-sqlite gc`:
+be restored with `volume-sqlite restore` as long as the matching key id is configured.
+Set `WASMPLANE_VOLUME_SQLITE_BACKUP_INTERVAL_MS` on the control plane to run scheduled backups for
+all cataloged volume SQLite databases. Scheduled backups require encryption by default; set
+`WASMPLANE_VOLUME_SQLITE_BACKUP_REQUIRE_ENCRYPTION=0` only for local development. Enable
+`WASMPLANE_VOLUME_SQLITE_BACKUP_RESTORE_DRILL=1` to copy each new backup into a temporary SQLite
+file, decrypting it when needed, and run `pragma quick_check` plus schema-version inspection before
+retention deletes older backups. Retention can also be applied manually with `volume-sqlite gc`:
 
 ```sh
 pnpm wasmplane volume-sqlite backup --root /data/sqlite --id prj_example --backup-id before-migration

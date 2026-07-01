@@ -123,14 +123,26 @@ export {
   type RestoreVolumeSqliteDatabaseInput,
   type SqliteDatabasePoolEntry,
   type SqliteDatabasePoolOptions,
+  type VerifyVolumeSqliteBackupRestoreInput,
   type VolumeSqliteBackupCipher,
   type VolumeSqliteBackupDataKey,
   type VolumeSqliteBackupRecord,
   type VolumeSqliteBackupGcReport,
+  type VolumeSqliteBackupRestoreDrillReport,
   type VolumeSqliteDatabaseRecord,
   type VolumeSqliteRegistryOptions,
   type VolumeSqliteWriterQueueStats,
 } from "./control-plane/volume-sqlite.ts";
+export {
+  createVolumeSqliteBackupJob,
+  runVolumeSqliteScheduledBackupCycle,
+  type VolumeSqliteBackupJobOptions,
+  type VolumeSqliteRestoreDrillPolicy,
+  type VolumeSqliteScheduledBackupCycleOptions,
+  type VolumeSqliteScheduledBackupError,
+  type VolumeSqliteScheduledBackupRegistry,
+  type VolumeSqliteScheduledBackupReport,
+} from "./control-plane/volume-sqlite-backup-job.ts";
 export { createWasip3HostArtifactValidator } from "./control-plane/artifact-validation.ts";
 export { ingestLocalArtifact } from "./control-plane/local-artifacts.ts";
 export {

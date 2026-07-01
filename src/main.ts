@@ -8,6 +8,7 @@ import { parseApiTokens } from "./control-plane/authz.ts";
 import { createSnapshotPublishJob } from "./control-plane/snapshot-publish-job.ts";
 import { createWasip3HostArtifactValidator } from "./control-plane/artifact-validation.ts";
 import { runtimeNodeTargetsFromEnv, type RouteSnapshotPublishOptions } from "./control-plane/snapshot-publisher.ts";
+import { createVolumeSqliteBackupJob } from "./control-plane/volume-sqlite-backup-job.ts";
 import { createConfiguredVolumeSqliteBackupCipher, createVolumeSqliteRegistry } from "./control-plane/volume-sqlite.ts";
 import {
   createInMemoryRouteSnapshotReplicaStore,
@@ -34,6 +35,13 @@ const runtimeNodeActiveTtlMs = positiveInteger(
 const snapshotPublishIntervalMs = optionalPositiveInteger(
   process.env.WASMPLANE_SNAPSHOT_PUBLISH_INTERVAL_MS,
 );
+const volumeSqliteBackupIntervalMs = optionalPositiveInteger(
+  process.env.WASMPLANE_VOLUME_SQLITE_BACKUP_INTERVAL_MS,
+);
+const volumeSqliteBackupRequireEncryption =
+  process.env.WASMPLANE_VOLUME_SQLITE_BACKUP_REQUIRE_ENCRYPTION !== "0";
+const volumeSqliteBackupRestoreDrill =
+  process.env.WASMPLANE_VOLUME_SQLITE_BACKUP_RESTORE_DRILL === "1";
 const snapshotPublishOptions: RouteSnapshotPublishOptions = {
   maxAttempts: positiveInteger(process.env.WASMPLANE_SNAPSHOT_PUBLISH_MAX_ATTEMPTS, 3),
   retryDelayMs: nonnegativeInteger(process.env.WASMPLANE_SNAPSHOT_PUBLISH_RETRY_DELAY_MS, 100),
@@ -45,6 +53,7 @@ const snapshotReplicationOptions: RouteSnapshotReplicationOptions = {
   retryDelayMs: nonnegativeInteger(process.env.WASMPLANE_SNAPSHOT_REPLICATION_RETRY_DELAY_MS, 100),
   timeoutMs: optionalPositiveInteger(process.env.WASMPLANE_SNAPSHOT_REPLICATION_TIMEOUT_MS),
 };
+const volumeSqliteBackupCipher = createConfiguredVolumeSqliteBackupCipher(process.env);
 
 const controlPlane = await createConfiguredControlPlane({
   runtimeNodeActiveTtlMs,
@@ -57,10 +66,18 @@ const volumeSqliteRegistry = volumeSqliteRoot
     maxPendingWritesPerDatabase: positiveInteger(process.env.WASMPLANE_VOLUME_SQLITE_MAX_PENDING_WRITES, 64),
     maxBackupsPerDatabase: optionalPositiveInteger(process.env.WASMPLANE_VOLUME_SQLITE_MAX_BACKUPS_PER_DATABASE),
     backupRetentionMs: optionalPositiveInteger(process.env.WASMPLANE_VOLUME_SQLITE_BACKUP_RETENTION_MS),
-    backupCipher: createConfiguredVolumeSqliteBackupCipher(process.env),
+    backupCipher: volumeSqliteBackupCipher,
     busyTimeoutMs: positiveInteger(process.env.WASMPLANE_VOLUME_SQLITE_BUSY_TIMEOUT_MS, 5000),
   })
   : undefined;
+if (volumeSqliteBackupIntervalMs && !volumeSqliteRegistry) {
+  throw new Error("WASMPLANE_VOLUME_SQLITE_BACKUP_INTERVAL_MS requires WASMPLANE_VOLUME_SQLITE_ROOT");
+}
+if (volumeSqliteBackupIntervalMs && volumeSqliteBackupRequireEncryption && !volumeSqliteBackupCipher) {
+  throw new Error(
+    "scheduled volume sqlite backups require WASMPLANE_VOLUME_SQLITE_BACKUP_KEY_BASE64 or set WASMPLANE_VOLUME_SQLITE_BACKUP_REQUIRE_ENCRYPTION=0",
+  );
+}
 const routeSnapshotReplicaStore = createInMemoryRouteSnapshotReplicaStore();
 const appOptions = {
   controlPlane,
@@ -100,6 +117,39 @@ if (snapshotPublishIntervalMs) {
     onError(error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error(`snapshot publish job failed: ${message}`);
+    },
+  }).start();
+}
+if (volumeSqliteBackupIntervalMs && volumeSqliteRegistry) {
+  createVolumeSqliteBackupJob({
+    intervalMs: volumeSqliteBackupIntervalMs,
+    registry: volumeSqliteRegistry,
+    requireEncrypted: volumeSqliteBackupRequireEncryption,
+    restoreDrill: { enabled: volumeSqliteBackupRestoreDrill },
+    retention: {
+      keepLatest: optionalPositiveInteger(process.env.WASMPLANE_VOLUME_SQLITE_MAX_BACKUPS_PER_DATABASE),
+      olderThanMs: optionalPositiveInteger(process.env.WASMPLANE_VOLUME_SQLITE_BACKUP_RETENTION_MS),
+    },
+    onReport(report) {
+      const summary = [
+        `ok=${report.ok}`,
+        `databases=${report.databases}`,
+        `backups=${report.backups.length}`,
+        `restoreDrills=${report.restoreDrills.length}`,
+        `deleted=${report.gc.deleted.length}`,
+      ].join(" ");
+      if (report.ok) {
+        console.log(`volume sqlite scheduled backup ${summary}`);
+      } else {
+        console.error(`volume sqlite scheduled backup ${summary}`);
+        for (const error of report.errors) {
+          console.error(`volume sqlite scheduled backup ${error.stage} failed: ${error.message}`);
+        }
+      }
+    },
+    onError(error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`volume sqlite backup job failed: ${message}`);
     },
   }).start();
 }

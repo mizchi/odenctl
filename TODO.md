@@ -237,7 +237,7 @@ Production readiness tasks, in implementation order.
 - [x] Add admission policies for required artifact signatures, WIT world/version constraints, capability allowlists, and artifact size limits.
 - [x] Add custom domain registration with ownership verification and TLS provisioning hooks.
 - [x] Add deploy previews with preview URLs, environment bindings, and one-command rollback.
-- [ ] Add scheduled encrypted volume SQLite backups, retention policy, and restore drills.
+- [x] Add scheduled encrypted volume SQLite backups, retention policy, and restore drills.
 
 ## 31. Platform developer experience
 

@@ -44,6 +44,11 @@ export interface RestoreVolumeSqliteDatabaseInput {
   schemaVersion?: number;
 }
 
+export interface VerifyVolumeSqliteBackupRestoreInput {
+  backupId?: string;
+  databaseId?: string;
+}
+
 export interface VolumeSqliteBackupRecord {
   id: string;
   databaseId: string;
@@ -55,6 +60,17 @@ export interface VolumeSqliteBackupRecord {
   encryptionKeyId?: string;
   encryptionIv?: string;
   encryptionTag?: string;
+}
+
+export interface VolumeSqliteBackupRestoreDrillReport {
+  backupId: string;
+  databaseId: string;
+  checkedAt: string;
+  ok: boolean;
+  sizeBytes: number;
+  encrypted?: boolean;
+  schemaVersion?: number;
+  error?: string;
 }
 
 export interface PruneVolumeSqliteBackupsInput {
@@ -370,6 +386,41 @@ export class VolumeSqliteRegistry {
     }
   }
 
+  verifyBackupRestore(input: VerifyVolumeSqliteBackupRestoreInput): VolumeSqliteBackupRestoreDrillReport {
+    const backup = this.backupForRestoreDrill(input);
+    const checkedAt = this.now();
+    const drillPath = temporaryRestorePath(this.backupDir, `${backup.id}-drill`);
+    let source: { path: string; cleanup?: () => void } | undefined;
+    try {
+      source = this.decryptBackupIfNeeded(backup);
+      copyFileSync(source.path, drillPath);
+      secureFile(drillPath);
+      const schemaVersion = sqliteUserVersionFromPath(drillPath);
+      return {
+        backupId: backup.id,
+        databaseId: backup.databaseId,
+        checkedAt,
+        ok: true,
+        sizeBytes: backup.sizeBytes,
+        ...(backup.encrypted ? { encrypted: true } : {}),
+        schemaVersion,
+      };
+    } catch (error) {
+      return {
+        backupId: backup.id,
+        databaseId: backup.databaseId,
+        checkedAt,
+        ok: false,
+        sizeBytes: backup.sizeBytes,
+        ...(backup.encrypted ? { encrypted: true } : {}),
+        error: error instanceof Error ? error.message : String(error),
+      };
+    } finally {
+      source?.cleanup?.();
+      unlinkIfExists(drillPath);
+    }
+  }
+
   listBackups(id?: string): VolumeSqliteBackupRecord[] {
     const rows = id
       ? this.catalog
@@ -496,6 +547,27 @@ export class VolumeSqliteRegistry {
       .prepare("select * from volume_sqlite_backups where id = ?")
       .get(volumeSqliteBackupId(id));
     return row ? backupRecordFromRow(row) : undefined;
+  }
+
+  private backupForRestoreDrill(input: VerifyVolumeSqliteBackupRestoreInput): VolumeSqliteBackupRecord {
+    if (input.backupId && input.databaseId) {
+      throw new ControlPlaneError("validation", "restore drill must use either backupId or databaseId, not both");
+    }
+    if (input.backupId) {
+      const backup = this.getBackup(volumeSqliteBackupId(input.backupId));
+      if (!backup) {
+        throw new ControlPlaneError("not_found", `volume sqlite backup ${input.backupId} was not found`);
+      }
+      return backup;
+    }
+    if (input.databaseId) {
+      const backup = this.listBackups(databaseId(input.databaseId))[0];
+      if (!backup) {
+        throw new ControlPlaneError("not_found", `volume sqlite database ${input.databaseId} has no backups`);
+      }
+      return backup;
+    }
+    throw new ControlPlaneError("validation", "restore drill requires backupId or databaseId");
   }
 
   private requiredDatabase(id: string): VolumeSqliteDatabaseRecord {
