@@ -3,6 +3,7 @@ import type {
   RuntimeNodeHostInfo,
   RuntimeNodeIdentity,
   RuntimeNodeLoad,
+  RuntimeNodeStatus,
 } from "../control-plane/contracts.ts";
 import { RuntimeError } from "./errors.ts";
 
@@ -16,6 +17,7 @@ export interface RuntimeHeartbeatOptions {
   labels?: Record<string, string>;
   identity?: RuntimeNodeIdentity;
   host?: RuntimeNodeHostInfo;
+  status?: RuntimeNodeStatus | (() => RuntimeNodeStatus);
   load?: RuntimeNodeLoad | (() => RuntimeNodeLoad);
   token?: string;
   intervalMs?: number;
@@ -38,6 +40,7 @@ export interface RuntimeNodeHeartbeatInput {
   controlPlaneUrl: string;
   runtimeNodeId: string;
   version: string;
+  status?: RuntimeNodeStatus;
   capacity: RuntimeNodeCapacity;
   load?: RuntimeNodeLoad;
   host?: RuntimeNodeHostInfo;
@@ -74,7 +77,7 @@ export async function sendRuntimeHeartbeat(input: RuntimeNodeHeartbeatInput): Pr
       method: "POST",
       headers: requestHeaders(input.token),
       body: JSON.stringify({
-        status: "active",
+        status: input.status ?? "active",
         version: input.version,
         capacity: input.capacity,
         load: input.load,
@@ -98,6 +101,7 @@ export function startRuntimeHeartbeat(options: RuntimeHeartbeatOptions): () => v
       await registerRuntimeNode(options);
       await sendRuntimeHeartbeat({
         ...options,
+        status: typeof options.status === "function" ? options.status() : options.status,
         load: typeof options.load === "function" ? options.load() : options.load,
       });
     } catch (error) {

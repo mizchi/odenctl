@@ -155,6 +155,7 @@ if (controlPlaneUrl) {
     labels: runtimeLabels,
     identity: runtimeIdentity,
     host: runtimeHostInfo,
+    status: () => app.lifecycleStatus(),
     capacity: {
       concurrentRequests: runtimeConcurrency,
       memoryMb: resolveRuntimeMemoryMb(process.env, 4096),

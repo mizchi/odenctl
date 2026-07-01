@@ -148,6 +148,13 @@ The `.cwasm` cache key includes that variant, and `POST /__runtime/cache/invalid
 precompiled files from older variants while keeping currently prepared components. Set
 `WASMPLANE_WASIP3_HOST_VERSION` during host binary upgrades when you want an explicit version label
 in the runtime registry and Admin UI.
+Use `GET /__runtime/healthz` for process liveness and `GET /__runtime/readyz` for load-balancer
+readiness. Readiness returns `503` until a route snapshot has been loaded, while the local lifecycle
+state is `draining`, or when configured host-daemon stats are unavailable. Operators can take a node
+out of service locally with `POST /__runtime/drain` and restore readiness with
+`POST /__runtime/activate`; both management calls honor `WASMPLANE_RUNTIME_TOKEN` when it is set.
+Runtime heartbeats report the same local lifecycle status, so a drained node is also excluded from
+future snapshot publish target selection by the control plane.
 Autoscalers can read `GET /autoscaling/signals` from the control plane to get per-runtime
 `activeRequests`, `concurrentRequests`, `loadRatio`, and saturation state. The autoscaling helpers
 turn these signals into scale-up/scale-down decisions, and the Fly Machines prototype reconciler can

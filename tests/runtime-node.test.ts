@@ -105,6 +105,105 @@ test("runtime node accepts route snapshots and invokes matched deployments", asy
   }
 });
 
+test("runtime node exposes readiness and local drain controls", async () => {
+  const loadedSnapshots: RouteSnapshot[] = [];
+  const app = createRuntimeNodeApp({
+    managementToken: "runtime-secret",
+    now: fixedNow,
+    supervisor: {
+      loadSnapshot(routeSnapshot) {
+        loadedSnapshots.push(routeSnapshot);
+      },
+      async prepareRoute() {
+        throw new Error("not used");
+      },
+    },
+  });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+  const routeSnapshot = snapshot([route("dep_ready", "hello.example.dev", "/", digest("ready"))]);
+
+  try {
+    const initial = await fetch(`${baseUrl}/__runtime/readyz`);
+    assert.equal(initial.status, 503);
+    assert.deepEqual(await initial.json(), {
+      ok: false,
+      status: "active",
+      checks: {
+        lifecycle: { ok: true, status: "active" },
+        snapshot: { ok: false, loaded: 0 },
+        hostDaemon: { ok: true },
+      },
+    });
+
+    const unauthorizedDrain = await fetch(`${baseUrl}/__runtime/drain`, { method: "POST" });
+    assert.equal(unauthorizedDrain.status, 401);
+
+    const update = await fetch(`${baseUrl}/__runtime/snapshots/routes`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", authorization: "Bearer runtime-secret" },
+      body: JSON.stringify(routeSnapshot),
+    });
+    assert.equal(update.status, 200, await update.text());
+    assert.equal(loadedSnapshots.length, 1);
+
+    const ready = await fetch(`${baseUrl}/__runtime/readyz`);
+    assert.equal(ready.status, 200);
+    assert.deepEqual(await ready.json(), {
+      ok: true,
+      status: "active",
+      checks: {
+        lifecycle: { ok: true, status: "active" },
+        snapshot: {
+          ok: true,
+          loaded: 1,
+          routes: 1,
+          generatedAt: "2026-06-26T10:00:00.000Z",
+        },
+        hostDaemon: { ok: true },
+      },
+    });
+
+    const drain = await fetch(`${baseUrl}/__runtime/drain`, {
+      method: "POST",
+      headers: { authorization: "Bearer runtime-secret" },
+    });
+    assert.equal(drain.status, 200);
+    assert.deepEqual(await drain.json(), { ok: true, status: "draining" });
+    assert.equal(app.lifecycleStatus(), "draining");
+
+    const drainedReady = await fetch(`${baseUrl}/__runtime/readyz`);
+    assert.equal(drainedReady.status, 503);
+    assert.deepEqual(await drainedReady.json(), {
+      ok: false,
+      status: "draining",
+      checks: {
+        lifecycle: { ok: false, status: "draining" },
+        snapshot: {
+          ok: true,
+          loaded: 1,
+          routes: 1,
+          generatedAt: "2026-06-26T10:00:00.000Z",
+        },
+        hostDaemon: { ok: true },
+      },
+    });
+
+    const activate = await fetch(`${baseUrl}/__runtime/activate`, {
+      method: "POST",
+      headers: { authorization: "Bearer runtime-secret" },
+    });
+    assert.equal(activate.status, 200);
+    assert.deepEqual(await activate.json(), { ok: true, status: "active" });
+    assert.equal(app.lifecycleStatus(), "active");
+  } finally {
+    await app.close();
+  }
+});
+
 test("runtime node can warm snapshot deployments before acknowledging publish", async () => {
   const preparedDeployments: string[] = [];
   const supervisor = createRuntimeSupervisor({
@@ -974,6 +1073,56 @@ test("runtime node keeps metrics available when host daemon stats fail", async (
   }
 });
 
+test("runtime readiness fails when configured host daemon stats are unavailable", async () => {
+  const app = createRuntimeNodeApp({
+    supervisor: {
+      loadSnapshot() {},
+      async prepareRoute() {
+        throw new Error("not used");
+      },
+    },
+    hostDaemonMetrics: {
+      url: "http://127.0.0.1:8790",
+      fetch: async () => {
+        throw new Error("daemon unavailable");
+      },
+    },
+  });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const update = await fetch(`${baseUrl}/__runtime/snapshots/routes`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(snapshot([route("dep_daemon_ready", "hello.example.dev", "/", digest("daemon-ready"))])),
+    });
+    assert.equal(update.status, 200, await update.text());
+
+    const ready = await fetch(`${baseUrl}/__runtime/readyz`);
+    assert.equal(ready.status, 503);
+    assert.deepEqual(await ready.json(), {
+      ok: false,
+      status: "active",
+      checks: {
+        lifecycle: { ok: true, status: "active" },
+        snapshot: {
+          ok: true,
+          loaded: 1,
+          routes: 1,
+          generatedAt: "2026-06-26T10:00:00.000Z",
+        },
+        hostDaemon: { ok: false, error: "daemon unavailable" },
+      },
+    });
+  } finally {
+    await app.close();
+  }
+});
+
 test("runtime node exposes structured worker request events", async () => {
   const supervisor = createRuntimeSupervisor({
     snapshot: snapshot([route("dep_events", "hello.example.dev", "/", digest("events"))]),
@@ -1434,6 +1583,37 @@ test("runtime heartbeat client sends bearer token when configured", async () => 
     await new Promise<void>((resolve, reject) => {
       server.close((error) => (error ? reject(error) : resolve()));
     });
+  }
+});
+
+test("runtime heartbeat client can report non-active lifecycle status", async () => {
+  const requests: Array<{ method: string; path: string; body: any }> = [];
+  const control = await listenControlPlaneSink(requests);
+
+  try {
+    await sendRuntimeHeartbeat({
+      controlPlaneUrl: control.baseUrl,
+      runtimeNodeId: "rt_draining",
+      version: "wasmplane-runtime/0.1.0",
+      status: "draining",
+      capacity: { concurrentRequests: 128, memoryMb: 4096 },
+      load: { activeRequests: 1 },
+    });
+
+    assert.deepEqual(requests, [
+      {
+        method: "POST",
+        path: "/runtime-nodes/rt_draining/heartbeat",
+        body: {
+          status: "draining",
+          version: "wasmplane-runtime/0.1.0",
+          capacity: { concurrentRequests: 128, memoryMb: 4096 },
+          load: { activeRequests: 1 },
+        },
+      },
+    ]);
+  } finally {
+    await control.close();
   }
 });
 

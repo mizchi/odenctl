@@ -6,6 +6,7 @@ import {
   MVP_WORKER_WORLD,
   MVP_WORKER_WORLD_VERSION,
   type RouteSnapshot,
+  type RuntimeNodeStatus,
 } from "../control-plane/contracts.ts";
 import { RuntimeError } from "./errors.ts";
 import { verifyRuntimeIdentityHeaders } from "./identity.ts";
@@ -49,6 +50,7 @@ export interface RuntimeNodeAppOptions {
   telemetry?: RuntimeTelemetry;
   warmupOnSnapshot?: boolean;
   hostDaemonMetrics?: RuntimeHostDaemonMetricsOptions;
+  initialLifecycleStatus?: RuntimeNodeStatus;
   now?: () => string;
 }
 
@@ -79,6 +81,7 @@ export function createRuntimeNodeApp(options: RuntimeNodeAppOptions) {
   const projectConcurrency = createProjectConcurrencyLimiter(options.maxConcurrentInvocationsByProject);
   const projectRateLimiter = createProjectRateLimiter(options.requestRateLimitsByProject, monotonicNowMs);
   const cacheRetentionJob = createRuntimeCacheRetentionJob(options);
+  let lifecycleStatus: RuntimeNodeStatus = options.initialLifecycleStatus ?? "active";
   const server = createServer(async (request, response) => {
     let workerRequest = false;
     let routeMatched = false;
@@ -103,10 +106,28 @@ export function createRuntimeNodeApp(options: RuntimeNodeAppOptions) {
         return;
       }
 
+      if (method === "GET" && url.pathname === "/__runtime/readyz") {
+        const readiness = await runtimeReadiness(options, metrics.snapshot(), lifecycleStatus);
+        writeJson(response, readiness.ok ? 200 : 503, readiness);
+        return;
+      }
+
       if (url.pathname.startsWith("/__runtime/") && !authorizeRuntimeManagement(options, request.headers)) {
         writeJson(response, 401, {
           error: { code: "unauthorized", message: "missing or invalid runtime bearer token" },
         });
+        return;
+      }
+
+      if (method === "POST" && url.pathname === "/__runtime/drain") {
+        lifecycleStatus = "draining";
+        writeJson(response, 200, { ok: true, status: lifecycleStatus });
+        return;
+      }
+
+      if (method === "POST" && url.pathname === "/__runtime/activate") {
+        lifecycleStatus = "active";
+        writeJson(response, 200, { ok: true, status: lifecycleStatus });
         return;
       }
 
@@ -350,7 +371,71 @@ export function createRuntimeNodeApp(options: RuntimeNodeAppOptions) {
     logs() {
       return logs.snapshot({});
     },
+    lifecycleStatus() {
+      return lifecycleStatus;
+    },
   };
+}
+
+interface RuntimeReadinessSnapshot {
+  ok: boolean;
+  status: RuntimeNodeStatus;
+  checks: {
+    lifecycle: { ok: boolean; status: RuntimeNodeStatus };
+    snapshot: {
+      ok: boolean;
+      loaded: number;
+      routes?: number;
+      generatedAt?: string;
+    };
+    hostDaemon: {
+      ok: boolean;
+      status?: number;
+      error?: string;
+    };
+  };
+}
+
+async function runtimeReadiness(
+  options: RuntimeNodeAppOptions,
+  metrics: RuntimeMetricsSnapshot,
+  lifecycleStatus: RuntimeNodeStatus,
+): Promise<RuntimeReadinessSnapshot> {
+  const hostDaemon = await readHostDaemonMetrics(options.hostDaemonMetrics);
+  const checks = {
+    lifecycle: {
+      ok: lifecycleStatus === "active",
+      status: lifecycleStatus,
+    },
+    snapshot: stripUndefined({
+      ok: metrics.snapshots.loaded > 0,
+      ...metrics.snapshots,
+    }),
+    hostDaemon: hostDaemonReadiness(hostDaemon),
+  };
+  return {
+    ok: checks.lifecycle.ok && checks.snapshot.ok && checks.hostDaemon.ok,
+    status: lifecycleStatus,
+    checks,
+  };
+}
+
+function hostDaemonReadiness(value: unknown | undefined): RuntimeReadinessSnapshot["checks"]["hostDaemon"] {
+  if (value === undefined) {
+    return { ok: true };
+  }
+  if (typeof value !== "object" || value === null) {
+    return { ok: true };
+  }
+  const record = value as Record<string, unknown>;
+  if (record.ok !== false) {
+    return { ok: true };
+  }
+  return stripUndefined({
+    ok: false,
+    status: typeof record.status === "number" ? record.status : undefined,
+    error: typeof record.error === "string" ? record.error : undefined,
+  });
 }
 
 function authorizeRuntimeIdentity(
