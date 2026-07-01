@@ -161,7 +161,10 @@ runtime enters the same drain path before process exit. Tune the wait with
 Set `RUNTIME_ROUTE_SNAPSHOT_FILE` to persist the latest accepted route snapshot and restore it on
 runtime restart. When a snapshot is restored, `GET /__runtime/readyz` can become ready before the
 control plane republishes, while later `PUT /__runtime/snapshots/routes` calls atomically replace
-the file before ACK.
+the file before ACK. Invalid restored snapshot files are moved aside with an `.invalid.<timestamp>`
+suffix and ignored, leaving the node not ready until a fresh snapshot arrives. The Fly runtime config
+uses `/__runtime/readyz` and `/data/route-snapshot.json` so a restarted Machine only receives traffic
+after it has a valid restored or newly published route snapshot.
 Autoscalers can read `GET /autoscaling/signals` from the control plane to get per-runtime
 `activeRequests`, `concurrentRequests`, `loadRatio`, and saturation state. The autoscaling helpers
 turn these signals into scale-up/scale-down decisions, and the Fly Machines prototype reconciler can

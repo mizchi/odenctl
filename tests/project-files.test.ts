@@ -21,4 +21,5 @@ test("project tooling keeps Wasm E2E portable", async () => {
   assert.match(workflow, /just test/);
   assert.match(workflow, /just e2e/);
   assert.match(flyRuntime, /RUNTIME_ROUTE_SNAPSHOT_FILE = "\/data\/route-snapshot\.json"/);
+  assert.match(flyRuntime, /path = "\/__runtime\/readyz"/);
 });

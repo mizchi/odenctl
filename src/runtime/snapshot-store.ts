@@ -7,6 +7,11 @@ export interface RuntimeRouteSnapshotStore {
   save(snapshot: RouteSnapshot): Promise<void>;
 }
 
+export interface LoadRouteSnapshotFileOptions {
+  quarantineInvalid?: boolean;
+  now?: () => Date;
+}
+
 export function createFileRouteSnapshotStore(path: string): RuntimeRouteSnapshotStore {
   return {
     async save(snapshot) {
@@ -18,7 +23,10 @@ export function createFileRouteSnapshotStore(path: string): RuntimeRouteSnapshot
   };
 }
 
-export async function loadRouteSnapshotFile(path: string): Promise<RouteSnapshot | undefined> {
+export async function loadRouteSnapshotFile(
+  path: string,
+  options: LoadRouteSnapshotFileOptions = {},
+): Promise<RouteSnapshot | undefined> {
   try {
     const snapshot = JSON.parse(await readFile(path, "utf8"));
     assertRouteSnapshotFile(snapshot);
@@ -27,8 +35,17 @@ export async function loadRouteSnapshotFile(path: string): Promise<RouteSnapshot
     if (isNotFound(error)) {
       return undefined;
     }
+    if (options.quarantineInvalid) {
+      await quarantineInvalidSnapshot(path, options.now?.() ?? new Date());
+      return undefined;
+    }
     throw error;
   }
+}
+
+async function quarantineInvalidSnapshot(path: string, now: Date): Promise<void> {
+  const suffix = now.toISOString().replaceAll("-", "").replaceAll(":", "").replace(".", "");
+  await rename(path, `${path}.invalid.${suffix}`);
 }
 
 function assertRouteSnapshotFile(value: unknown): asserts value is RouteSnapshot {

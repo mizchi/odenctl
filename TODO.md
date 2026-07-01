@@ -208,3 +208,9 @@ Production readiness tasks, in implementation order.
 
 - [x] Validate restored route snapshot file shape before using it.
 - [x] Configure the Fly runtime volume path for persisted route snapshots.
+
+## 28. Fly readiness and corrupt snapshot quarantine
+
+- [x] Quarantine malformed persisted route snapshot files instead of failing startup.
+- [x] Use runtime readiness, not process liveness, for the Fly runtime service check.
+- [x] Document persisted snapshot quarantine behavior.

@@ -88,7 +88,9 @@ const runtimeHostInfo: RuntimeNodeHostInfo = {
   hostVersion: runtimeHostVersion,
   engineVariant: runtimeEngineVariant,
 };
-const restoredRouteSnapshot = routeSnapshotFile ? await loadRouteSnapshotFile(routeSnapshotFile) : undefined;
+const restoredRouteSnapshot = routeSnapshotFile
+  ? await loadRouteSnapshotFile(routeSnapshotFile, { quarantineInvalid: true })
+  : undefined;
 
 const supervisor = createRuntimeSupervisor({
   snapshot: restoredRouteSnapshot ?? {
