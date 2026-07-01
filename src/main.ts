@@ -8,6 +8,11 @@ import { parseApiTokens } from "./control-plane/authz.ts";
 import { createSnapshotPublishJob } from "./control-plane/snapshot-publish-job.ts";
 import { createWasip3HostArtifactValidator } from "./control-plane/artifact-validation.ts";
 import { runtimeNodeTargetsFromEnv, type RouteSnapshotPublishOptions } from "./control-plane/snapshot-publisher.ts";
+import {
+  createInMemoryRouteSnapshotReplicaStore,
+  routeSnapshotReplicaTargetsFromEnv,
+  type RouteSnapshotReplicationOptions,
+} from "./control-plane/snapshot-replication.ts";
 import { createHttpApp, publishCurrentRouteSnapshot } from "./http/app.ts";
 import { parseRuntimeIdentityKeys } from "./runtime/config.ts";
 
@@ -32,11 +37,18 @@ const snapshotPublishOptions: RouteSnapshotPublishOptions = {
   retryDelayMs: nonnegativeInteger(process.env.WASMPLANE_SNAPSHOT_PUBLISH_RETRY_DELAY_MS, 100),
   timeoutMs: optionalPositiveInteger(process.env.WASMPLANE_SNAPSHOT_PUBLISH_TIMEOUT_MS),
 };
+const snapshotReplicationOptions: RouteSnapshotReplicationOptions = {
+  sourceRegion: firstNonEmpty(process.env.WASMPLANE_CONTROL_REGION, process.env.FLY_REGION),
+  maxAttempts: positiveInteger(process.env.WASMPLANE_SNAPSHOT_REPLICATION_MAX_ATTEMPTS, 3),
+  retryDelayMs: nonnegativeInteger(process.env.WASMPLANE_SNAPSHOT_REPLICATION_RETRY_DELAY_MS, 100),
+  timeoutMs: optionalPositiveInteger(process.env.WASMPLANE_SNAPSHOT_REPLICATION_TIMEOUT_MS),
+};
 
 const controlPlane = await createConfiguredControlPlane({
   runtimeNodeActiveTtlMs,
 });
 const artifactStore = createConfiguredControlPlaneArtifactStore(process.env);
+const routeSnapshotReplicaStore = createInMemoryRouteSnapshotReplicaStore();
 const appOptions = {
   controlPlane,
   artifactStore,
@@ -53,6 +65,12 @@ const appOptions = {
   runtimeIdentityKeys,
   runtimeNodes: runtimeNodeTargetsFromEnv(process.env.WASMPLANE_RUNTIME_NODES),
   snapshotPublish: snapshotPublishOptions,
+  routeSnapshotReplicaStore,
+  routeSnapshotReplicas: routeSnapshotReplicaTargetsFromEnv(
+    process.env.WASMPLANE_ROUTE_SNAPSHOT_REPLICAS,
+    process.env.WASMPLANE_ROUTE_SNAPSHOT_REPLICA_TOKEN,
+  ),
+  snapshotReplication: snapshotReplicationOptions,
 };
 const app = createHttpApp(appOptions);
 
@@ -90,6 +108,10 @@ function optionalPositiveInteger(value: string | undefined): number | undefined 
   }
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function firstNonEmpty(...values: Array<string | undefined>): string | undefined {
+  return values.find((value) => value !== undefined && value.trim().length > 0);
 }
 
 function nonnegativeInteger(value: string | undefined, fallback: number): number {

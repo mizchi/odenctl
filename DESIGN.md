@@ -396,6 +396,13 @@ scale-out は runtime node を増やし、control plane から各 node へ route
 Fly.io では each Machine が heartbeat で private URL を登録し、control plane は active runtime nodes
 へ直接 snapshot を送る。
 
+cross-region では route snapshot を primary control plane から regional control-plane replica へ
+`PUT /replication/snapshots/routes` で複製する。replica は最新 `generatedAt` の snapshot だけを保持し、
+古い snapshot は stale として拒否する。primary の `POST /snapshots/routes/publish` は runtime publish
+後に configured replicas へ同じ snapshot を送り、replica ACK の `snapshotId` と `generatedAt` が一致
+しない場合は consistency failure として response に含める。これは hot path 用 state の整合性検証であり、
+DB multi-writer replication ではない。
+
 Cloudflare Workers の 128MB process を高密度に大量収容する設計に近づけるには、次を組み合わせる。
 
 - Wasmtime pooling allocator
@@ -461,7 +468,8 @@ single-region estimate は README の cost estimator にまとめる。現状の
 - WASIp3/component model 前提だが、guest toolchain と host ABI の安定性には追従が必要
 - `cpuMs` は Wasmtime epoch tick ベースであり、精密な kernel CPU time enforcement ではない
 - secret value は local/env KMS envelope encryption、command-provider keyring、AWS KMS wrapped data key adapter に対応したが、GCP/Azure KMS adapter は未実装
-- multi-region failover は placement publish target selection までで、cross-region state consistency は未実装
+- multi-region は route snapshot replication と ACK consistency check に対応したが、durable replica
+  snapshot store と DB multi-writer consistency は未実装
 - daemon は local HTTP interface で、runtime node と同一 trust boundary 前提
 - Wasmtime upgrade は Engine variant hash と runtime cache invalidation で分離するが、multi-node
   rolling upgrade の自動 orchestration は未実装
@@ -474,8 +482,8 @@ single-region estimate は README の cost estimator にまとめる。現状の
 
 ## Next Implementation Priorities
 
-1. Cross-region state consistency
-2. GCP/Azure KMS adapter
-3. Historical perf trend analysis
-4. Safe guest reset contract for instance reuse
-5. Provider idempotency metadata for autoscaling
+1. GCP/Azure KMS adapter
+2. Historical perf trend analysis
+3. Safe guest reset contract for instance reuse
+4. Provider idempotency metadata for autoscaling
+5. Durable route snapshot replica store

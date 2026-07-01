@@ -86,6 +86,20 @@ export {
   type RouteSnapshotPublishOptions,
 } from "./control-plane/snapshot-publisher.ts";
 export {
+  assertReplicatedRouteSnapshot,
+  createInMemoryRouteSnapshotReplicaStore,
+  replicateRouteSnapshot,
+  routeSnapshotReplicaTargetsFromEnv,
+  type RouteSnapshotReplicaApplyInput,
+  type RouteSnapshotReplicaApplyResult,
+  type RouteSnapshotReplicaResult,
+  type RouteSnapshotReplicaState,
+  type RouteSnapshotReplicaStore,
+  type RouteSnapshotReplicaTarget,
+  type RouteSnapshotReplicationOptions,
+  type RouteSnapshotReplicationReport,
+} from "./control-plane/snapshot-replication.ts";
+export {
   evaluatePerfBudgets,
   formatPerfRegressionMarkdown,
   parsePerfRegressionArgs,

@@ -60,6 +60,12 @@ nodes. Each generated route snapshot includes a content-derived `snap_<hash>` id
 history records that id for retry and audit correlation. Snapshot publishes retry retryable target
 failures by default; tune this with `WASMPLANE_SNAPSHOT_PUBLISH_MAX_ATTEMPTS`,
 `WASMPLANE_SNAPSHOT_PUBLISH_RETRY_DELAY_MS`, and `WASMPLANE_SNAPSHOT_PUBLISH_TIMEOUT_MS`.
+Set `WASMPLANE_ROUTE_SNAPSHOT_REPLICAS` to comma-separated `region=https://control-plane` entries
+to replicate each published route snapshot to regional control-plane replicas through
+`PUT /replication/snapshots/routes`. Use `WASMPLANE_ROUTE_SNAPSHOT_REPLICA_TOKEN` for the replica
+bearer token and `WASMPLANE_CONTROL_REGION` to label the source region. Replication responses are
+included under `replication` and are marked inconsistent when a replica acknowledges a different
+snapshot id or `generatedAt`.
 Operators can drain runtime nodes before maintenance or scale-down with
 `PATCH /runtime-nodes/:id/status` and body `{"status":"draining"}`. Draining and offline nodes stay
 in the registry for visibility, but are excluded from snapshot publish targets. Switch back to
@@ -599,6 +605,9 @@ active registered runtime node, plus statically configured runtime nodes, throug
 `PUT /__runtime/snapshots/routes`. The response includes a per-node publish result and stores a
 publication history record. Each target result includes `attempts` and `elapsedMs`; retryable
 statuses are retried per target without blocking successful targets from recording their result.
+When regional replica targets are configured, the same snapshot is also sent to
+`PUT /replication/snapshots/routes`; `GET /replication/snapshots/routes` returns the latest accepted
+replicated snapshot held by that control-plane process.
 
 Secret creation accepts a value, but responses omit it:
 

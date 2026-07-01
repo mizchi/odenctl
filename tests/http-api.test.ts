@@ -8,9 +8,10 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import type { RouteSnapshot } from "../src/control-plane/contracts.ts";
 import { createJsonlAuditSink } from "../src/control-plane/audit.ts";
+import { createInMemoryRouteSnapshotReplicaStore } from "../src/control-plane/snapshot-replication.ts";
 import { createMemoryRepository } from "../src/control-plane/repository.ts";
 import { createControlPlane } from "../src/control-plane/service.ts";
-import { createHttpApp } from "../src/http/app.ts";
+import { createHttpApp, publishCurrentRouteSnapshot } from "../src/http/app.ts";
 import { verifyRuntimeIdentityHeaders } from "../src/runtime/identity.ts";
 
 test("HTTP API creates deployment and exposes compact route snapshot", async () => {
@@ -85,6 +86,60 @@ test("HTTP API creates deployment and exposes compact route snapshot", async () 
     assert.equal(snapshot.routes[0].runtime.backend, "wasmtime");
     assert.deepEqual(snapshot.routes[0].artifact.signature, signature);
     assert.deepEqual(snapshot.routes[0].artifact.provenance, provenance);
+  } finally {
+    await app.close();
+  }
+});
+
+test("HTTP API accepts and serves replicated route snapshots", async () => {
+  const store = createInMemoryRouteSnapshotReplicaStore();
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+  });
+  const app = createHttpApp({
+    controlPlane: control,
+    routeSnapshotReplicaStore: store,
+    now: () => "2026-07-01T00:00:11.000Z",
+  });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+  const snapshot: RouteSnapshot = {
+    id: "snap_replicated",
+    schemaVersion: 1,
+    generatedAt: "2026-07-01T00:00:10.000Z",
+    routes: [],
+  };
+
+  try {
+    const applyResponse = await fetch(`${baseUrl}/replication/snapshots/routes`, {
+      method: "PUT",
+      headers: {
+        "content-type": "application/json",
+        "x-wasmplane-source-region": "nrt",
+      },
+      body: JSON.stringify(snapshot),
+    });
+    assert.equal(applyResponse.status, 200);
+    assert.deepEqual(await applyResponse.json(), {
+      accepted: true,
+      stale: false,
+      snapshotId: "snap_replicated",
+      generatedAt: "2026-07-01T00:00:10.000Z",
+      receivedAt: "2026-07-01T00:00:11.000Z",
+    });
+
+    const readResponse = await fetch(`${baseUrl}/replication/snapshots/routes`);
+    assert.equal(readResponse.status, 200);
+    assert.deepEqual(await readResponse.json(), {
+      sourceRegion: "nrt",
+      receivedAt: "2026-07-01T00:00:11.000Z",
+      snapshot,
+    });
   } finally {
     await app.close();
   }
@@ -952,6 +1007,160 @@ test("HTTP API publishes route snapshot to configured runtime nodes", async () =
     await app.close();
     await runtime.close();
   }
+});
+
+test("HTTP API replicates published route snapshots to regional control planes", async () => {
+  const calls: Array<{ url: string; authorization?: string; body: RouteSnapshot }> = [];
+  let now = 0;
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+  });
+  const app = createHttpApp({
+    controlPlane: control,
+    runtimeNodes: [{ id: "local-runtime", url: "https://runtime.internal" }],
+    routeSnapshotReplicas: [{
+      id: "replica-iad",
+      region: "iad",
+      url: "https://iad-control.internal",
+      token: "replica-token",
+    }],
+    snapshotReplication: {
+      sourceRegion: "nrt",
+      retryDelayMs: 0,
+      nowMs: () => {
+        now += 5;
+        return now;
+      },
+    },
+    fetch: async (url, init) => {
+      const snapshot = JSON.parse(init.body) as RouteSnapshot;
+      calls.push({ url, authorization: init.headers.authorization, body: snapshot });
+      if (url.endsWith("/replication/snapshots/routes")) {
+        assert.equal(init.headers["x-wasmplane-source-region"], "nrt");
+        return {
+          ok: true,
+          status: 200,
+          async json() {
+            return {
+              accepted: true,
+              snapshotId: snapshot.id,
+              generatedAt: snapshot.generatedAt,
+            };
+          },
+          async text() {
+            return "ok";
+          },
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            routes: snapshot.routes.length,
+            generatedAt: snapshot.generatedAt,
+            snapshotId: snapshot.id,
+          };
+        },
+        async text() {
+          return "ok";
+        },
+      };
+    },
+  });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    await createHelloRoute(baseUrl);
+    const response = await fetch(`${baseUrl}/snapshots/routes/publish`, { method: "POST" });
+    if (response.status !== 200) {
+      assert.fail(await response.text());
+    }
+    const publish = await response.json();
+
+    assert.equal(publish.ok, true);
+    assert.equal(publish.replication.ok, true);
+    assert.equal(publish.replication.consistent, true);
+    assert.deepEqual(publish.replication.replicas[0], {
+      id: "replica-iad",
+      region: "iad",
+      url: "https://iad-control.internal",
+      ok: true,
+      consistent: true,
+      status: 200,
+      snapshotId: publish.snapshot.id,
+      generatedAt: fixedNow(),
+      attempts: 1,
+      elapsedMs: 5,
+    });
+    assert.deepEqual(calls.map((call) => call.url), [
+      "https://runtime.internal/__runtime/snapshots/routes",
+      "https://iad-control.internal/replication/snapshots/routes",
+    ]);
+    assert.equal(calls[1]?.authorization, "Bearer replica-token");
+    assert.equal(calls[1]?.body.id, publish.snapshot.id);
+  } finally {
+    await app.close();
+  }
+});
+
+test("route snapshot publish is unsuccessful when replica consistency fails", async () => {
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+  });
+  await createHelloRouteInControlPlane(control);
+
+  const report = await publishCurrentRouteSnapshot({
+    controlPlane: control,
+    runtimeNodes: [{ id: "local-runtime", url: "https://runtime.internal" }],
+    routeSnapshotReplicas: [{ id: "replica-iad", region: "iad", url: "https://iad-control.internal" }],
+    snapshotReplication: { retryDelayMs: 0, nowMs: () => 0 },
+    fetch: async (url, init) => {
+      const snapshot = JSON.parse(init.body) as RouteSnapshot;
+      if (url.endsWith("/replication/snapshots/routes")) {
+        return {
+          ok: true,
+          status: 200,
+          async json() {
+            return {
+              accepted: true,
+              snapshotId: "snap_stale",
+              generatedAt: snapshot.generatedAt,
+            };
+          },
+          async text() {
+            return "ok";
+          },
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            routes: snapshot.routes.length,
+            generatedAt: snapshot.generatedAt,
+            snapshotId: snapshot.id,
+          };
+        },
+        async text() {
+          return "ok";
+        },
+      };
+    },
+  });
+
+  assert.equal(report.ok, false);
+  assert.equal((report as any).replication.ok, false);
+  assert.equal((report as any).replication.replicas[0].error, "replica acknowledged a different snapshot");
 });
 
 test("HTTP API signs runtime snapshot publishes with configured runtime token", async () => {
@@ -2058,6 +2267,47 @@ async function createHelloRoute(baseUrl: string) {
     },
   });
   await putJson(baseUrl, "/routes", {
+    projectId: project.id,
+    host: "hello.example.dev",
+    pathPrefix: "/",
+    deploymentId: deployment.id,
+  });
+  return { project, artifact, deployment };
+}
+
+async function createHelloRouteInControlPlane(control: any) {
+  const project = await control.createProject({ name: "hello" });
+  const artifact = await control.createArtifact({
+    projectId: project.id,
+    digest: digest(`hello-${project.id}`),
+    location: "oci://registry.example.com/mizchi/hello:v1",
+    sizeBytes: 42,
+  });
+  const deployment = await control.createDeployment({
+    projectId: project.id,
+    artifactId: artifact.id,
+    world: "myedge:runtime/worker@0.1.0",
+    runtime: {
+      backend: "wasmtime",
+      version: "wasmtime-43",
+      wasi: "wasip3",
+    },
+    limits: {
+      cpuMs: 50,
+      memoryMb: 64,
+      wallMs: 1000,
+      requestBytes: 1048576,
+      subrequests: 20,
+      hostCalls: 100,
+      responseBytes: 1048576,
+    },
+    capabilities: {
+      outboundHttp: { enabled: false, allow: [] },
+      kv: [],
+      secrets: [],
+    },
+  });
+  await control.pointRoute({
     projectId: project.id,
     host: "hello.example.dev",
     pathPrefix: "/",

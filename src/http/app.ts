@@ -22,6 +22,13 @@ import {
   publishRouteSnapshot,
   type RuntimeNodeTarget,
 } from "../control-plane/snapshot-publisher.ts";
+import {
+  assertReplicatedRouteSnapshot,
+  replicateRouteSnapshot,
+  type RouteSnapshotReplicaTarget,
+  type RouteSnapshotReplicationOptions,
+  type RouteSnapshotReplicaStore,
+} from "../control-plane/snapshot-replication.ts";
 import { selectRuntimeNodesForSnapshot, type RuntimePlacementPolicy } from "../control-plane/placement.ts";
 import { runtimeSaturationSignals } from "../control-plane/autoscaling.ts";
 
@@ -62,6 +69,9 @@ export interface HttpAppOptions {
   runtimeNodeToken?: string;
   runtimeIdentityKeys?: Record<string, string>;
   runtimePlacement?: RuntimePlacementPolicy;
+  routeSnapshotReplicaStore?: RouteSnapshotReplicaStore;
+  routeSnapshotReplicas?: RouteSnapshotReplicaTarget[];
+  snapshotReplication?: RouteSnapshotReplicationOptions;
   artifactStore?: ControlPlaneArtifactStore;
   artifactStoreDir?: string;
   artifactPublicBaseUrl?: string;
@@ -344,6 +354,14 @@ export function createHttpApp(options: HttpAppOptions) {
         writeJson(response, 200, await options.controlPlane.listRouteSnapshotPublications());
         return;
       }
+      if (method === "PUT" && url.pathname === "/replication/snapshots/routes") {
+        writeJson(response, 200, await applyReplicatedRouteSnapshot(options, request));
+        return;
+      }
+      if (method === "GET" && url.pathname === "/replication/snapshots/routes") {
+        writeJson(response, 200, readReplicatedRouteSnapshot(options));
+        return;
+      }
 
       writeJson(response, 404, { error: { code: "not_found", message: "route not found" } });
     } catch (error) {
@@ -390,7 +408,21 @@ export async function publishCurrentRouteSnapshot(options: HttpAppOptions) {
   if (runtimeNodes.length === 0) {
     throw new ControlPlaneError("validation", "no runtime nodes are configured");
   }
-  return publishAndRecordRouteSnapshot(options, snapshot, runtimeNodes);
+  const report = await publishAndRecordRouteSnapshot(options, snapshot, runtimeNodes);
+  if (!options.routeSnapshotReplicas || options.routeSnapshotReplicas.length === 0) {
+    return report;
+  }
+  const replication = await replicateRouteSnapshot(
+    snapshot,
+    options.routeSnapshotReplicas,
+    options.fetch ?? fetch,
+    options.snapshotReplication,
+  );
+  return {
+    ...report,
+    ok: report.ok && replication.ok,
+    replication,
+  };
 }
 
 type AuthorizationResult =
@@ -436,7 +468,10 @@ function configuredApiTokens(options: HttpAppOptions): ApiToken[] {
 }
 
 function requiredScopeFor(method: string, pathname: string): ApiScope {
-  if (method === "POST" && pathname === "/snapshots/routes/publish") {
+  if (
+    (method === "POST" && pathname === "/snapshots/routes/publish") ||
+    (method === "PUT" && pathname === "/replication/snapshots/routes")
+  ) {
     return "publish";
   }
   if (method === "GET") {
@@ -572,6 +607,34 @@ async function publishAndRecordRouteSnapshot(
     ...report,
     publicationId: publication.id,
   };
+}
+
+async function applyReplicatedRouteSnapshot(options: HttpAppOptions, request: any) {
+  if (!options.routeSnapshotReplicaStore) {
+    throw new ControlPlaneError("validation", "route snapshot replica store is not configured");
+  }
+  const snapshot = await readJson(request);
+  try {
+    assertReplicatedRouteSnapshot(snapshot);
+  } catch (error) {
+    throw new ControlPlaneError("validation", error instanceof Error ? error.message : String(error));
+  }
+  return options.routeSnapshotReplicaStore.apply({
+    snapshot,
+    sourceRegion: firstHeader(request.headers["x-wasmplane-source-region"]),
+    receivedAt: (options.now ?? (() => new Date().toISOString()))(),
+  });
+}
+
+function readReplicatedRouteSnapshot(options: HttpAppOptions) {
+  if (!options.routeSnapshotReplicaStore) {
+    throw new ControlPlaneError("validation", "route snapshot replica store is not configured");
+  }
+  const state = options.routeSnapshotReplicaStore.current();
+  if (!state) {
+    throw new ControlPlaneError("not_found", "replicated route snapshot was not found");
+  }
+  return state;
 }
 
 function runtimeNodeHeartbeatMatch(method: string, pathname: string): { id: string } | undefined {

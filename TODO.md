@@ -169,3 +169,11 @@ Production readiness tasks, in implementation order.
 - [x] Persist lease/cooldown state in control-plane schemas and SQLite migrations.
 - [x] Export durable store constructors for production controllers.
 - [x] Document production usage and remaining provider idempotency work.
+
+## 24. Cross-region route snapshot consistency
+
+- [x] Add a route snapshot replication publisher for regional control-plane replicas.
+- [x] Reject stale snapshots in the replica store.
+- [x] Expose `PUT`/`GET /replication/snapshots/routes` for replicated snapshot state.
+- [x] Include replica ACK consistency in `POST /snapshots/routes/publish` responses.
+- [x] Add env configuration for regional replica targets.
