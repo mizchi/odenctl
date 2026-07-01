@@ -52,6 +52,12 @@ cluster-bench: rust-build guest-build
 cluster-bench-daemon: rust-build guest-build
     pnpm cluster-bench --component "{{ guest_component }}" --host-bin target/debug/wasmplane-wasip3-host --host-daemon-url http://127.0.0.1:8790 --pooling-total-component-instances 64 --pooling-total-core-instances 256 --pooling-total-memories 64 --pooling-total-tables 128 --pooling-memory-mb 64 --nodes 1,2,4 --iterations 30 --warmup 2 --concurrency 1,4,16
 
+volume-sqlite-bench:
+    pnpm volume-sqlite-bench --root .wasmplane/volume-sqlite-bench --databases 1000 --max-open 64 --schema-version 1 --write-iterations 1000 --write-concurrency 1,4,16
+
+fly-volume-sqlite-bench:
+    fly ssh console -a "{{ fly_control_app }}" -C "cd /app && pnpm volume-sqlite-bench --root /data/sqlite-bench --databases 1000 --max-open 64 --schema-version 1 --write-iterations 1000 --write-concurrency 1,4,16 --format json --output /data/sqlite-bench/report.json"
+
 perf-regression: rust-build guest-build
     mkdir -p perf-results
     pnpm bench all --component "{{ guest_component }}" --host-bin target/debug/wasmplane-wasip3-host --iterations "{{ perf_iterations }}" --warmup "{{ perf_warmup }}" --concurrency "{{ perf_concurrency }}" --format json --output perf-results/bench.json

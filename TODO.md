@@ -221,5 +221,5 @@ Production readiness tasks, in implementation order.
 - [x] Add an LRU-bounded SQLite handle pool.
 - [x] Apply WAL-oriented SQLite pragmas and track per-database schema versions.
 - [x] Wire project state APIs to the volume SQLite registry.
-- [ ] Add backup/export and restore commands for individual database files.
-- [ ] Add density benchmarks for database count, open handles, migration time, and write contention.
+- [x] Add backup/export and restore commands for individual database files.
+- [x] Add density benchmarks for database count, open handles, migration time, and write contention.

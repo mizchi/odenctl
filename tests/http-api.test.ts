@@ -264,6 +264,25 @@ test("HTTP API provisions project volume sqlite database units", async () => {
     assert.deepEqual(all.databases.map((database: any) => database.id), ["prj_state"]);
     assert.deepEqual(all.stats.pool, { maxOpen: 1, open: 1, openIds: ["prj_state"] });
 
+    registry.withDatabase("prj_state", (db) => {
+      db.exec("create table events (id text primary key); insert into events (id) values ('before')");
+    });
+    const backup = await postJson(baseUrl, "/sqlite-databases/prj_state/backups", { backupId: "http_backup" });
+    assert.equal(backup.id, "http_backup");
+    assert.equal(backup.databaseId, "prj_state");
+
+    registry.withDatabase("prj_state", (db) => {
+      db.exec("insert into events (id) values ('after')");
+    });
+    const restore = await postJsonOk(baseUrl, "/sqlite-databases/prj_state/restores", { backupId: "http_backup" });
+    assert.equal(restore.id, "prj_state");
+    registry.withDatabase("prj_state", (db) => {
+      assert.deepEqual(
+        db.prepare("select id from events order by id asc").all().map((row: any) => row.id),
+        ["before"],
+      );
+    });
+
     const missing = await fetch(`${baseUrl}/sqlite-databases/missing`);
     assert.equal(missing.status, 404);
   } finally {

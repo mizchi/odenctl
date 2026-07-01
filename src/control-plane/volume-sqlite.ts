@@ -1,4 +1,4 @@
-import { mkdirSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, statSync, unlinkSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { ControlPlaneError } from "./errors.ts";
@@ -18,6 +18,28 @@ export interface EnsureVolumeSqliteDatabaseInput {
   kind?: string;
   ownerId?: string;
   schemaVersion?: number;
+}
+
+export interface ExportVolumeSqliteDatabaseInput {
+  id: string;
+  backupId?: string;
+}
+
+export interface RestoreVolumeSqliteDatabaseInput {
+  id: string;
+  backupId?: string;
+  sourcePath?: string;
+  kind?: string;
+  ownerId?: string;
+  schemaVersion?: number;
+}
+
+export interface VolumeSqliteBackupRecord {
+  id: string;
+  databaseId: string;
+  path: string;
+  sizeBytes: number;
+  createdAt: string;
 }
 
 export interface VolumeSqliteRegistryOptions {
@@ -46,6 +68,7 @@ export function createVolumeSqliteRegistry(options: VolumeSqliteRegistryOptions)
 export class VolumeSqliteRegistry {
   readonly rootDir: string;
   readonly databaseDir: string;
+  readonly backupDir: string;
   readonly catalogPath: string;
   private readonly catalog: DatabaseSync;
   private readonly pool: SqliteDatabasePool;
@@ -54,9 +77,11 @@ export class VolumeSqliteRegistry {
   constructor(options: VolumeSqliteRegistryOptions) {
     this.rootDir = resolve(options.rootDir);
     this.databaseDir = join(this.rootDir, "dbs");
+    this.backupDir = join(this.rootDir, "backups");
     this.catalogPath = resolve(options.catalogPath ?? join(this.rootDir, "catalog.sqlite"));
     assertPathInside(this.rootDir, this.catalogPath, "volume sqlite catalog path");
     mkdirSync(this.databaseDir, { recursive: true });
+    mkdirSync(this.backupDir, { recursive: true });
     mkdirSync(dirname(this.catalogPath), { recursive: true });
     this.now = options.now ?? (() => new Date().toISOString());
     this.catalog = new DatabaseSync(this.catalogPath);
@@ -126,11 +151,98 @@ export class VolumeSqliteRegistry {
       .map(recordFromRow);
   }
 
-  withDatabase<T>(id: string, callback: (db: DatabaseSync, record: VolumeSqliteDatabaseRecord) => T): T {
-    const record = this.getDatabase(id);
-    if (!record) {
-      throw new ControlPlaneError("not_found", `volume sqlite database ${id} was not found`);
+  exportDatabase(input: ExportVolumeSqliteDatabaseInput): VolumeSqliteBackupRecord {
+    const record = this.requiredDatabase(input.id);
+    const createdAt = this.now();
+    const id = volumeSqliteBackupId(input.backupId ?? defaultBackupId(record.id, createdAt));
+    const path = this.pathForBackup(id);
+    if (existsSync(path)) {
+      throw new ControlPlaneError("validation", `volume sqlite backup ${id} already exists`);
     }
+    mkdirSync(dirname(path), { recursive: true });
+    this.withDatabase(record.id, (db) => {
+      db.exec(`vacuum main into ${sqlString(path)}`);
+    });
+    const sizeBytes = statSync(path).size;
+    this.catalog
+      .prepare(
+        `insert into volume_sqlite_backups (
+          id,
+          database_id,
+          path,
+          size_bytes,
+          created_at
+        ) values (?, ?, ?, ?, ?)`,
+      )
+      .run(id, record.id, path, sizeBytes, createdAt);
+    return { id, databaseId: record.id, path, sizeBytes, createdAt };
+  }
+
+  restoreDatabase(input: RestoreVolumeSqliteDatabaseInput): VolumeSqliteDatabaseRecord {
+    const id = databaseId(input.id);
+    const existing = this.getDatabase(id);
+    const sourcePath = this.restoreSourcePath(input);
+    const sourceSchemaVersion = sqliteUserVersionFromPath(sourcePath);
+    const schemaVersion = nonnegativeInteger(
+      input.schemaVersion ?? sourceSchemaVersion,
+      "volume sqlite database schema version",
+    );
+    const kind = databaseKind(input.kind ?? existing?.kind ?? "project");
+    const ownerId = optionalIdentifier(input.ownerId ?? existing?.ownerId, "volume sqlite database owner id");
+    const targetPath = this.pathForDatabase(id);
+    const restoredAt = this.now();
+
+    this.pool.close(id);
+    mkdirSync(dirname(targetPath), { recursive: true });
+    removeSqliteSidecars(targetPath);
+    copyFileSync(sourcePath, targetPath);
+    removeSqliteSidecars(targetPath);
+
+    if (existing) {
+      this.catalog
+        .prepare(
+          `update volume_sqlite_databases set
+            path = ?,
+            kind = ?,
+            owner_id = ?,
+            schema_version = ?,
+            last_used_at = ?
+          where id = ?`,
+        )
+        .run(targetPath, kind, ownerId ?? null, schemaVersion, restoredAt, id);
+    } else {
+      this.catalog
+        .prepare(
+          `insert into volume_sqlite_databases (
+            id,
+            path,
+            kind,
+            owner_id,
+            schema_version,
+            created_at,
+            last_used_at
+          ) values (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(id, targetPath, kind, ownerId ?? null, schemaVersion, restoredAt, restoredAt);
+    }
+    const record = this.getDatabase(id) as VolumeSqliteDatabaseRecord;
+    this.initializeDatabaseFile(record);
+    return record;
+  }
+
+  listBackups(id?: string): VolumeSqliteBackupRecord[] {
+    const rows = id
+      ? this.catalog
+        .prepare("select * from volume_sqlite_backups where database_id = ? order by created_at desc, id desc")
+        .all(databaseId(id))
+      : this.catalog
+        .prepare("select * from volume_sqlite_backups order by created_at desc, id desc")
+        .all();
+    return rows.map(backupRecordFromRow);
+  }
+
+  withDatabase<T>(id: string, callback: (db: DatabaseSync, record: VolumeSqliteDatabaseRecord) => T): T {
+    const record = this.requiredDatabase(id);
     const lastUsedAt = this.now();
     this.catalog
       .prepare("update volume_sqlite_databases set last_used_at = ? where id = ?")
@@ -155,6 +267,42 @@ export class VolumeSqliteRegistry {
     const path = resolve(join(this.databaseDir, `${id}.sqlite`));
     assertPathInside(this.databaseDir, path, "volume sqlite database path");
     return path;
+  }
+
+  private pathForBackup(id: string): string {
+    const path = resolve(join(this.backupDir, `${id}.sqlite`));
+    assertPathInside(this.backupDir, path, "volume sqlite backup path");
+    return path;
+  }
+
+  private restoreSourcePath(input: RestoreVolumeSqliteDatabaseInput): string {
+    if (input.backupId && input.sourcePath) {
+      throw new ControlPlaneError("validation", "restore must use either backupId or sourcePath, not both");
+    }
+    if (input.backupId) {
+      const path = this.pathForBackup(volumeSqliteBackupId(input.backupId));
+      if (!existsSync(path)) {
+        throw new ControlPlaneError("not_found", `volume sqlite backup ${input.backupId} was not found`);
+      }
+      return path;
+    }
+    if (!input.sourcePath) {
+      throw new ControlPlaneError("validation", "restore requires backupId or sourcePath");
+    }
+    const sourcePath = resolve(input.sourcePath);
+    assertPathInside(this.backupDir, sourcePath, "volume sqlite restore source path");
+    if (!existsSync(sourcePath)) {
+      throw new ControlPlaneError("not_found", `volume sqlite restore source ${sourcePath} was not found`);
+    }
+    return sourcePath;
+  }
+
+  private requiredDatabase(id: string): VolumeSqliteDatabaseRecord {
+    const record = this.getDatabase(id);
+    if (!record) {
+      throw new ControlPlaneError("not_found", `volume sqlite database ${id} was not found`);
+    }
+    return record;
   }
 
   private initializeDatabaseFile(record: VolumeSqliteDatabaseRecord): void {
@@ -260,8 +408,22 @@ function recordFromRow(row: any): VolumeSqliteDatabaseRecord {
   };
 }
 
+function backupRecordFromRow(row: any): VolumeSqliteBackupRecord {
+  return {
+    id: row.id,
+    databaseId: row.database_id,
+    path: row.path,
+    sizeBytes: row.size_bytes,
+    createdAt: row.created_at,
+  };
+}
+
 function databaseId(value: string): string {
   return identifier(value, "volume sqlite database id");
+}
+
+function volumeSqliteBackupId(value: string): string {
+  return identifier(value, "volume sqlite backup id");
 }
 
 function databaseKind(value: string): string {
@@ -307,6 +469,54 @@ function assertPathInside(root: string, path: string, field: string): void {
   }
 }
 
+function defaultBackupId(databaseId: string, createdAt: string): string {
+  const suffix = createdAt.replace(/[^a-zA-Z0-9_.-]/g, "");
+  return volumeSqliteBackupId(`${databaseId}-${suffix}`);
+}
+
+function sqlString(value: string): string {
+  return `'${value.replaceAll("'", "''")}'`;
+}
+
+function sqliteUserVersionFromPath(path: string): number {
+  let db: DatabaseSync | undefined;
+  try {
+    db = new DatabaseSync(path, { readOnly: true });
+    const quickCheck = firstSqliteValue(db.prepare("pragma quick_check").get());
+    if (quickCheck !== "ok") {
+      throw new Error(String(quickCheck));
+    }
+    return userVersion(db);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new ControlPlaneError("validation", `volume sqlite restore source is not a valid sqlite database: ${message}`);
+  } finally {
+    db?.close();
+  }
+}
+
+function firstSqliteValue(row: unknown): unknown {
+  if (typeof row !== "object" || row === null) {
+    return undefined;
+  }
+  return Object.values(row as Record<string, unknown>)[0];
+}
+
+function removeSqliteSidecars(path: string): void {
+  unlinkIfExists(`${path}-wal`);
+  unlinkIfExists(`${path}-shm`);
+}
+
+function unlinkIfExists(path: string): void {
+  try {
+    unlinkSync(path);
+  } catch (error: any) {
+    if (error?.code !== "ENOENT") {
+      throw error;
+    }
+  }
+}
+
 const catalogSchema = `
 create table if not exists volume_sqlite_databases (
   id text primary key,
@@ -323,4 +533,16 @@ create index if not exists volume_sqlite_databases_owner_idx
 
 create index if not exists volume_sqlite_databases_last_used_idx
   on volume_sqlite_databases (last_used_at asc, id asc);
+
+create table if not exists volume_sqlite_backups (
+  id text primary key,
+  database_id text not null,
+  path text not null unique,
+  size_bytes integer not null,
+  created_at text not null,
+  foreign key (database_id) references volume_sqlite_databases(id)
+);
+
+create index if not exists volume_sqlite_backups_database_idx
+  on volume_sqlite_backups (database_id, created_at desc, id desc);
 `;

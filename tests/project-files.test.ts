@@ -13,7 +13,10 @@ test("project tooling keeps Wasm E2E portable", async () => {
   assert.match(justfile, /node_modules\/@bytecodealliance\/jco\/lib\/wasi_snapshot_preview1\.reactor\.wasm/);
   assert.match(justfile, /^db-migrate-check:/m);
   assert.match(justfile, /^db-migrate-apply:/m);
+  assert.match(justfile, /^volume-sqlite-bench:/m);
+  assert.match(justfile, /^fly-volume-sqlite-bench:/m);
   assert.doesNotMatch(justfile, /\/Users\//);
+  assert.match(packageJson.scripts["volume-sqlite-bench"], /src\/volume-sqlite-bench\.ts/);
   assert.equal(packageJson.devDependencies["@bytecodealliance/jco"], "1.15.4");
   assert.match(workflow, /pnpm\/action-setup@v4/);
   assert.match(workflow, /cache: pnpm/);

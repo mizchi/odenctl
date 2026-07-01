@@ -8,13 +8,16 @@ import {
   deployComponent,
   parseDeployArgs,
   parseMigrateArgs,
+  parseVolumeSqliteArgs,
   runMigrateCommand,
+  runVolumeSqliteCommand,
 } from "../src/cli.ts";
 import {
   MVP_RUNTIME_BACKEND,
   MVP_WASI_PROFILE,
   MVP_WORKER_WORLD,
 } from "../src/control-plane/contracts.ts";
+import { createVolumeSqliteRegistry } from "../src/control-plane/volume-sqlite.ts";
 
 test("CLI deploy flow uploads component, creates deployment, points route, and publishes snapshot", async () => {
   const dir = await mkdtemp(join(tmpdir(), "wasmplane-cli-"));
@@ -187,6 +190,96 @@ test("CLI migrate apply returns current schema status", async () => {
   assert.equal(result.ok, true);
   assert.equal(result.currentVersion, result.latestVersion);
   assert.deepEqual(result.pending, []);
+});
+
+test("CLI volume-sqlite args parse backup and restore commands", () => {
+  assert.deepEqual(
+    parseVolumeSqliteArgs(["backup", "--root", "/data/sqlite", "--id", "prj_api", "--backup-id", "daily"]),
+    {
+      action: "backup",
+      rootDir: "/data/sqlite",
+      id: "prj_api",
+      backupId: "daily",
+    },
+  );
+  assert.deepEqual(
+    parseVolumeSqliteArgs([
+      "restore",
+      "--root",
+      "/data/sqlite",
+      "--id",
+      "prj_api",
+      "--backup-id",
+      "daily",
+      "--owner-id",
+      "prj_api",
+      "--schema-version",
+      "7",
+    ]),
+    {
+      action: "restore",
+      rootDir: "/data/sqlite",
+      id: "prj_api",
+      backupId: "daily",
+      ownerId: "prj_api",
+      schemaVersion: 7,
+    },
+  );
+});
+
+test("CLI volume-sqlite command backs up and restores a database", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "wasmplane-cli-volume-sqlite-"));
+  await runVolumeSqliteCommand({
+    action: "ensure",
+    rootDir: dir,
+    id: "prj_api",
+    schemaVersion: 1,
+  });
+  const registry = createVolumeSqliteRegistry({ rootDir: dir });
+  try {
+    registry.withDatabase("prj_api", (db) => {
+      db.exec("create table events (id text primary key); insert into events (id) values ('before')");
+    });
+  } finally {
+    registry.close();
+  }
+
+  const backup = await runVolumeSqliteCommand({
+    action: "backup",
+    rootDir: dir,
+    id: "prj_api",
+    backupId: "cli_backup",
+  });
+
+  const changed = createVolumeSqliteRegistry({ rootDir: dir });
+  try {
+    changed.withDatabase("prj_api", (db) => {
+      db.exec("insert into events (id) values ('after')");
+    });
+  } finally {
+    changed.close();
+  }
+
+  const restored = await runVolumeSqliteCommand({
+    action: "restore",
+    rootDir: dir,
+    id: "prj_api",
+    backupId: "cli_backup",
+  });
+
+  assert.equal(backup.id, "cli_backup");
+  assert.equal(restored.id, "prj_api");
+  const verified = createVolumeSqliteRegistry({ rootDir: dir });
+  try {
+    verified.withDatabase("prj_api", (db) => {
+      assert.deepEqual(
+        db.prepare("select id from events order by id asc").all().map((row: any) => row.id),
+        ["before"],
+      );
+    });
+  } finally {
+    verified.close();
+  }
 });
 
 function jsonResponse(status: number, body: any) {

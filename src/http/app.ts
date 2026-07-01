@@ -33,6 +33,9 @@ import { selectRuntimeNodesForSnapshot, type RuntimePlacementPolicy } from "../c
 import { runtimeSaturationSignals } from "../control-plane/autoscaling.ts";
 import type {
   EnsureVolumeSqliteDatabaseInput,
+  ExportVolumeSqliteDatabaseInput,
+  RestoreVolumeSqliteDatabaseInput,
+  VolumeSqliteBackupRecord,
   VolumeSqliteDatabaseRecord,
 } from "../control-plane/volume-sqlite.ts";
 
@@ -91,8 +94,11 @@ export interface HttpAppOptions {
 
 export interface VolumeSqliteRegistryApi {
   ensureDatabase(input: EnsureVolumeSqliteDatabaseInput): MaybePromise<VolumeSqliteDatabaseRecord>;
+  exportDatabase(input: ExportVolumeSqliteDatabaseInput): MaybePromise<VolumeSqliteBackupRecord>;
+  restoreDatabase(input: RestoreVolumeSqliteDatabaseInput): MaybePromise<VolumeSqliteDatabaseRecord>;
   getDatabase(id: string): MaybePromise<VolumeSqliteDatabaseRecord | undefined>;
   listDatabases(): MaybePromise<VolumeSqliteDatabaseRecord[]>;
+  listBackups(id?: string): MaybePromise<VolumeSqliteBackupRecord[]>;
   stats?(): MaybePromise<unknown>;
 }
 
@@ -182,6 +188,20 @@ export function createHttpApp(options: HttpAppOptions) {
       }
       if (projectSqliteDatabases && method === "GET") {
         writeJson(response, 200, await listProjectSqliteDatabases(options, projectSqliteDatabases.projectId));
+        return;
+      }
+      const sqliteDatabaseBackups = sqliteDatabaseBackupsMatch(method, url.pathname);
+      if (sqliteDatabaseBackups && method === "POST") {
+        writeJson(response, 201, await createSqliteDatabaseBackup(options, sqliteDatabaseBackups.id, request));
+        return;
+      }
+      if (sqliteDatabaseBackups && method === "GET") {
+        writeJson(response, 200, await listSqliteDatabaseBackups(options, sqliteDatabaseBackups.id));
+        return;
+      }
+      const sqliteDatabaseRestores = sqliteDatabaseRestoresMatch(method, url.pathname);
+      if (sqliteDatabaseRestores) {
+        writeJson(response, 200, await restoreSqliteDatabase(options, sqliteDatabaseRestores.id, request));
         return;
       }
       const sqliteDatabase = sqliteDatabaseMatch(method, url.pathname);
@@ -460,6 +480,32 @@ async function getSqliteDatabase(options: HttpAppOptions, id: string) {
     throw new ControlPlaneError("not_found", `volume sqlite database ${id} was not found`);
   }
   return database;
+}
+
+async function createSqliteDatabaseBackup(options: HttpAppOptions, id: string, request: any) {
+  const input = objectRecord(await readJson(request));
+  return requiredVolumeSqliteRegistry(options).exportDatabase({
+    id,
+    backupId: typeof input.backupId === "string" ? input.backupId : undefined,
+  });
+}
+
+async function listSqliteDatabaseBackups(options: HttpAppOptions, id: string) {
+  return {
+    backups: await requiredVolumeSqliteRegistry(options).listBackups(id),
+  };
+}
+
+async function restoreSqliteDatabase(options: HttpAppOptions, id: string, request: any) {
+  const input = objectRecord(await readJson(request));
+  return requiredVolumeSqliteRegistry(options).restoreDatabase({
+    id,
+    backupId: typeof input.backupId === "string" ? input.backupId : undefined,
+    sourcePath: typeof input.sourcePath === "string" ? input.sourcePath : undefined,
+    kind: typeof input.kind === "string" ? input.kind : undefined,
+    ownerId: typeof input.ownerId === "string" ? input.ownerId : undefined,
+    schemaVersion: typeof input.schemaVersion === "number" ? input.schemaVersion : undefined,
+  });
 }
 
 async function listSqliteDatabases(options: HttpAppOptions) {
@@ -1116,6 +1162,28 @@ function sqliteDatabaseMatch(method: string, pathname: string): { id: string } |
     return undefined;
   }
   const match = /^\/sqlite-databases\/([^/]+)$/.exec(pathname);
+  if (!match) {
+    return undefined;
+  }
+  return { id: decodeURIComponent(match[1]) };
+}
+
+function sqliteDatabaseBackupsMatch(method: string, pathname: string): { id: string } | undefined {
+  if (method !== "GET" && method !== "POST") {
+    return undefined;
+  }
+  const match = /^\/sqlite-databases\/([^/]+)\/backups$/.exec(pathname);
+  if (!match) {
+    return undefined;
+  }
+  return { id: decodeURIComponent(match[1]) };
+}
+
+function sqliteDatabaseRestoresMatch(method: string, pathname: string): { id: string } | undefined {
+  if (method !== "POST") {
+    return undefined;
+  }
+  const match = /^\/sqlite-databases\/([^/]+)\/restores$/.exec(pathname);
   if (!match) {
     return undefined;
   }

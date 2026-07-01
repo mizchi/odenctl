@@ -297,6 +297,14 @@ to cap open handles. This is intended for local-first project state on a single 
 multi-machine writers still need a managed primary such as Postgres or Turso/libSQL. Set
 `WASMPLANE_VOLUME_SQLITE_ROOT=/data/sqlite` to enable the registry in the control API, and tune the
 open handle cap with `WASMPLANE_VOLUME_SQLITE_MAX_OPEN`.
+Individual database files can be exported into `/data/sqlite/backups` with `VACUUM INTO` and
+restored back into the registry without exposing arbitrary SQL execution:
+
+```sh
+pnpm wasmplane volume-sqlite backup --root /data/sqlite --id prj_example --backup-id before-migration
+pnpm wasmplane volume-sqlite restore --root /data/sqlite --id prj_example --backup-id before-migration
+```
+
 To move the control plane state to managed Postgres, create a Postgres database and set
 `DATABASE_URL` on the control app. To remove the control app volume dependency, also set the
 S3/R2 artifact store variables above so local uploads are persisted outside `/data`.
@@ -449,6 +457,25 @@ The output includes per-run throughput, average latency, p50/p95/p99 latency, an
 `host.invoke.component` with `host.invoke.cwasm` to isolate the benefit of skipping Cranelift
 compilation on each host process start. Use `--format json` or `--output bench.json` for
 machine-readable result capture.
+
+Volume-backed SQLite density can be measured separately:
+
+```sh
+just volume-sqlite-bench
+
+pnpm volume-sqlite-bench \
+  --root .wasmplane/volume-sqlite-bench \
+  --databases 1000 \
+  --max-open 64 \
+  --schema-version 1 \
+  --write-iterations 1000 \
+  --write-concurrency 1,4,16 \
+  --format json
+```
+
+The report includes database creation density, LRU open-handle cap behavior, schema-version
+migration time, and write-contention throughput/latency. To run the same probe on the Fly control
+volume, use `just fly-volume-sqlite-bench`.
 
 ## Cost Estimate
 
@@ -605,6 +632,9 @@ Available endpoints:
 - `GET /projects/:id/sqlite-databases`
 - `GET /sqlite-databases`
 - `GET /sqlite-databases/:id`
+- `POST /sqlite-databases/:id/backups`
+- `GET /sqlite-databases/:id/backups`
+- `POST /sqlite-databases/:id/restores`
 - `POST /artifacts`
 - `POST /artifacts/local`
 - `POST /secrets`

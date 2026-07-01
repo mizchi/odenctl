@@ -6,6 +6,7 @@ import {
   checkConfiguredControlPlaneMigrations,
   type ConfiguredControlPlaneMigrationOptions,
 } from "./control-plane/database.ts";
+import { createVolumeSqliteRegistry } from "./control-plane/volume-sqlite.ts";
 import {
   MVP_RUNTIME_BACKEND,
   MVP_WASI_PROFILE,
@@ -43,6 +44,20 @@ export interface DeployComponentResult {
 
 export interface MigrateCommandInput extends ConfiguredControlPlaneMigrationOptions {
   action: "apply" | "check";
+}
+
+export type VolumeSqliteCommandAction = "ensure" | "backup" | "restore" | "list";
+
+export interface VolumeSqliteCommandInput {
+  action: VolumeSqliteCommandAction;
+  rootDir: string;
+  id?: string;
+  backupId?: string;
+  sourcePath?: string;
+  kind?: string;
+  ownerId?: string;
+  schemaVersion?: number;
+  maxOpenDatabases?: number;
 }
 
 export type FetchFunction = (input: string, init?: any) => Promise<FetchResponseLike>;
@@ -252,6 +267,102 @@ export async function runMigrateCommand(input: MigrateCommandInput) {
     : checkConfiguredControlPlaneMigrations({ env: input.env });
 }
 
+export function parseVolumeSqliteArgs(args: string[]): VolumeSqliteCommandInput {
+  const [action, ...rest] = args;
+  if (!isVolumeSqliteAction(action)) {
+    throw new Error("usage: wasmplane volume-sqlite <ensure|backup|restore|list> --root <dir> [--id <database-id>]");
+  }
+  const input: Partial<VolumeSqliteCommandInput> = { action };
+  for (let index = 0; index < rest.length; index += 1) {
+    const flag = rest[index];
+    const value = rest[index + 1];
+    switch (flag) {
+      case "--root":
+        input.rootDir = requiredValue(flag, value);
+        index += 1;
+        break;
+      case "--id":
+        input.id = requiredValue(flag, value);
+        index += 1;
+        break;
+      case "--backup-id":
+        input.backupId = requiredValue(flag, value);
+        index += 1;
+        break;
+      case "--source":
+      case "--source-path":
+        input.sourcePath = requiredValue(flag, value);
+        index += 1;
+        break;
+      case "--kind":
+        input.kind = requiredValue(flag, value);
+        index += 1;
+        break;
+      case "--owner-id":
+        input.ownerId = requiredValue(flag, value);
+        index += 1;
+        break;
+      case "--schema-version":
+        input.schemaVersion = positiveIntegerOrZero(requiredValue(flag, value), flag);
+        index += 1;
+        break;
+      case "--max-open":
+        input.maxOpenDatabases = positiveInteger(requiredValue(flag, value), flag);
+        index += 1;
+        break;
+      default:
+        throw new Error(`unknown volume-sqlite argument ${flag}`);
+    }
+  }
+  if (!input.rootDir) {
+    throw new Error("expected --root <dir>");
+  }
+  if (action !== "list" && !input.id) {
+    throw new Error(`volume-sqlite ${action} requires --id <database-id>`);
+  }
+  return input as VolumeSqliteCommandInput;
+}
+
+export async function runVolumeSqliteCommand(input: VolumeSqliteCommandInput) {
+  const registry = createVolumeSqliteRegistry({
+    rootDir: input.rootDir,
+    maxOpenDatabases: input.maxOpenDatabases,
+  });
+  try {
+    switch (input.action) {
+      case "ensure":
+        return registry.ensureDatabase({
+          id: input.id as string,
+          kind: input.kind,
+          ownerId: input.ownerId,
+          schemaVersion: input.schemaVersion,
+        });
+      case "backup":
+        return registry.exportDatabase({
+          id: input.id as string,
+          backupId: input.backupId,
+        });
+      case "restore":
+        return registry.restoreDatabase({
+          id: input.id as string,
+          backupId: input.backupId,
+          sourcePath: input.sourcePath,
+          kind: input.kind,
+          ownerId: input.ownerId,
+          schemaVersion: input.schemaVersion,
+        });
+      case "list":
+        return {
+          databases: registry.listDatabases(),
+          backups: registry.listBackups(input.id),
+          stats: registry.stats(),
+        };
+    }
+  } finally {
+    registry.close();
+  }
+}
+
 async function postJson(
   fetchImpl: FetchFunction,
   baseUrl: string,
@@ -341,6 +452,22 @@ function requiredValue(flag: string, value: string | undefined): string {
   return value;
 }
 
+function positiveInteger(value: string, flag: string): number {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+    throw new Error(`${flag} must be a positive integer`);
+  }
+  return parsed;
+}
+
+function positiveIntegerOrZero(value: string, flag: string): number {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isSafeInteger(parsed) || parsed < 0) {
+    throw new Error(`${flag} must be a nonnegative integer`);
+  }
+  return parsed;
+}
+
 function printDeployResult(result: DeployComponentResult) {
   console.log(
     JSON.stringify(
@@ -360,6 +487,10 @@ function printMigrationStatus(status: Awaited<ReturnType<typeof runMigrateComman
   console.log(JSON.stringify(status, null, 2));
 }
 
+function printVolumeSqliteResult(result: Awaited<ReturnType<typeof runVolumeSqliteCommand>>) {
+  console.log(JSON.stringify(result, null, 2));
+}
+
 async function main() {
   const [command, ...args] = process.argv.slice(2);
   if (command === "deploy") {
@@ -375,9 +506,17 @@ async function main() {
     }
     return;
   }
+  if (command === "volume-sqlite") {
+    printVolumeSqliteResult(await runVolumeSqliteCommand(parseVolumeSqliteArgs(args)));
+    return;
+  }
   throw new Error(
-    "usage: wasmplane <deploy|migrate> ...",
+    "usage: wasmplane <deploy|migrate|volume-sqlite> ...",
   );
+}
+
+function isVolumeSqliteAction(value: string | undefined): value is VolumeSqliteCommandAction {
+  return value === "ensure" || value === "backup" || value === "restore" || value === "list";
 }
 
 function migrationEnvFromProcess(env: Record<string, string | undefined>): Record<string, string | undefined> {

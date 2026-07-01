@@ -89,8 +89,11 @@ export {
   SqliteDatabasePool,
   VolumeSqliteRegistry,
   type EnsureVolumeSqliteDatabaseInput,
+  type ExportVolumeSqliteDatabaseInput,
+  type RestoreVolumeSqliteDatabaseInput,
   type SqliteDatabasePoolEntry,
   type SqliteDatabasePoolOptions,
+  type VolumeSqliteBackupRecord,
   type VolumeSqliteDatabaseRecord,
   type VolumeSqliteRegistryOptions,
 } from "./control-plane/volume-sqlite.ts";
