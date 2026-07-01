@@ -13,7 +13,8 @@
     "wasmplane": "node --experimental-strip-types src/cli.ts",
     "cost": "node --experimental-strip-types src/cost-estimator.ts",
     "bench": "node --experimental-strip-types src/bench.ts",
-    "cluster-bench": "node --experimental-strip-types src/cluster-bench.ts"
+    "cluster-bench": "node --experimental-strip-types src/cluster-bench.ts",
+    "perf-check": "node --experimental-strip-types src/perf-regression.ts"
   },
   "devDependencies": {
     "@bytecodealliance/jco": "1.15.4"

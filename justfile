@@ -7,6 +7,10 @@ fly_control_app := env_var_or_default("FLY_CONTROL_APP", "wasmplane-control")
 fly_runtime_app := env_var_or_default("FLY_RUNTIME_APP", "wasmplane-runtime")
 fly_collector_app := env_var_or_default("FLY_COLLECTOR_APP", "wasmplane-otel-collector")
 fly_region := env_var_or_default("FLY_REGION", "nrt")
+perf_iterations := env_var_or_default("WASMPLANE_PERF_ITERATIONS", "20")
+perf_warmup := env_var_or_default("WASMPLANE_PERF_WARMUP", "2")
+perf_concurrency := env_var_or_default("WASMPLANE_PERF_CONCURRENCY", "1,4")
+perf_nodes := env_var_or_default("WASMPLANE_PERF_NODES", "1,2")
 
 test:
     pnpm test
@@ -45,6 +49,12 @@ cluster-bench: rust-build guest-build
 
 cluster-bench-daemon: rust-build guest-build
     pnpm cluster-bench --component "{{ guest_component }}" --host-bin target/debug/wasmplane-wasip3-host --host-daemon-url http://127.0.0.1:8790 --pooling-total-component-instances 64 --pooling-total-core-instances 256 --pooling-total-memories 64 --pooling-total-tables 128 --pooling-memory-mb 64 --nodes 1,2,4 --iterations 30 --warmup 2 --concurrency 1,4,16
+
+perf-regression: rust-build guest-build
+    mkdir -p perf-results
+    pnpm bench all --component "{{ guest_component }}" --host-bin target/debug/wasmplane-wasip3-host --iterations "{{ perf_iterations }}" --warmup "{{ perf_warmup }}" --concurrency "{{ perf_concurrency }}" --format json --output perf-results/bench.json
+    pnpm cluster-bench --component "{{ guest_component }}" --host-bin target/debug/wasmplane-wasip3-host --nodes "{{ perf_nodes }}" --iterations "{{ perf_iterations }}" --warmup "{{ perf_warmup }}" --concurrency "{{ perf_concurrency }}" --placement --autoscaling --format json --output perf-results/cluster-bench.json
+    pnpm perf-check --budget perf/budgets.json --input perf-results/bench.json --input perf-results/cluster-bench.json --output perf-results/perf-regression.md
 
 db-migrate-check:
     pnpm wasmplane migrate check

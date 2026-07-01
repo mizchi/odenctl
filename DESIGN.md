@@ -467,11 +467,12 @@ single-region estimate は README の cost estimator にまとめる。現状の
 - Fly autoscaler lease/cooldown は coordination interface と in-memory store までで、durable store と
   provider idempotency metadata は未実装
 - Store/Instance pooling reuse は未実装
+- weekly perf regression は fixed budget check で、履歴ベースの trend/regression 分析は未実装
 
 ## Next Implementation Priorities
 
-1. CI/weekly perf regression
-2. Store/Instance reuse experiment
-3. Durable autoscaler coordination store
-4. Cross-region state consistency
-5. GCP/Azure KMS adapter
+1. Store/Instance reuse experiment
+2. Durable autoscaler coordination store
+3. Cross-region state consistency
+4. GCP/Azure KMS adapter
+5. Historical perf trend analysis

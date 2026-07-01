@@ -1,0 +1,64 @@
+name: Weekly Performance
+
+on:
+  schedule:
+    - cron: "17 18 * * 0"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI: true
+
+jobs:
+  perf-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+
+      - name: Install Node dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Rust stable
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup target add wasm32-wasip1 --toolchain stable
+
+      - uses: extractions/setup-just@v3
+
+      - name: Install Wasm tooling
+        run: |
+          cargo install wasm-tools --version 1.245.1 --locked
+          cargo install wit-bindgen-cli --version 0.51.0 --locked
+
+      - name: Run weekly perf regression
+        run: just perf-regression
+        env:
+          WASMPLANE_PERF_ITERATIONS: "20"
+          WASMPLANE_PERF_WARMUP: "2"
+          WASMPLANE_PERF_CONCURRENCY: "1,4"
+          WASMPLANE_PERF_NODES: "1,2"
+
+      - name: Append perf summary
+        if: ${{ always() }}
+        run: |
+          if [ -f perf-results/perf-regression.md ]; then
+            cat perf-results/perf-regression.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: wasmplane-perf-results
+          path: perf-results/
+          retention-days: 30

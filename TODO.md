@@ -145,3 +145,10 @@ Production readiness tasks, in implementation order.
 - [x] Keep primary targets preferred even when fallback regions are less loaded.
 - [x] Apply failover policy to HTTP snapshot publish target selection.
 - [x] Document placement failover behavior and remaining cross-region state limits.
+
+## 21. CI / weekly perf regression
+
+- [x] Add a perf budget evaluator for benchmark and cluster benchmark JSON reports.
+- [x] Add checked-in perf budgets for latency, throughput, errors, and cluster rollout timing.
+- [x] Add a reproducible `just perf-regression` command that emits JSON and Markdown artifacts.
+- [x] Add a scheduled GitHub Actions workflow with artifact upload and step summary.

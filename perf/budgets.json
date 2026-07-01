@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "benchmarkBudgets": [
+    {
+      "name": "host.invoke.component",
+      "maxP95Ms": 10000,
+      "minThroughputRps": 0.1,
+      "maxErrors": 0
+    },
+    {
+      "name": "host.invoke.cwasm",
+      "maxP95Ms": 10000,
+      "minThroughputRps": 0.1,
+      "maxErrors": 0
+    },
+    {
+      "name": "runtime.prepare.cold",
+      "maxP95Ms": 30000,
+      "maxErrors": 0
+    },
+    {
+      "name": "runtime.prepare.warm-cache",
+      "maxP95Ms": 15000,
+      "maxErrors": 0
+    },
+    {
+      "name": "cluster.http.cwasm",
+      "maxP95Ms": 10000,
+      "minThroughputRps": 0.1,
+      "maxErrors": 0
+    }
+  ],
+  "clusterSwitchBudgets": [
+    {
+      "name": "cluster.switch.cold",
+      "requireOk": true,
+      "maxTotalMs": 30000,
+      "maxErrors": 0
+    }
+  ],
+  "clusterPlacementBudgets": [
+    {
+      "name": "cluster.placement.region",
+      "requireOk": true,
+      "maxTotalMs": 30000,
+      "maxErrors": 0
+    }
+  ],
+  "clusterAutoscalingBudgets": [
+    {
+      "name": "cluster.autoscale.scale_up_warm",
+      "requireOk": true,
+      "maxTotalMs": 30000,
+      "maxErrors": 0
+    },
+    {
+      "name": "cluster.autoscale.scale_down_exclude",
+      "requireOk": true,
+      "maxTotalMs": 30000,
+      "maxErrors": 0
+    }
+  ]
+}

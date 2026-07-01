@@ -81,6 +81,17 @@ export {
   runtimeNodeTargetsFromEnv,
   type RouteSnapshotPublishOptions,
 } from "./control-plane/snapshot-publisher.ts";
+export {
+  evaluatePerfBudgets,
+  formatPerfRegressionMarkdown,
+  parsePerfRegressionArgs,
+  type PerfBenchmarkBudget,
+  type PerfBudgetConfig,
+  type PerfClusterEventBudget,
+  type PerfRegressionCliOptions,
+  type PerfRegressionFinding,
+  type PerfRegressionReport,
+} from "./perf-regression.ts";
 export { createHttpApp, publishCurrentRouteSnapshot } from "./http/app.ts";
 export {
   createFileArtifactStore,

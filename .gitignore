@@ -1,6 +1,7 @@
 node_modules/
 target/
 .wasmplane/
+perf-results/
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal

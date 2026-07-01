@@ -464,6 +464,11 @@ settings.
 
 CI runs `just test` and `just e2e` on GitHub Actions. The workflow installs Node 24, Rust stable,
 `wasm32-wasip1`, `wasm-tools 1.245.1`, and `wit-bindgen-cli 0.51.0`.
+Weekly performance regression runs are configured in `.github/workflows/perf.yml` and can be
+reproduced locally with `just perf-regression`. The job writes `perf-results/bench.json`,
+`perf-results/cluster-bench.json`, and `perf-results/perf-regression.md`, then checks them against
+`perf/budgets.json`. Tune `WASMPLANE_PERF_ITERATIONS`, `WASMPLANE_PERF_WARMUP`,
+`WASMPLANE_PERF_CONCURRENCY`, and `WASMPLANE_PERF_NODES` to widen or shorten the weekly run.
 
 SQLite and Postgres schema upgrades are tracked in `schema_migrations`; repository initialization
 applies missing migrations before serving requests, then verifies the current schema version against
