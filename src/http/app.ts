@@ -29,7 +29,12 @@ import {
   type RouteSnapshotReplicationOptions,
   type RouteSnapshotReplicaStore,
 } from "../control-plane/snapshot-replication.ts";
-import { selectRuntimeNodesForSnapshot, type RuntimePlacementPolicy } from "../control-plane/placement.ts";
+import {
+  defaultRouteSnapshotForTenantDrain,
+  planRuntimeSnapshotPlacements,
+  snapshotRequiresTenantDrainPublish,
+  type RuntimePlacementPolicy,
+} from "../control-plane/placement.ts";
 import { runtimeSaturationSignals } from "../control-plane/autoscaling.ts";
 import type {
   EnsureVolumeSqliteDatabaseInput,
@@ -818,9 +823,18 @@ function firstHeader(value: string | string[] | undefined): string | undefined {
 
 async function publishTargets(options: HttpAppOptions, snapshot: RouteSnapshot): Promise<RuntimeNodeTarget[]> {
   const activeNodes = await options.controlPlane.listActiveRuntimeNodes();
-  const placedNodes = selectRuntimeNodesForSnapshot(activeNodes, snapshot, options.runtimePlacement);
+  const requiresTenantDrain = snapshotRequiresTenantDrainPublish(snapshot, options.runtimePlacement);
+  const placedNodes = options.runtimePlacement
+    ? planRuntimeSnapshotPlacements(activeNodes, snapshot, options.runtimePlacement).map((plan) => ({
+      ...plan.node,
+      snapshot: plan.snapshot,
+    }))
+    : activeNodes;
+  const staticSnapshot = requiresTenantDrain
+    ? defaultRouteSnapshotForTenantDrain(snapshot, options.runtimePlacement)
+    : undefined;
   const targets = [
-    ...(options.runtimeNodes ?? []),
+    ...(options.runtimeNodes ?? []).map((target) => staticSnapshot ? { ...target, snapshot: staticSnapshot } : target),
     ...placedNodes,
   ];
   const seen = new Set<string>();

@@ -8,6 +8,7 @@ import { parseApiTokens } from "./control-plane/authz.ts";
 import { createSnapshotPublishJob } from "./control-plane/snapshot-publish-job.ts";
 import { createWasip3HostArtifactValidator } from "./control-plane/artifact-validation.ts";
 import { runtimeNodeTargetsFromEnv, type RouteSnapshotPublishOptions } from "./control-plane/snapshot-publisher.ts";
+import { runtimePlacementPolicyFromEnv } from "./control-plane/placement.ts";
 import { createVolumeSqliteBackupJob } from "./control-plane/volume-sqlite-backup-job.ts";
 import { createConfiguredVolumeSqliteBackupCipher, createVolumeSqliteRegistry } from "./control-plane/volume-sqlite.ts";
 import {
@@ -94,6 +95,7 @@ const appOptions = {
   runtimeNodeToken,
   runtimeIdentityKeys,
   runtimeNodes: runtimeNodeTargetsFromEnv(process.env.WASMPLANE_RUNTIME_NODES),
+  runtimePlacement: runtimePlacementPolicyFromEnv(process.env),
   snapshotPublish: snapshotPublishOptions,
   volumeSqliteRegistry,
   routeSnapshotReplicaStore,

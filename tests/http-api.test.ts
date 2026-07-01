@@ -2178,6 +2178,80 @@ test("HTTP API fails over placement targets to fallback regions", async () => {
   }
 });
 
+test("HTTP API publishes isolated tenant snapshots only to isolation pool nodes", async () => {
+  const defaultSnapshots: RouteSnapshot[] = [];
+  const isolatedSnapshots: RouteSnapshot[] = [];
+  const defaultRuntime = await listenRuntimeSnapshotSink(defaultSnapshots);
+  const isolatedRuntime = await listenRuntimeSnapshotSink(isolatedSnapshots);
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+  });
+  const app = createHttpApp({
+    controlPlane: control,
+    runtimePlacement: {
+      default: { labels: { pool: "default" } },
+      isolation: {
+        projects: {
+          prj_noisy: { labels: { pool: "isolation" } },
+        },
+      },
+    },
+  });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    await postJson(baseUrl, "/runtime-nodes", {
+      id: "rt_default",
+      url: defaultRuntime.baseUrl,
+      region: "nrt",
+      labels: { pool: "default" },
+    });
+    await postJson(baseUrl, "/runtime-nodes", {
+      id: "rt_isolated",
+      url: isolatedRuntime.baseUrl,
+      region: "nrt",
+      labels: { pool: "isolation" },
+    });
+    await createProjectRoute(baseUrl, {
+      projectId: "prj_normal",
+      projectName: "normal",
+      host: "normal.example.dev",
+    });
+    await createProjectRoute(baseUrl, {
+      projectId: "prj_noisy",
+      projectName: "noisy",
+      host: "noisy.example.dev",
+    });
+
+    const publishResponse = await fetch(`${baseUrl}/snapshots/routes/publish`, { method: "POST" });
+    if (publishResponse.status !== 200) {
+      assert.fail(await publishResponse.text());
+    }
+    const publish = await publishResponse.json();
+
+    assert.deepEqual(
+      publish.targets.map((target: any) => ({ id: target.id, routes: target.routes })),
+      [
+        { id: "rt_default", routes: 1 },
+        { id: "rt_isolated", routes: 1 },
+      ],
+    );
+    assert.deepEqual(defaultSnapshots[0]?.routes.map((route) => route.projectId), ["prj_normal"]);
+    assert.deepEqual(isolatedSnapshots[0]?.routes.map((route) => route.projectId), ["prj_noisy"]);
+    assert.notEqual(defaultSnapshots[0]?.id, isolatedSnapshots[0]?.id);
+  } finally {
+    await app.close();
+    await defaultRuntime.close();
+    await isolatedRuntime.close();
+  }
+});
+
 test("HTTP API records runtime node heartbeat and skips inactive nodes when publishing", async () => {
   const activeSnapshots: RouteSnapshot[] = [];
   const offlineSnapshots: RouteSnapshot[] = [];
@@ -2654,6 +2728,53 @@ async function createHelloRoute(baseUrl: string) {
   await putJson(baseUrl, "/routes", {
     projectId: project.id,
     host: "hello.example.dev",
+    pathPrefix: "/",
+    deploymentId: deployment.id,
+  });
+  return { project, artifact, deployment };
+}
+
+async function createProjectRoute(
+  baseUrl: string,
+  input: { projectId: string; projectName: string; host: string },
+) {
+  const project = await postJson(baseUrl, "/projects", {
+    id: input.projectId,
+    name: input.projectName,
+  });
+  const artifact = await postJson(baseUrl, "/artifacts", {
+    projectId: project.id,
+    digest: digest(`route-${project.id}`),
+    location: `oci://registry.example.com/mizchi/${project.id}:v1`,
+    sizeBytes: 42,
+  });
+  const deployment = await postJson(baseUrl, "/deployments", {
+    projectId: project.id,
+    artifactId: artifact.id,
+    world: "myedge:runtime/worker@0.1.0",
+    runtime: {
+      backend: "wasmtime",
+      version: "wasmtime-43",
+      wasi: "wasip3",
+    },
+    limits: {
+      cpuMs: 50,
+      memoryMb: 64,
+      wallMs: 1000,
+      requestBytes: 1048576,
+      subrequests: 20,
+      hostCalls: 100,
+      responseBytes: 1048576,
+    },
+    capabilities: {
+      outboundHttp: { enabled: false, allow: [] },
+      kv: [],
+      secrets: [],
+    },
+  });
+  await putJson(baseUrl, "/routes", {
+    projectId: project.id,
+    host: input.host,
     pathPrefix: "/",
     deploymentId: deployment.id,
   });

@@ -109,10 +109,17 @@ export {
   type SqliteFlyAutoscalerCoordinationStore,
 } from "./control-plane/fly-autoscaler.ts";
 export {
+  defaultRouteSnapshotForTenantDrain,
+  planRuntimeSnapshotPlacements,
+  routeSnapshotForRuntimeNode,
+  runtimePlacementPolicyFromEnv,
   selectRuntimeNodesForSnapshot,
+  snapshotRequiresTenantDrainPublish,
+  type RuntimePlacementIsolationPolicy,
   type RuntimePlacementFailoverRule,
   type RuntimePlacementPolicy,
   type RuntimePlacementRule,
+  type RuntimeSnapshotPlacementPlan,
 } from "./control-plane/placement.ts";
 export { createSnapshotPublishJob } from "./control-plane/snapshot-publish-job.ts";
 export { createMemoryRepository, createSqliteRepository } from "./control-plane/repository.ts";

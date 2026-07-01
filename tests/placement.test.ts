@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { RouteSnapshot, RuntimeNode } from "../src/control-plane/contracts.ts";
-import { selectRuntimeNodesForSnapshot } from "../src/control-plane/placement.ts";
+import {
+  planRuntimeSnapshotPlacements,
+  runtimePlacementPolicyFromEnv,
+  selectRuntimeNodesForSnapshot,
+} from "../src/control-plane/placement.ts";
 
 test("placement policy selects project nodes by region and labels with load preference", () => {
   const nodes = [
@@ -101,6 +105,93 @@ test("placement policy publishes empty snapshots to every node", () => {
     }).map((node) => node.id),
     ["rt_a", "rt_b"],
   );
+});
+
+test("placement plan publishes empty snapshots to every node", () => {
+  const nodes = [
+    runtimeNode("rt_a", "nrt", { pool: "default" }, 0),
+    runtimeNode("rt_b", "iad", { pool: "default" }, 0),
+  ];
+
+  assert.deepEqual(
+    planRuntimeSnapshotPlacements(nodes, { schemaVersion: 1, generatedAt: fixedNow(), routes: [] }, {
+      projects: {
+        prj_other: { regions: ["nrt"] },
+      },
+    }).map((plan) => ({ node: plan.node.id, routes: plan.snapshot.routes.length })),
+    [
+      { node: "rt_a", routes: 0 },
+      { node: "rt_b", routes: 0 },
+    ],
+  );
+});
+
+test("placement policy routes isolated tenants only to isolation pool snapshots", () => {
+  const nodes = [
+    runtimeNode("rt_default", "nrt", { pool: "default" }, 0),
+    runtimeNode("rt_isolated", "nrt", { pool: "isolation" }, 0),
+  ];
+
+  const plans = planRuntimeSnapshotPlacements(nodes, snapshot(["prj_normal", "prj_noisy"]), {
+    default: { labels: { pool: "default" } },
+    isolation: {
+      projects: {
+        prj_noisy: { labels: { pool: "isolation" } },
+      },
+    },
+  });
+
+  assert.deepEqual(
+    plans.map((plan) => ({
+      node: plan.node.id,
+      projects: plan.snapshot.routes.map((route) => route.projectId),
+    })),
+    [
+      { node: "rt_default", projects: ["prj_normal"] },
+      { node: "rt_isolated", projects: ["prj_noisy"] },
+    ],
+  );
+  assert.notEqual(plans[0]?.snapshot.id, plans[1]?.snapshot.id);
+});
+
+test("placement policy can force-drain tenants from every runtime snapshot", () => {
+  const nodes = [
+    runtimeNode("rt_default", "nrt", { pool: "default" }, 0),
+    runtimeNode("rt_isolated", "nrt", { pool: "isolation" }, 0),
+  ];
+
+  const plans = planRuntimeSnapshotPlacements(nodes, snapshot(["prj_noisy"]), {
+    isolation: {
+      drainedProjects: ["prj_noisy"],
+    },
+  });
+
+  assert.deepEqual(
+    plans.map((plan) => ({
+      node: plan.node.id,
+      routes: plan.snapshot.routes.length,
+    })),
+    [
+      { node: "rt_default", routes: 0 },
+      { node: "rt_isolated", routes: 0 },
+    ],
+  );
+});
+
+test("placement policy parses isolation pool and drained tenants from environment", () => {
+  assert.deepEqual(runtimePlacementPolicyFromEnv({
+    WASMPLANE_ISOLATION_POOL_PROJECTS: "prj_noisy=isolation, prj_gpu=gpu",
+    WASMPLANE_DRAINED_PROJECTS: "prj_blocked",
+  }), {
+    isolation: {
+      projects: {
+        prj_noisy: { labels: { pool: "isolation" } },
+        prj_gpu: { labels: { pool: "gpu" } },
+      },
+      drainedProjects: ["prj_blocked"],
+    },
+  });
+  assert.equal(runtimePlacementPolicyFromEnv({}), undefined);
 });
 
 function runtimeNode(

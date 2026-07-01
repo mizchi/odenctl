@@ -6,6 +6,7 @@ export interface RuntimeNodeTarget {
   url: string;
   token?: string;
   identity?: RuntimeNodeTargetIdentity;
+  snapshot?: RouteSnapshot;
 }
 
 export interface RuntimeNodeTargetIdentity {
@@ -68,7 +69,9 @@ export async function publishRouteSnapshot(
 ): Promise<RouteSnapshotPublishReport> {
   const publishOptions = normalizePublishOptions(options);
   const results = await Promise.all(
-    targets.map((target) => publishToRuntimeNode(snapshot, target, fetchImpl, publishOptions)),
+    targets.map((target) =>
+      publishToRuntimeNode(target.snapshot ?? snapshot, target, fetchImpl, publishOptions)
+    ),
   );
   return {
     ok: results.every((result) => result.ok),

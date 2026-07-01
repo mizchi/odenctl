@@ -135,6 +135,13 @@ variables named `WASMPLANE_SECRET_<secretId>` or `WASMPLANE_SECRET_<NORMALIZED_I
 registry instead. If the control plane stores encrypted secret envelopes, set the same secret KMS
 keyring settings on the runtime so repository secret values can be decrypted before worker
 invocation. Route snapshots only carry `secretId`, never the secret value.
+To isolate noisy tenants, label dedicated runtime nodes with an isolation pool such as
+`RUNTIME_LABELS=pool=isolation`, then set
+`WASMPLANE_ISOLATION_POOL_PROJECTS=projectId=isolation` on the control plane. The publisher sends
+filtered per-node route snapshots so isolated project routes are removed from default-pool nodes and
+published only to matching isolation-pool nodes. Set `WASMPLANE_DRAINED_PROJECTS` to comma-separated
+project ids to force-drain tenant routes out of every runtime snapshot; this publishes empty or
+filtered snapshots so stale routes are removed from runtimes.
 Runtime nodes keep bounded in-memory request events and worker log lines. `GET /__runtime/events`
 returns recent request events, and `GET /__runtime/logs?projectId=...&deploymentId=...` returns
 recent worker logs filtered by project or deployment. Worker logs are redacted before retention:
