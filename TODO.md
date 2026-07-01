@@ -226,3 +226,5 @@ Production readiness tasks, in implementation order.
 - [x] Add per-database writer queues for serialized SQLite mutations.
 - [x] Add per-database write admission control to reject unbounded pending work.
 - [x] Add backup retention GC for count- and age-based pruning.
+- [x] Add AES-256-GCM encryption for volume SQLite backup files.
+- [x] Harden volume SQLite directory/file permissions and backup restore path validation.

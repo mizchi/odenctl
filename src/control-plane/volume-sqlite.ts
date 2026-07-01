@@ -1,4 +1,14 @@
-import { copyFileSync, existsSync, mkdirSync, statSync, unlinkSync } from "node:fs";
+import { createCipheriv, createDecipheriv, randomBytes as nodeRandomBytes } from "node:crypto";
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { ControlPlaneError } from "./errors.ts";
@@ -40,6 +50,11 @@ export interface VolumeSqliteBackupRecord {
   path: string;
   sizeBytes: number;
   createdAt: string;
+  encrypted?: boolean;
+  encryptionAlgorithm?: string;
+  encryptionKeyId?: string;
+  encryptionIv?: string;
+  encryptionTag?: string;
 }
 
 export interface PruneVolumeSqliteBackupsInput {
@@ -72,8 +87,49 @@ export interface VolumeSqliteRegistryOptions {
   maxPendingWritesPerDatabase?: number;
   maxBackupsPerDatabase?: number;
   backupRetentionMs?: number;
+  backupCipher?: VolumeSqliteBackupCipher;
   busyTimeoutMs?: number;
   now?: () => string;
+}
+
+export interface VolumeSqliteBackupCipher {
+  encrypt(input: VolumeSqliteBackupCipherEncryptInput): VolumeSqliteBackupCipherEncryptResult;
+  decrypt(input: VolumeSqliteBackupCipherDecryptInput): Buffer;
+}
+
+export interface VolumeSqliteBackupCipherEncryptInput {
+  databaseId: string;
+  backupId: string;
+  plaintext: Buffer;
+}
+
+export interface VolumeSqliteBackupCipherEncryptResult {
+  ciphertext: Buffer;
+  algorithm: "aes-256-gcm";
+  keyId: string;
+  iv: Buffer;
+  tag: Buffer;
+}
+
+export interface VolumeSqliteBackupCipherDecryptInput {
+  databaseId: string;
+  backupId: string;
+  ciphertext: Buffer;
+  algorithm: string;
+  keyId: string;
+  iv: Buffer;
+  tag: Buffer;
+}
+
+export interface VolumeSqliteBackupDataKey {
+  keyId: string;
+  key: Buffer | Uint8Array;
+}
+
+export interface AesGcmVolumeSqliteBackupCipherOptions {
+  primaryKey: VolumeSqliteBackupDataKey;
+  decryptKeys?: VolumeSqliteBackupDataKey[];
+  randomBytes?: (size: number) => Buffer | Uint8Array;
 }
 
 export interface SqliteDatabasePoolOptions {
@@ -101,6 +157,7 @@ export class VolumeSqliteRegistry {
   private readonly writerQueue: PerDatabaseWriterQueue;
   private readonly maxBackupsPerDatabase?: number;
   private readonly backupRetentionMs?: number;
+  private readonly backupCipher?: VolumeSqliteBackupCipher;
   private readonly now: () => string;
 
   constructor(options: VolumeSqliteRegistryOptions) {
@@ -112,10 +169,16 @@ export class VolumeSqliteRegistry {
     mkdirSync(this.databaseDir, { recursive: true });
     mkdirSync(this.backupDir, { recursive: true });
     mkdirSync(dirname(this.catalogPath), { recursive: true });
+    secureDirectory(this.rootDir);
+    secureDirectory(this.databaseDir);
+    secureDirectory(this.backupDir);
+    secureDirectory(dirname(this.catalogPath));
     this.now = options.now ?? (() => new Date().toISOString());
     this.catalog = new DatabaseSync(this.catalogPath);
     configureSqliteDatabase(this.catalog, { busyTimeoutMs: options.busyTimeoutMs });
     this.catalog.exec(catalogSchema);
+    ensureCatalogCompatibility(this.catalog);
+    secureSqliteFiles(this.catalogPath);
     this.pool = new SqliteDatabasePool({
       maxOpen: options.maxOpenDatabases ?? 64,
       busyTimeoutMs: options.busyTimeoutMs,
@@ -131,6 +194,7 @@ export class VolumeSqliteRegistry {
       options.backupRetentionMs,
       "volume sqlite backup retention ms",
     );
+    this.backupCipher = options.backupCipher;
   }
 
   ensureDatabase(input: EnsureVolumeSqliteDatabaseInput): VolumeSqliteDatabaseRecord {
@@ -200,9 +264,22 @@ export class VolumeSqliteRegistry {
       throw new ControlPlaneError("validation", `volume sqlite backup ${id} already exists`);
     }
     mkdirSync(dirname(path), { recursive: true });
+    secureDirectory(dirname(path));
+    const exportPath = this.backupCipher ? temporaryBackupPath(path) : path;
     this.withDatabase(record.id, (db) => {
-      db.exec(`vacuum main into ${sqlString(path)}`);
+      db.exec(`vacuum main into ${sqlString(exportPath)}`);
     });
+    secureFile(exportPath);
+    const encrypted = this.encryptBackupIfConfigured({
+      databaseId: record.id,
+      backupId: id,
+      sourcePath: exportPath,
+      targetPath: path,
+    });
+    if (exportPath !== path) {
+      unlinkIfExists(exportPath);
+    }
+    secureFile(path);
     const sizeBytes = statSync(path).size;
     this.catalog
       .prepare(
@@ -211,66 +288,86 @@ export class VolumeSqliteRegistry {
           database_id,
           path,
           size_bytes,
-          created_at
-        ) values (?, ?, ?, ?, ?)`,
+          created_at,
+          encryption_algorithm,
+          encryption_key_id,
+          encryption_iv,
+          encryption_tag
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(id, record.id, path, sizeBytes, createdAt);
+      .run(
+        id,
+        record.id,
+        path,
+        sizeBytes,
+        createdAt,
+        encrypted?.algorithm ?? null,
+        encrypted?.keyId ?? null,
+        encrypted?.iv.toString("base64url") ?? null,
+        encrypted?.tag.toString("base64url") ?? null,
+      );
     if (this.maxBackupsPerDatabase !== undefined || this.backupRetentionMs !== undefined) {
       this.pruneBackups({ id: record.id });
     }
-    return { id, databaseId: record.id, path, sizeBytes, createdAt };
+    return this.getBackup(id) as VolumeSqliteBackupRecord;
   }
 
   restoreDatabase(input: RestoreVolumeSqliteDatabaseInput): VolumeSqliteDatabaseRecord {
     const id = databaseId(input.id);
     const existing = this.getDatabase(id);
-    const sourcePath = this.restoreSourcePath(input);
-    const sourceSchemaVersion = sqliteUserVersionFromPath(sourcePath);
-    const schemaVersion = nonnegativeInteger(
-      input.schemaVersion ?? sourceSchemaVersion,
-      "volume sqlite database schema version",
-    );
-    const kind = databaseKind(input.kind ?? existing?.kind ?? "project");
-    const ownerId = optionalIdentifier(input.ownerId ?? existing?.ownerId, "volume sqlite database owner id");
-    const targetPath = this.pathForDatabase(id);
-    const restoredAt = this.now();
+    const source = this.restoreSource(input);
+    try {
+      const sourceSchemaVersion = sqliteUserVersionFromPath(source.path);
+      const schemaVersion = nonnegativeInteger(
+        input.schemaVersion ?? sourceSchemaVersion,
+        "volume sqlite database schema version",
+      );
+      const kind = databaseKind(input.kind ?? existing?.kind ?? "project");
+      const ownerId = optionalIdentifier(input.ownerId ?? existing?.ownerId, "volume sqlite database owner id");
+      const targetPath = this.pathForDatabase(id);
+      const restoredAt = this.now();
 
-    this.pool.close(id);
-    mkdirSync(dirname(targetPath), { recursive: true });
-    removeSqliteSidecars(targetPath);
-    copyFileSync(sourcePath, targetPath);
-    removeSqliteSidecars(targetPath);
+      this.pool.close(id);
+      mkdirSync(dirname(targetPath), { recursive: true });
+      secureDirectory(dirname(targetPath));
+      removeSqliteSidecars(targetPath);
+      copyFileSync(source.path, targetPath);
+      secureFile(targetPath);
+      removeSqliteSidecars(targetPath);
 
-    if (existing) {
-      this.catalog
-        .prepare(
-          `update volume_sqlite_databases set
-            path = ?,
-            kind = ?,
-            owner_id = ?,
-            schema_version = ?,
-            last_used_at = ?
-          where id = ?`,
-        )
-        .run(targetPath, kind, ownerId ?? null, schemaVersion, restoredAt, id);
-    } else {
-      this.catalog
-        .prepare(
-          `insert into volume_sqlite_databases (
-            id,
-            path,
-            kind,
-            owner_id,
-            schema_version,
-            created_at,
-            last_used_at
-          ) values (?, ?, ?, ?, ?, ?, ?)`,
-        )
-        .run(id, targetPath, kind, ownerId ?? null, schemaVersion, restoredAt, restoredAt);
+      if (existing) {
+        this.catalog
+          .prepare(
+            `update volume_sqlite_databases set
+              path = ?,
+              kind = ?,
+              owner_id = ?,
+              schema_version = ?,
+              last_used_at = ?
+            where id = ?`,
+          )
+          .run(targetPath, kind, ownerId ?? null, schemaVersion, restoredAt, id);
+      } else {
+        this.catalog
+          .prepare(
+            `insert into volume_sqlite_databases (
+              id,
+              path,
+              kind,
+              owner_id,
+              schema_version,
+              created_at,
+              last_used_at
+            ) values (?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .run(id, targetPath, kind, ownerId ?? null, schemaVersion, restoredAt, restoredAt);
+      }
+      const record = this.getDatabase(id) as VolumeSqliteDatabaseRecord;
+      this.initializeDatabaseFile(record);
+      return record;
+    } finally {
+      source.cleanup?.();
     }
-    const record = this.getDatabase(id) as VolumeSqliteDatabaseRecord;
-    this.initializeDatabaseFile(record);
-    return record;
   }
 
   listBackups(id?: string): VolumeSqliteBackupRecord[] {
@@ -372,16 +469,16 @@ export class VolumeSqliteRegistry {
     return path;
   }
 
-  private restoreSourcePath(input: RestoreVolumeSqliteDatabaseInput): string {
+  private restoreSource(input: RestoreVolumeSqliteDatabaseInput): { path: string; cleanup?: () => void } {
     if (input.backupId && input.sourcePath) {
       throw new ControlPlaneError("validation", "restore must use either backupId or sourcePath, not both");
     }
     if (input.backupId) {
-      const path = this.pathForBackup(volumeSqliteBackupId(input.backupId));
-      if (!existsSync(path)) {
+      const backup = this.getBackup(volumeSqliteBackupId(input.backupId));
+      if (!backup) {
         throw new ControlPlaneError("not_found", `volume sqlite backup ${input.backupId} was not found`);
       }
-      return path;
+      return this.decryptBackupIfNeeded(backup);
     }
     if (!input.sourcePath) {
       throw new ControlPlaneError("validation", "restore requires backupId or sourcePath");
@@ -391,7 +488,14 @@ export class VolumeSqliteRegistry {
     if (!existsSync(sourcePath)) {
       throw new ControlPlaneError("not_found", `volume sqlite restore source ${sourcePath} was not found`);
     }
-    return sourcePath;
+    return { path: sourcePath };
+  }
+
+  private getBackup(id: string): VolumeSqliteBackupRecord | undefined {
+    const row = this.catalog
+      .prepare("select * from volume_sqlite_backups where id = ?")
+      .get(volumeSqliteBackupId(id));
+    return row ? backupRecordFromRow(row) : undefined;
   }
 
   private requiredDatabase(id: string): VolumeSqliteDatabaseRecord {
@@ -417,7 +521,141 @@ export class VolumeSqliteRegistry {
         db.exec(`pragma user_version = ${record.schemaVersion}`);
       }
     });
+    secureSqliteFiles(record.path);
   }
+
+  private encryptBackupIfConfigured(input: {
+    databaseId: string;
+    backupId: string;
+    sourcePath: string;
+    targetPath: string;
+  }): VolumeSqliteBackupCipherEncryptResult | undefined {
+    if (!this.backupCipher) {
+      return undefined;
+    }
+    const result = this.backupCipher.encrypt({
+      databaseId: input.databaseId,
+      backupId: input.backupId,
+      plaintext: readFileSync(input.sourcePath),
+    });
+    writeFileSync(input.targetPath, result.ciphertext, { mode: 0o600 });
+    return result;
+  }
+
+  private decryptBackupIfNeeded(backup: VolumeSqliteBackupRecord): { path: string; cleanup?: () => void } {
+    if (!backup.encrypted) {
+      return { path: backup.path };
+    }
+    if (!this.backupCipher) {
+      throw new ControlPlaneError("validation", "encrypted volume sqlite backup requires a configured backup cipher");
+    }
+    if (!backup.encryptionAlgorithm || !backup.encryptionKeyId) {
+      throw new ControlPlaneError("validation", `encrypted volume sqlite backup ${backup.id} is missing metadata`);
+    }
+    const tempPath = temporaryRestorePath(this.backupDir, backup.id);
+    const plaintext = this.backupCipher.decrypt({
+      databaseId: backup.databaseId,
+      backupId: backup.id,
+      ciphertext: readFileSync(backup.path),
+      algorithm: backup.encryptionAlgorithm,
+      keyId: backup.encryptionKeyId,
+      iv: backupEncryptionPart(backup, "iv"),
+      tag: backupEncryptionPart(backup, "tag"),
+    });
+    writeFileSync(tempPath, plaintext, { mode: 0o600 });
+    secureFile(tempPath);
+    return {
+      path: tempPath,
+      cleanup() {
+        unlinkIfExists(tempPath);
+      },
+    };
+  }
+}
+
+export function createAesGcmVolumeSqliteBackupCipher(
+  options: AesGcmVolumeSqliteBackupCipherOptions,
+): VolumeSqliteBackupCipher {
+  const primaryKey = normalizeBackupDataKey(options.primaryKey, "primary volume sqlite backup key");
+  const keys = new Map<string, Buffer>();
+  addBackupDataKey(keys, primaryKey, "primary volume sqlite backup key");
+  for (const key of options.decryptKeys ?? []) {
+    addBackupDataKey(keys, normalizeBackupDataKey(key, "volume sqlite backup decrypt key"), "volume sqlite backup decrypt key");
+  }
+  const randomBytes = options.randomBytes ?? nodeRandomBytes;
+  return {
+    encrypt(input) {
+      const iv = Buffer.from(randomBytes(12));
+      if (iv.byteLength !== 12) {
+        throw new ControlPlaneError("validation", "volume sqlite backup IV generator returned invalid size");
+      }
+      const cipher = createCipheriv("aes-256-gcm", primaryKey.key, iv);
+      cipher.setAAD(backupCipherAad(input.databaseId, input.backupId, "aes-256-gcm", primaryKey.keyId));
+      const ciphertext = Buffer.concat([
+        cipher.update(input.plaintext),
+        cipher.final(),
+      ]);
+      return {
+        ciphertext,
+        algorithm: "aes-256-gcm",
+        keyId: primaryKey.keyId,
+        iv,
+        tag: cipher.getAuthTag(),
+      };
+    },
+    decrypt(input) {
+      if (input.algorithm !== "aes-256-gcm") {
+        throw new ControlPlaneError("validation", `unsupported volume sqlite backup algorithm ${input.algorithm}`);
+      }
+      const key = keys.get(input.keyId);
+      if (!key) {
+        throw new ControlPlaneError("validation", `volume sqlite backup key id ${input.keyId} is not configured`);
+      }
+      try {
+        const decipher = createDecipheriv("aes-256-gcm", key, input.iv);
+        decipher.setAAD(backupCipherAad(input.databaseId, input.backupId, input.algorithm, input.keyId));
+        decipher.setAuthTag(input.tag);
+        return Buffer.concat([
+          decipher.update(input.ciphertext),
+          decipher.final(),
+        ]);
+      } catch {
+        throw new ControlPlaneError("validation", "encrypted volume sqlite backup could not be decrypted");
+      }
+    },
+  };
+}
+
+export function createConfiguredVolumeSqliteBackupCipher(
+  env: Record<string, string | undefined> = process.env,
+): VolumeSqliteBackupCipher | undefined {
+  const primaryKeyBase64 = firstNonEmpty(env.WASMPLANE_VOLUME_SQLITE_BACKUP_KEY_BASE64);
+  const extraKeys = parseBackupKeyringEnv(firstNonEmpty(env.WASMPLANE_VOLUME_SQLITE_BACKUP_KEYS_BASE64));
+  if (!primaryKeyBase64 && extraKeys.length === 0) {
+    return undefined;
+  }
+  const configuredKeyId = firstNonEmpty(env.WASMPLANE_VOLUME_SQLITE_BACKUP_KEY_ID);
+  const keys: VolumeSqliteBackupDataKey[] = [];
+  if (primaryKeyBase64) {
+    keys.push({
+      keyId: configuredKeyId ?? "local",
+      key: Buffer.from(primaryKeyBase64, "base64"),
+    });
+  }
+  keys.push(...extraKeys);
+  const primaryKey = configuredKeyId
+    ? keys.find((key) => key.keyId === configuredKeyId)
+    : keys[0];
+  if (!primaryKey) {
+    throw new ControlPlaneError(
+      "validation",
+      `primary volume sqlite backup key id ${configuredKeyId ?? "<first>"} is not configured`,
+    );
+  }
+  return createAesGcmVolumeSqliteBackupCipher({
+    primaryKey,
+    decryptKeys: keys,
+  });
 }
 
 class PerDatabaseWriterQueue {
@@ -587,6 +825,15 @@ function backupRecordFromRow(row: any): VolumeSqliteBackupRecord {
     path: row.path,
     sizeBytes: row.size_bytes,
     createdAt: row.created_at,
+    ...(row.encryption_algorithm
+      ? {
+        encrypted: true,
+        encryptionAlgorithm: row.encryption_algorithm,
+        encryptionKeyId: row.encryption_key_id,
+        encryptionIv: row.encryption_iv,
+        encryptionTag: row.encryption_tag,
+      }
+      : {}),
   };
 }
 
@@ -614,6 +861,10 @@ function optionalNonnegativeInteger(value: number | undefined, field: string): n
     return undefined;
   }
   return nonnegativeInteger(value, field);
+}
+
+function firstNonEmpty(...values: Array<string | undefined>): string | undefined {
+  return values.find((value) => value && value.trim().length > 0)?.trim();
 }
 
 function identifier(value: string, field: string): string {
@@ -696,6 +947,124 @@ function unlinkIfExists(path: string): void {
   }
 }
 
+function secureDirectory(path: string): void {
+  try {
+    chmodSync(path, 0o700);
+  } catch {
+    // Best effort: chmod can fail on filesystems that do not support POSIX modes.
+  }
+}
+
+function secureFile(path: string): void {
+  try {
+    chmodSync(path, 0o600);
+  } catch {
+    // Best effort: chmod can fail on filesystems that do not support POSIX modes.
+  }
+}
+
+function secureSqliteFiles(path: string): void {
+  secureFile(path);
+  if (existsSync(`${path}-wal`)) {
+    secureFile(`${path}-wal`);
+  }
+  if (existsSync(`${path}-shm`)) {
+    secureFile(`${path}-shm`);
+  }
+}
+
+function temporaryBackupPath(path: string): string {
+  return `${path}.plain-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function temporaryRestorePath(backupDir: string, backupId: string): string {
+  const path = resolve(join(
+    backupDir,
+    `.restore-${backupId}-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.sqlite`,
+  ));
+  assertPathInside(backupDir, path, "volume sqlite temporary restore path");
+  return path;
+}
+
+function backupEncryptionPart(backup: VolumeSqliteBackupRecord, field: "iv" | "tag"): Buffer {
+  const row = backup as VolumeSqliteBackupRecord & { encryptionIv?: string; encryptionTag?: string };
+  const value = field === "iv" ? row.encryptionIv : row.encryptionTag;
+  if (!value) {
+    throw new ControlPlaneError("validation", `encrypted volume sqlite backup ${backup.id} is missing ${field}`);
+  }
+  try {
+    const decoded = Buffer.from(value, "base64url");
+    if (decoded.byteLength === 0) {
+      throw new Error("empty");
+    }
+    return decoded;
+  } catch {
+    throw new ControlPlaneError("validation", `encrypted volume sqlite backup ${backup.id} has malformed ${field}`);
+  }
+}
+
+function normalizeBackupDataKey(
+  key: VolumeSqliteBackupDataKey,
+  name: string,
+): { keyId: string; key: Buffer } {
+  if (!key.keyId || key.keyId.trim().length === 0) {
+    throw new ControlPlaneError("validation", `${name} id is required`);
+  }
+  const normalized = Buffer.from(key.key);
+  if (normalized.byteLength !== 32) {
+    throw new ControlPlaneError("validation", `${name} must be 32 bytes`);
+  }
+  return { keyId: key.keyId.trim(), key: normalized };
+}
+
+function addBackupDataKey(keys: Map<string, Buffer>, key: { keyId: string; key: Buffer }, name: string) {
+  const existing = keys.get(key.keyId);
+  if (existing && !existing.equals(key.key)) {
+    throw new ControlPlaneError("validation", `${name} id ${key.keyId} is configured more than once`);
+  }
+  keys.set(key.keyId, key.key);
+}
+
+function backupCipherAad(databaseId: string, backupId: string, algorithm: string, keyId: string): Buffer {
+  return Buffer.from(JSON.stringify({
+    scope: "wasmplane.volume-sqlite.backup",
+    databaseId,
+    backupId,
+    algorithm,
+    keyId,
+  }), "utf8");
+}
+
+function parseBackupKeyringEnv(value: string | undefined): VolumeSqliteBackupDataKey[] {
+  if (!value) {
+    return [];
+  }
+  return value.split(",").filter((item) => item.trim().length > 0).map((item) => {
+    const separator = item.indexOf("=");
+    const keyId = separator >= 0 ? item.slice(0, separator) : "";
+    const keyBase64 = separator >= 0 ? item.slice(separator + 1) : "";
+    if (!keyId || !keyBase64) {
+      throw new ControlPlaneError("validation", "WASMPLANE_VOLUME_SQLITE_BACKUP_KEYS_BASE64 entries must be keyId=base64");
+    }
+    return { keyId, key: Buffer.from(keyBase64, "base64") };
+  });
+}
+
+function ensureCatalogCompatibility(db: DatabaseSync): void {
+  addColumnIfMissing(db, "volume_sqlite_backups", "encryption_algorithm", "text");
+  addColumnIfMissing(db, "volume_sqlite_backups", "encryption_key_id", "text");
+  addColumnIfMissing(db, "volume_sqlite_backups", "encryption_iv", "text");
+  addColumnIfMissing(db, "volume_sqlite_backups", "encryption_tag", "text");
+}
+
+function addColumnIfMissing(db: DatabaseSync, table: string, column: string, definition: string): void {
+  const columns = db.prepare(`pragma table_info(${table})`).all() as Array<{ name: string }>;
+  if (columns.some((item) => item.name === column)) {
+    return;
+  }
+  db.exec(`alter table ${table} add column ${column} ${definition}`);
+}
+
 function groupBackupsByDatabase(backups: VolumeSqliteBackupRecord[]): Map<string, VolumeSqliteBackupRecord[]> {
   const groups = new Map<string, VolumeSqliteBackupRecord[]>();
   for (const backup of backups) {
@@ -737,6 +1106,10 @@ create table if not exists volume_sqlite_backups (
   path text not null unique,
   size_bytes integer not null,
   created_at text not null,
+  encryption_algorithm text,
+  encryption_key_id text,
+  encryption_iv text,
+  encryption_tag text,
   foreign key (database_id) references volume_sqlite_databases(id)
 );
 

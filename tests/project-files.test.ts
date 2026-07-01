@@ -8,6 +8,7 @@ test("project tooling keeps Wasm E2E portable", async () => {
   const workflow = await readFile(".github/workflows/ci.yml", "utf8");
   const flyControl = await readFile("fly.control.toml", "utf8");
   const flyRuntime = await readFile("fly.runtime.toml", "utf8");
+  const readme = await readFile("README.md", "utf8");
   await readFile("pnpm-lock.yaml", "utf8");
 
   assert.match(justfile, /node_modules\/@bytecodealliance\/jco\/lib\/wasi_snapshot_preview1\.reactor\.wasm/);
@@ -30,6 +31,8 @@ test("project tooling keeps Wasm E2E portable", async () => {
   assert.match(flyControl, /WASMPLANE_VOLUME_SQLITE_MAX_PENDING_WRITES = "64"/);
   assert.match(flyControl, /WASMPLANE_VOLUME_SQLITE_MAX_BACKUPS_PER_DATABASE = "24"/);
   assert.match(flyControl, /WASMPLANE_VOLUME_SQLITE_BACKUP_RETENTION_MS = "604800000"/);
+  assert.match(readme, /WASMPLANE_VOLUME_SQLITE_BACKUP_KEY_BASE64/);
+  assert.match(readme, /WASMPLANE_VOLUME_SQLITE_BACKUP_KEYS_BASE64/);
   assert.match(justfile, /--max-pending-writes 64/);
   assert.match(flyRuntime, /RUNTIME_HOST = "::"/);
   assert.match(flyRuntime, /RUNTIME_ROUTE_SNAPSHOT_FILE = "\/data\/route-snapshot\.json"/);

@@ -302,7 +302,16 @@ database and rejects excess work with a conflict error instead of allowing unbou
 Individual database files can be exported into `/data/sqlite/backups` with `VACUUM INTO` and
 restored back into the registry without exposing arbitrary SQL execution. Backup retention can be
 applied automatically with `WASMPLANE_VOLUME_SQLITE_MAX_BACKUPS_PER_DATABASE` and
-`WASMPLANE_VOLUME_SQLITE_BACKUP_RETENTION_MS`, or manually with `volume-sqlite gc`:
+`WASMPLANE_VOLUME_SQLITE_BACKUP_RETENTION_MS`. Database directories are chmodded to `0700`, SQLite
+database, WAL, SHM, and backup files are chmodded to `0600`, and backup/restore paths are constrained
+under the registry root. Plain SQLite database files are not SQLCipher-encrypted by this layer; on Fly
+they rely on the attached volume's platform encryption plus these local file permissions. Backup
+files can be encrypted with AES-256-GCM by setting `WASMPLANE_VOLUME_SQLITE_BACKUP_KEY_BASE64` to a
+32-byte base64 key. Set `WASMPLANE_VOLUME_SQLITE_BACKUP_KEY_ID` for the active key id, and keep old
+decrypt-only keys in `WASMPLANE_VOLUME_SQLITE_BACKUP_KEYS_BASE64` as comma-separated
+`keyId=base64` entries during rotation. The CLI uses the same environment, so encrypted backups can
+be restored with `volume-sqlite restore` as long as the matching key id is configured. Retention can
+also be applied manually with `volume-sqlite gc`:
 
 ```sh
 pnpm wasmplane volume-sqlite backup --root /data/sqlite --id prj_example --backup-id before-migration

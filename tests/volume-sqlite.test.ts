@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdtemp, stat } from "node:fs/promises";
+import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import {
+  createAesGcmVolumeSqliteBackupCipher,
+  createConfiguredVolumeSqliteBackupCipher,
   createVolumeSqliteRegistry,
   SqliteDatabasePool,
 } from "../src/control-plane/volume-sqlite.ts";
@@ -31,7 +33,7 @@ test("volume sqlite registry creates a cataloged database file with WAL settings
     assert.equal(record.schemaVersion, 3);
     assert.equal(record.createdAt, fixedNow());
     assert.equal(record.path, join(dir, "dbs", "prj_api.sqlite"));
-    await stat(record.path);
+    assert.equal((await stat(record.path)).mode & 0o777, 0o600);
 
     registry.withDatabase("prj_api", (db) => {
       db.exec("create table if not exists events (id text primary key)");
@@ -46,6 +48,121 @@ test("volume sqlite registry creates a cataloged database file with WAL settings
   } finally {
     registry.close();
   }
+});
+
+test("volume sqlite registry encrypts backups and restores through authenticated decryption", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "wasmplane-volume-sqlite-encrypted-backup-"));
+  const registry = createVolumeSqliteRegistry({
+    rootDir: dir,
+    backupCipher: createAesGcmVolumeSqliteBackupCipher({
+      primaryKey: { keyId: "test-key", key: Buffer.alloc(32, 1) },
+      randomBytes: (size) => Buffer.alloc(size, 2),
+    }),
+  });
+
+  try {
+    registry.ensureDatabase({ id: "prj_secret", schemaVersion: 1 });
+    registry.withDatabase("prj_secret", (db) => {
+      db.exec("create table events (id text primary key, payload text not null)");
+      db.prepare("insert into events (id, payload) values (?, ?)").run("before", "sensitive payload");
+    });
+
+    const backup = registry.exportDatabase({ id: "prj_secret", backupId: "encrypted_1" });
+    assert.equal(backup.encrypted, true);
+    assert.equal(backup.encryptionKeyId, "test-key");
+    assert.equal(backup.encryptionAlgorithm, "aes-256-gcm");
+    assert.equal((await stat(backup.path)).mode & 0o777, 0o600);
+    const bytes = await readFile(backup.path);
+    assert.equal(bytes.includes(Buffer.from("sensitive payload")), false);
+
+    registry.withDatabase("prj_secret", (db) => {
+      db.prepare("insert into events (id, payload) values (?, ?)").run("after", "changed");
+    });
+    registry.restoreDatabase({ id: "prj_secret", backupId: "encrypted_1" });
+
+    registry.withDatabase("prj_secret", (db) => {
+      assert.deepEqual(
+        db.prepare("select id from events order by rowid asc").all().map((row: any) => row.id),
+        ["before"],
+      );
+    });
+  } finally {
+    registry.close();
+  }
+});
+
+test("volume sqlite registry restores encrypted backups into a new database id", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "wasmplane-volume-sqlite-encrypted-clone-"));
+  const registry = createVolumeSqliteRegistry({
+    rootDir: dir,
+    backupCipher: createAesGcmVolumeSqliteBackupCipher({
+      primaryKey: { keyId: "test-key", key: Buffer.alloc(32, 1) },
+      randomBytes: (size) => Buffer.alloc(size, 2),
+    }),
+  });
+
+  try {
+    registry.ensureDatabase({ id: "prj_source", schemaVersion: 7 });
+    registry.withDatabase("prj_source", (db) => {
+      db.exec("create table events (id text primary key, payload text not null)");
+      db.prepare("insert into events (id, payload) values (?, ?)").run("before", "sensitive payload");
+    });
+
+    registry.exportDatabase({ id: "prj_source", backupId: "encrypted_clone" });
+    const restored = registry.restoreDatabase({ id: "prj_clone", backupId: "encrypted_clone" });
+    assert.equal(restored.schemaVersion, 7);
+
+    registry.withDatabase("prj_clone", (db) => {
+      assert.deepEqual(
+        db.prepare("select id, payload from events").all().map((row: any) => ({
+          id: row.id,
+          payload: row.payload,
+        })),
+        [{ id: "before", payload: "sensitive payload" }],
+      );
+    });
+  } finally {
+    registry.close();
+  }
+});
+
+test("volume sqlite registry rejects tampered encrypted backups", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "wasmplane-volume-sqlite-tampered-backup-"));
+  const registry = createVolumeSqliteRegistry({
+    rootDir: dir,
+    backupCipher: createAesGcmVolumeSqliteBackupCipher({
+      primaryKey: { keyId: "test-key", key: Buffer.alloc(32, 1) },
+      randomBytes: (size) => Buffer.alloc(size, 2),
+    }),
+  });
+
+  try {
+    registry.ensureDatabase({ id: "prj_secret" });
+    registry.withDatabase("prj_secret", (db) => {
+      db.exec("create table events (id text primary key)");
+    });
+    const backup = registry.exportDatabase({ id: "prj_secret", backupId: "encrypted_1" });
+    const bytes = await readFile(backup.path);
+    bytes[bytes.length - 1] ^= 0xff;
+    await writeFile(backup.path, bytes);
+
+    assert.throws(
+      () => registry.restoreDatabase({ id: "prj_secret", backupId: "encrypted_1" }),
+      /encrypted volume sqlite backup could not be decrypted/,
+    );
+  } finally {
+    registry.close();
+  }
+});
+
+test("configured volume sqlite backup cipher reads keyring environment", () => {
+  const cipher = createConfiguredVolumeSqliteBackupCipher({
+    WASMPLANE_VOLUME_SQLITE_BACKUP_KEY_ID: "new",
+    WASMPLANE_VOLUME_SQLITE_BACKUP_KEY_BASE64: Buffer.alloc(32, 3).toString("base64"),
+    WASMPLANE_VOLUME_SQLITE_BACKUP_KEYS_BASE64: `old=${Buffer.alloc(32, 1).toString("base64")}`,
+  });
+
+  assert.ok(cipher);
 });
 
 test("volume sqlite registry exports and restores individual database files", async () => {

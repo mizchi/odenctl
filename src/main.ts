@@ -8,7 +8,7 @@ import { parseApiTokens } from "./control-plane/authz.ts";
 import { createSnapshotPublishJob } from "./control-plane/snapshot-publish-job.ts";
 import { createWasip3HostArtifactValidator } from "./control-plane/artifact-validation.ts";
 import { runtimeNodeTargetsFromEnv, type RouteSnapshotPublishOptions } from "./control-plane/snapshot-publisher.ts";
-import { createVolumeSqliteRegistry } from "./control-plane/volume-sqlite.ts";
+import { createConfiguredVolumeSqliteBackupCipher, createVolumeSqliteRegistry } from "./control-plane/volume-sqlite.ts";
 import {
   createInMemoryRouteSnapshotReplicaStore,
   routeSnapshotReplicaTargetsFromEnv,
@@ -57,6 +57,7 @@ const volumeSqliteRegistry = volumeSqliteRoot
     maxPendingWritesPerDatabase: positiveInteger(process.env.WASMPLANE_VOLUME_SQLITE_MAX_PENDING_WRITES, 64),
     maxBackupsPerDatabase: optionalPositiveInteger(process.env.WASMPLANE_VOLUME_SQLITE_MAX_BACKUPS_PER_DATABASE),
     backupRetentionMs: optionalPositiveInteger(process.env.WASMPLANE_VOLUME_SQLITE_BACKUP_RETENTION_MS),
+    backupCipher: createConfiguredVolumeSqliteBackupCipher(process.env),
     busyTimeoutMs: positiveInteger(process.env.WASMPLANE_VOLUME_SQLITE_BUSY_TIMEOUT_MS, 5000),
   })
   : undefined;

@@ -6,7 +6,10 @@ import {
   checkConfiguredControlPlaneMigrations,
   type ConfiguredControlPlaneMigrationOptions,
 } from "./control-plane/database.ts";
-import { createVolumeSqliteRegistry } from "./control-plane/volume-sqlite.ts";
+import {
+  createConfiguredVolumeSqliteBackupCipher,
+  createVolumeSqliteRegistry,
+} from "./control-plane/volume-sqlite.ts";
 import {
   MVP_RUNTIME_BACKEND,
   MVP_WASI_PROFILE,
@@ -343,6 +346,7 @@ export async function runVolumeSqliteCommand(input: VolumeSqliteCommandInput) {
     rootDir: input.rootDir,
     maxOpenDatabases: input.maxOpenDatabases,
     maxPendingWritesPerDatabase: input.maxPendingWritesPerDatabase,
+    backupCipher: createConfiguredVolumeSqliteBackupCipher(process.env),
   });
   try {
     switch (input.action) {
