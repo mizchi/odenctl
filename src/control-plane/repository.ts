@@ -817,6 +817,16 @@ create table if not exists canary_decisions (
   created_at text not null,
   foreign key (project_id) references projects(id)
 );
+
+create table if not exists fly_autoscaler_coordination (
+  coordination_key text primary key,
+  lease_holder text,
+  lease_expires_at_ms integer,
+  cooldown_action text,
+  cooldown_at_ms integer,
+  cooldown_until_ms integer,
+  updated_at text not null
+);
 `;
 
 interface SchemaMigration {
@@ -954,6 +964,22 @@ const migrations: SchemaMigration[] = [
     id: "202607010002_runtime_node_host_info",
     apply(db) {
       ensureColumn(db, "runtime_nodes", "host_json", "text");
+    },
+  },
+  {
+    id: "202607010003_fly_autoscaler_coordination",
+    apply(db) {
+      db.exec(`
+        create table if not exists fly_autoscaler_coordination (
+          coordination_key text primary key,
+          lease_holder text,
+          lease_expires_at_ms integer,
+          cooldown_action text,
+          cooldown_at_ms integer,
+          cooldown_until_ms integer,
+          updated_at text not null
+        )
+      `);
     },
   },
 ];

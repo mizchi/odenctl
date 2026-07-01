@@ -1053,6 +1053,7 @@ test("sqlite repository records schema migrations and upgrades existing database
     "202606300006_artifact_metadata",
     "202607010001_runtime_node_identity",
     "202607010002_runtime_node_host_info",
+    "202607010003_fly_autoscaler_coordination",
   ]);
   assert.ok(routeColumns.includes("targets_json"));
   const artifactColumns = db

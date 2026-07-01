@@ -156,7 +156,16 @@ Production readiness tasks, in implementation order.
 ## 22. Store / Instance reuse experiment
 
 - [x] Add a disabled-by-default Rust host daemon flag for per-component idle Store/Instance reuse.
+- [x] Bound reusable instances per prepared component.
 - [x] Return only successful invocations to the reuse pool; drop trapped or timed-out instances.
 - [x] Expose reusable instance counts through daemon `/stats` and `/metrics`.
 - [x] Wire the Node runtime daemon launcher through `WASMPLANE_WASIP3_EXPERIMENTAL_INSTANCE_REUSE`.
 - [x] Document that reuse is for stateless-worker benchmarking until a guest reset contract exists.
+
+## 23. Durable autoscaler coordination store
+
+- [x] Add a SQLite Fly autoscaler coordination store.
+- [x] Add a Postgres Fly autoscaler coordination store.
+- [x] Persist lease/cooldown state in control-plane schemas and SQLite migrations.
+- [x] Export durable store constructors for production controllers.
+- [x] Document production usage and remaining provider idempotency work.

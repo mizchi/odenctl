@@ -56,6 +56,8 @@ export {
 } from "./control-plane/autoscaling.ts";
 export {
   createInMemoryFlyAutoscalerCoordinationStore,
+  createPostgresFlyAutoscalerCoordinationStore,
+  createSqliteFlyAutoscalerCoordinationStore,
   reconcileFlyMachinesAutoscaling,
   type FlyAutoscalerCoordinationStore,
   type FlyAutoscalerCooldownOptions,
@@ -64,6 +66,8 @@ export {
   type FlyAutoscalerLeaseReport,
   type FlyAutoscalerReport,
   type FlyMachine,
+  type PostgresFlyAutoscalerCoordinationStoreOptions,
+  type SqliteFlyAutoscalerCoordinationStore,
 } from "./control-plane/fly-autoscaler.ts";
 export {
   selectRuntimeNodesForSnapshot,

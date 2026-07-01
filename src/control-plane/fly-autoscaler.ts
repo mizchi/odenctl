@@ -1,3 +1,4 @@
+import { DatabaseSync } from "node:sqlite";
 import type { RuntimeAutoscalingDecision } from "./autoscaling.ts";
 
 export interface FlyMachine {
@@ -88,6 +89,14 @@ export interface FlyAutoscalerCoordinationStore {
     key: string,
   ): Promise<FlyAutoscalerCooldownState | undefined> | FlyAutoscalerCooldownState | undefined;
   writeCooldown(state: FlyAutoscalerCooldownState): Promise<void> | void;
+}
+
+export interface SqliteFlyAutoscalerCoordinationStore extends FlyAutoscalerCoordinationStore {
+  close(): void;
+}
+
+export interface PostgresFlyAutoscalerCoordinationStoreOptions {
+  query(sql: string, values?: unknown[]): Promise<{ rows: any[]; rowCount?: number | null }>;
 }
 
 export async function reconcileFlyMachinesAutoscaling(
@@ -183,6 +192,159 @@ export function createInMemoryFlyAutoscalerCoordinationStore(): FlyAutoscalerCoo
     },
     writeCooldown(state) {
       cooldowns.set(state.key, state);
+    },
+  };
+}
+
+export function createSqliteFlyAutoscalerCoordinationStore(
+  pathOrDb: string | DatabaseSync,
+): SqliteFlyAutoscalerCoordinationStore {
+  const ownsDb = typeof pathOrDb === "string";
+  const db = ownsDb ? new DatabaseSync(pathOrDb) : pathOrDb;
+  db.exec(flyAutoscalerCoordinationSqliteSchema);
+  return {
+    acquireLease(request) {
+      const result = db.prepare(`
+        insert into fly_autoscaler_coordination (
+          coordination_key,
+          lease_holder,
+          lease_expires_at_ms,
+          updated_at
+        ) values (?, ?, ?, ?)
+        on conflict(coordination_key) do update set
+          lease_holder = excluded.lease_holder,
+          lease_expires_at_ms = excluded.lease_expires_at_ms,
+          updated_at = excluded.updated_at
+        where fly_autoscaler_coordination.lease_holder = excluded.lease_holder
+           or fly_autoscaler_coordination.lease_expires_at_ms is null
+           or fly_autoscaler_coordination.lease_expires_at_ms <= ?
+      `).run(
+        request.key,
+        request.holder,
+        request.nowMs + Math.max(1, request.ttlMs),
+        new Date(request.nowMs).toISOString(),
+        request.nowMs,
+      );
+      return result.changes > 0;
+    },
+    releaseLease(request) {
+      db.prepare(`
+        update fly_autoscaler_coordination
+        set lease_holder = null,
+            lease_expires_at_ms = null,
+            updated_at = ?
+        where coordination_key = ? and lease_holder = ?
+      `).run(new Date().toISOString(), request.key, request.holder);
+    },
+    readCooldown(key) {
+      const row = db.prepare(`
+        select coordination_key, cooldown_action, cooldown_at_ms, cooldown_until_ms
+        from fly_autoscaler_coordination
+        where coordination_key = ?
+      `).get(key) as any;
+      return cooldownStateFromRow(row);
+    },
+    writeCooldown(state) {
+      db.prepare(`
+        insert into fly_autoscaler_coordination (
+          coordination_key,
+          cooldown_action,
+          cooldown_at_ms,
+          cooldown_until_ms,
+          updated_at
+        ) values (?, ?, ?, ?, ?)
+        on conflict(coordination_key) do update set
+          cooldown_action = excluded.cooldown_action,
+          cooldown_at_ms = excluded.cooldown_at_ms,
+          cooldown_until_ms = excluded.cooldown_until_ms,
+          updated_at = excluded.updated_at
+      `).run(
+        state.key,
+        state.action,
+        state.atMs,
+        state.untilMs,
+        new Date(state.atMs).toISOString(),
+      );
+    },
+    close() {
+      if (ownsDb) {
+        db.close();
+      }
+    },
+  };
+}
+
+export function createPostgresFlyAutoscalerCoordinationStore(
+  pool: PostgresFlyAutoscalerCoordinationStoreOptions,
+): FlyAutoscalerCoordinationStore {
+  return {
+    async acquireLease(request) {
+      await pool.query(flyAutoscalerCoordinationPostgresSchema);
+      const result = await pool.query(`
+        insert into fly_autoscaler_coordination (
+          coordination_key,
+          lease_holder,
+          lease_expires_at_ms,
+          updated_at
+        ) values ($1, $2, $3, $4)
+        on conflict(coordination_key) do update set
+          lease_holder = excluded.lease_holder,
+          lease_expires_at_ms = excluded.lease_expires_at_ms,
+          updated_at = excluded.updated_at
+        where fly_autoscaler_coordination.lease_holder = excluded.lease_holder
+           or fly_autoscaler_coordination.lease_expires_at_ms is null
+           or fly_autoscaler_coordination.lease_expires_at_ms <= $5
+        returning coordination_key
+      `, [
+        request.key,
+        request.holder,
+        request.nowMs + Math.max(1, request.ttlMs),
+        new Date(request.nowMs).toISOString(),
+        request.nowMs,
+      ]);
+      return result.rows.length > 0;
+    },
+    async releaseLease(request) {
+      await pool.query(flyAutoscalerCoordinationPostgresSchema);
+      await pool.query(`
+        update fly_autoscaler_coordination
+        set lease_holder = null,
+            lease_expires_at_ms = null,
+            updated_at = $1
+        where coordination_key = $2 and lease_holder = $3
+      `, [new Date().toISOString(), request.key, request.holder]);
+    },
+    async readCooldown(key) {
+      await pool.query(flyAutoscalerCoordinationPostgresSchema);
+      const result = await pool.query(`
+        select coordination_key, cooldown_action, cooldown_at_ms, cooldown_until_ms
+        from fly_autoscaler_coordination
+        where coordination_key = $1
+      `, [key]);
+      return cooldownStateFromRow(result.rows[0]);
+    },
+    async writeCooldown(state) {
+      await pool.query(flyAutoscalerCoordinationPostgresSchema);
+      await pool.query(`
+        insert into fly_autoscaler_coordination (
+          coordination_key,
+          cooldown_action,
+          cooldown_at_ms,
+          cooldown_until_ms,
+          updated_at
+        ) values ($1, $2, $3, $4, $5)
+        on conflict(coordination_key) do update set
+          cooldown_action = excluded.cooldown_action,
+          cooldown_at_ms = excluded.cooldown_at_ms,
+          cooldown_until_ms = excluded.cooldown_until_ms,
+          updated_at = excluded.updated_at
+      `, [
+        state.key,
+        state.action,
+        state.atMs,
+        state.untilMs,
+        new Date(state.atMs).toISOString(),
+      ]);
     },
   };
 }
@@ -339,4 +501,40 @@ function requestHeaders(apiToken: string): Record<string, string> {
 
 function fetchImpl(input: ReconcileFlyMachinesAutoscalingInput): typeof fetch {
   return input.fetch ?? fetch;
+}
+
+const flyAutoscalerCoordinationSqliteSchema = `
+create table if not exists fly_autoscaler_coordination (
+  coordination_key text primary key,
+  lease_holder text,
+  lease_expires_at_ms integer,
+  cooldown_action text,
+  cooldown_at_ms integer,
+  cooldown_until_ms integer,
+  updated_at text not null
+);
+`;
+
+const flyAutoscalerCoordinationPostgresSchema = `
+create table if not exists fly_autoscaler_coordination (
+  coordination_key text primary key,
+  lease_holder text,
+  lease_expires_at_ms bigint,
+  cooldown_action text,
+  cooldown_at_ms bigint,
+  cooldown_until_ms bigint,
+  updated_at text not null
+);
+`;
+
+function cooldownStateFromRow(row: any): FlyAutoscalerCooldownState | undefined {
+  if (!row?.cooldown_action || row.cooldown_at_ms == null || row.cooldown_until_ms == null) {
+    return undefined;
+  }
+  return {
+    key: row.coordination_key,
+    action: row.cooldown_action,
+    atMs: Number(row.cooldown_at_ms),
+    untilMs: Number(row.cooldown_until_ms),
+  };
 }

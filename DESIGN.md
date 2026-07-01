@@ -352,8 +352,9 @@ Fly Machines controller は provider prototype として分離する。Fly Machi
 `POST /apps/{app}/machines/{id}/stop` を使う。実 production では API rate limit と deploy/update
 競合を避けるため、controller は coordination store を通して lease と cooldown を使う。lease は
 複数 controller instance の同時 reconcile を防ぎ、cooldown は成功した provider action 後の連続
-scale-up/down を抑える。in-memory store は single-process 用で、production では durable store に
-差し替える。idempotency metadata と provider-side reconciliation audit は次段階の課題である。
+scale-up/down を抑える。in-memory store は single-process 用で、production では SQLite/Postgres の
+durable store に差し替え、`fly_autoscaler_coordination` に lease/cooldown state を残す。
+idempotency metadata と provider-side reconciliation audit は次段階の課題である。
 
 ## Admin UI
 
@@ -466,15 +467,15 @@ single-region estimate は README の cost estimator にまとめる。現状の
   rolling upgrade の自動 orchestration は未実装
 - snapshot publish は target ごとの retry/timeout と attempt 記録に対応したが、永続 queue と
   dead-letter/replay UI は未実装
-- Fly autoscaler lease/cooldown は coordination interface と in-memory store までで、durable store と
-  provider idempotency metadata は未実装
+- Fly autoscaler lease/cooldown は in-memory/SQLite/Postgres store に対応したが、provider idempotency
+  metadata は未実装
 - Store/Instance reuse は experimental flag のみで、guest state reset contract は未実装
 - weekly perf regression は fixed budget check で、履歴ベースの trend/regression 分析は未実装
 
 ## Next Implementation Priorities
 
-1. Durable autoscaler coordination store
-2. Cross-region state consistency
-3. GCP/Azure KMS adapter
-4. Historical perf trend analysis
-5. Safe guest reset contract for instance reuse
+1. Cross-region state consistency
+2. GCP/Azure KMS adapter
+3. Historical perf trend analysis
+4. Safe guest reset contract for instance reuse
+5. Provider idempotency metadata for autoscaling

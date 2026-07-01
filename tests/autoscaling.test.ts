@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtemp } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { test } from "node:test";
 import { createMemoryRepository } from "../src/control-plane/repository.ts";
 import { createControlPlane } from "../src/control-plane/service.ts";
@@ -9,6 +12,8 @@ import {
 } from "../src/control-plane/autoscaling.ts";
 import {
   createInMemoryFlyAutoscalerCoordinationStore,
+  createPostgresFlyAutoscalerCoordinationStore,
+  createSqliteFlyAutoscalerCoordinationStore,
   reconcileFlyMachinesAutoscaling,
 } from "../src/control-plane/fly-autoscaler.ts";
 
@@ -321,6 +326,147 @@ test("Fly autoscaler records cooldown after scaling and skips until it expires",
   });
   assert.equal(third.actions.length, 1);
   assert.deepEqual(calls.map((call) => call.method), ["POST", "POST"]);
+});
+
+test("SQLite Fly autoscaler coordination store persists leases and cooldowns", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "wasmplane-autoscaler-coordination-"));
+  const path = join(dir, "coordination.sqlite");
+  const first = createSqliteFlyAutoscalerCoordinationStore(path);
+
+  assert.equal(await first.acquireLease({
+    key: "fly:wasmplane-runtime:nrt",
+    holder: "controller-a",
+    ttlMs: 30_000,
+    nowMs: 10_000,
+  }), true);
+  assert.equal(await first.acquireLease({
+    key: "fly:wasmplane-runtime:nrt",
+    holder: "controller-b",
+    ttlMs: 30_000,
+    nowMs: 20_000,
+  }), false);
+  await first.writeCooldown({
+    key: "fly:wasmplane-runtime:nrt",
+    action: "scale_up",
+    atMs: 10_000,
+    untilMs: 70_000,
+  });
+  first.close();
+
+  const second = createSqliteFlyAutoscalerCoordinationStore(path);
+  assert.equal(await second.acquireLease({
+    key: "fly:wasmplane-runtime:nrt",
+    holder: "controller-b",
+    ttlMs: 30_000,
+    nowMs: 20_000,
+  }), false);
+  assert.deepEqual(await second.readCooldown("fly:wasmplane-runtime:nrt"), {
+    key: "fly:wasmplane-runtime:nrt",
+    action: "scale_up",
+    atMs: 10_000,
+    untilMs: 70_000,
+  });
+  await second.releaseLease({ key: "fly:wasmplane-runtime:nrt", holder: "controller-a" });
+  assert.equal(await second.acquireLease({
+    key: "fly:wasmplane-runtime:nrt",
+    holder: "controller-b",
+    ttlMs: 30_000,
+    nowMs: 20_000,
+  }), true);
+  second.close();
+});
+
+test("Postgres Fly autoscaler coordination store persists leases and cooldowns", async () => {
+  const rows = new Map<string, any>();
+  const queries: string[] = [];
+  const pool = {
+    async query(sql: string, values: unknown[] = []) {
+      queries.push(sql);
+      if (sql.includes("create table if not exists fly_autoscaler_coordination")) {
+        return { rows: [] };
+      }
+      if (sql.includes("returning coordination_key")) {
+        const [key, holder, expiresAtMs, _updatedAt, nowMs] = values as [string, string, number, string, number];
+        const current = rows.get(key) ?? { coordination_key: key };
+        if (
+          current.lease_holder === holder ||
+          current.lease_expires_at_ms == null ||
+          Number(current.lease_expires_at_ms) <= nowMs
+        ) {
+          rows.set(key, {
+            ...current,
+            lease_holder: holder,
+            lease_expires_at_ms: expiresAtMs,
+          });
+          return { rows: [{ coordination_key: key }] };
+        }
+        return { rows: [] };
+      }
+      if (sql.includes("set lease_holder = null")) {
+        const [_updatedAt, key, holder] = values as [string, string, string];
+        const current = rows.get(key);
+        if (current?.lease_holder === holder) {
+          rows.set(key, {
+            ...current,
+            lease_holder: null,
+            lease_expires_at_ms: null,
+          });
+        }
+        return { rows: [] };
+      }
+      if (sql.includes("select coordination_key, cooldown_action")) {
+        const [key] = values as [string];
+        const current = rows.get(key);
+        return { rows: current ? [current] : [] };
+      }
+      if (sql.includes("cooldown_action") && sql.includes("on conflict")) {
+        const [key, action, atMs, untilMs] = values as [string, string, number, number, string];
+        const current = rows.get(key) ?? { coordination_key: key };
+        rows.set(key, {
+          ...current,
+          cooldown_action: action,
+          cooldown_at_ms: String(atMs),
+          cooldown_until_ms: String(untilMs),
+        });
+        return { rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    },
+  };
+  const store = createPostgresFlyAutoscalerCoordinationStore(pool);
+
+  assert.equal(await store.acquireLease({
+    key: "fly:wasmplane-runtime:nrt",
+    holder: "controller-a",
+    ttlMs: 30_000,
+    nowMs: 10_000,
+  }), true);
+  assert.equal(await store.acquireLease({
+    key: "fly:wasmplane-runtime:nrt",
+    holder: "controller-b",
+    ttlMs: 30_000,
+    nowMs: 20_000,
+  }), false);
+  await store.writeCooldown({
+    key: "fly:wasmplane-runtime:nrt",
+    action: "scale_up",
+    atMs: 10_000,
+    untilMs: 70_000,
+  });
+  assert.deepEqual(await store.readCooldown("fly:wasmplane-runtime:nrt"), {
+    key: "fly:wasmplane-runtime:nrt",
+    action: "scale_up",
+    atMs: 10_000,
+    untilMs: 70_000,
+  });
+  await store.releaseLease({ key: "fly:wasmplane-runtime:nrt", holder: "controller-a" });
+  assert.equal(await store.acquireLease({
+    key: "fly:wasmplane-runtime:nrt",
+    holder: "controller-b",
+    ttlMs: 30_000,
+    nowMs: 20_000,
+  }), true);
+  assert.ok(queries.some((query) => query.includes("create table if not exists fly_autoscaler_coordination")));
 });
 
 function runtimeNode(id: string, activeRequests: number, concurrentRequests: number) {

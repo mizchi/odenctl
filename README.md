@@ -147,9 +147,10 @@ Autoscalers can read `GET /autoscaling/signals` from the control plane to get pe
 turn these signals into scale-up/scale-down decisions, and the Fly Machines prototype reconciler can
 create Machines or stop excess Machines. The Fly reconciler accepts a coordination store for
 controller leases and cooldowns so multiple controller instances do not race provider actions.
-The bundled in-memory store is for single-process controllers and tests; production should back the
-same interface with durable storage. New runtime nodes should be registered as `draining`, receive
-the current route snapshot directly for warmup, then be marked `active` by heartbeat.
+The bundled in-memory store is for single-process controllers and tests. Production controllers can
+use the SQLite or Postgres coordination stores, which persist lease and cooldown state in
+`fly_autoscaler_coordination`. New runtime nodes should be registered as `draining`, receive the
+current route snapshot directly for warmup, then be marked `active` by heartbeat.
 Set `WASMPLANE_KV_STORE_DIR` to choose the host-side persistent KV directory; the default is
 `.wasmplane/kv`.
 Set `WASMPLANE_WASIP3_HOST_DAEMON=1` to make the Node runtime start a local embedded Rust

@@ -103,6 +103,16 @@ create table if not exists canary_decisions (
   created_at text not null
 );
 
+create table if not exists fly_autoscaler_coordination (
+  coordination_key text primary key,
+  lease_holder text,
+  lease_expires_at_ms bigint,
+  cooldown_action text,
+  cooldown_at_ms bigint,
+  cooldown_until_ms bigint,
+  updated_at text not null
+);
+
 alter table if exists route_snapshot_publications
   add column if not exists snapshot_id text;
 
@@ -128,6 +138,9 @@ create index if not exists deployments_project_id_idx
 
 create index if not exists routes_lookup_idx
   on routes (host, path_prefix);
+
+create index if not exists fly_autoscaler_coordination_lease_idx
+  on fly_autoscaler_coordination (lease_expires_at_ms);
 
 create index if not exists runtime_nodes_status_last_seen_idx
   on runtime_nodes (status, last_seen_at);
