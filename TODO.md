@@ -201,5 +201,5 @@ Production readiness tasks, in implementation order.
 - [x] Report local lifecycle state in runtime heartbeats.
 - [x] Fail readiness when a configured embedded host daemon is unavailable.
 - [x] Document readiness and local drain operations.
-- [ ] Add graceful shutdown that drains, rejects new requests, and waits for active invocations.
+- [x] Add graceful shutdown that drains, rejects new requests, and waits for active invocations.
 - [ ] Add a startup option to restore the latest accepted route snapshot from disk.

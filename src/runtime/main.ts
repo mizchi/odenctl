@@ -17,6 +17,7 @@ import {
   parseRuntimeCacheRetentionPolicy,
   parseRuntimeIdentityKeys,
   parseRuntimeLabels,
+  parseRuntimeShutdownDrainTimeoutMs,
   resolveRuntimeIdentity,
   resolveRuntimeMemoryMb,
   resolveRuntimeNodeId,
@@ -26,6 +27,7 @@ import {
 import { createRuntimeNodeApp } from "./node-app.ts";
 import { createOtlpHttpTraceExporter, parseOtlpHeaders } from "./otel.ts";
 import { createEnvSecretStore, createRepositorySecretStore } from "./secrets.ts";
+import { installRuntimeShutdownHandlers } from "./shutdown.ts";
 import { createRuntimeSupervisor } from "./supervisor.ts";
 import {
   createWasip3HostBackend,
@@ -53,6 +55,7 @@ const runtimeIdentity = resolveRuntimeIdentity(process.env);
 const runtimeIdentityKeys = parseRuntimeIdentityKeys(process.env);
 const runtimeCacheRetention = parseRuntimeCacheRetentionPolicy(process.env);
 const runtimeCacheGcIntervalMs = parseRuntimeCacheGcIntervalMs(process.env);
+const shutdownDrainTimeoutMs = parseRuntimeShutdownDrainTimeoutMs(process.env, 30_000);
 const controlPlaneUrl = process.env.CONTROL_PLANE_URL ?? process.env.WASMPLANE_CONTROL_PLANE_URL;
 const controlPlaneToken = process.env.CONTROL_PLANE_TOKEN ?? process.env.WASMPLANE_CONTROL_PLANE_TOKEN;
 const runtimeManagementToken = process.env.WASMPLANE_RUNTIME_TOKEN;
@@ -144,6 +147,9 @@ const app = createRuntimeNodeApp({
     : createEnvSecretStore(),
 });
 await app.listen({ port, host });
+installRuntimeShutdownHandlers({
+  close: () => app.close({ drainTimeoutMs: shutdownDrainTimeoutMs }),
+});
 if (controlPlaneUrl) {
   startRuntimeHeartbeat({
     controlPlaneUrl,

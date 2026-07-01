@@ -204,6 +204,72 @@ test("runtime node exposes readiness and local drain controls", async () => {
   }
 });
 
+test("runtime node close drains active invocation and rejects new worker requests", async () => {
+  const supervisor = createRuntimeSupervisor({
+    snapshot: snapshot([route("dep_drain", "hello.example.dev", "/", digest("drain"))]),
+    artifactStore: materializedArtifactStore(),
+    backend: compiledBackend(),
+  });
+  let releaseInvocation: (() => void) | undefined;
+  let invocationStarted!: () => void;
+  const started = new Promise<void>((resolve) => {
+    invocationStarted = resolve;
+  });
+  const app = createRuntimeNodeApp({
+    supervisor,
+    now: fixedNow,
+    invoker: {
+      async invoke() {
+        invocationStarted();
+        await new Promise<void>((resolve) => {
+          releaseInvocation = resolve;
+        });
+        return { status: 200, headers: [], body: Buffer.from("drained") };
+      },
+    },
+  });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+  let closeSettled = false;
+  let closePromise: Promise<void> | undefined;
+
+  try {
+    const active = fetch(`${baseUrl}/`, {
+      headers: { "x-forwarded-host": "hello.example.dev" },
+    });
+    await started;
+
+    closePromise = app.close({ drainTimeoutMs: 1000 }).then(() => {
+      closeSettled = true;
+    });
+    assert.equal(app.lifecycleStatus(), "draining");
+
+    const rejected = await fetch(`${baseUrl}/`, {
+      headers: { "x-forwarded-host": "hello.example.dev" },
+    });
+    assert.equal(rejected.status, 503);
+    assert.equal((await rejected.json()).error.code, "draining");
+    assert.equal(closeSettled, false);
+
+    releaseInvocation?.();
+    const activeResponse = await active;
+    assert.equal(activeResponse.status, 200);
+    assert.equal(await activeResponse.text(), "drained");
+    await closePromise;
+    assert.equal(closeSettled, true);
+  } finally {
+    releaseInvocation?.();
+    if (closePromise) {
+      await closePromise.catch(() => undefined);
+    } else {
+      await app.close().catch(() => undefined);
+    }
+  }
+});
+
 test("runtime node can warm snapshot deployments before acknowledging publish", async () => {
   const preparedDeployments: string[] = [];
   const supervisor = createRuntimeSupervisor({

@@ -6,6 +6,7 @@ export interface RuntimeConfigEnv {
   RUNTIME_PROJECT_RATE_LIMITS?: string;
   RUNTIME_REGION?: string;
   RUNTIME_LABELS?: string;
+  RUNTIME_SHUTDOWN_DRAIN_TIMEOUT_MS?: string;
   WASMPLANE_RUNTIME_IDENTITY_KEY_ID?: string;
   WASMPLANE_RUNTIME_IDENTITY_KEYS?: string;
   WASMPLANE_RUNTIME_IDENTITY_CERT_SHA256?: string;
@@ -129,6 +130,10 @@ export function parseRuntimeCacheRetentionPolicy(env: RuntimeConfigEnv): Runtime
 
 export function parseRuntimeCacheGcIntervalMs(env: RuntimeConfigEnv): number | undefined {
   return positiveIntegerOrUndefined(env.WASMPLANE_RUNTIME_CACHE_GC_INTERVAL_MS);
+}
+
+export function parseRuntimeShutdownDrainTimeoutMs(env: RuntimeConfigEnv, fallback: number): number {
+  return positiveInteger(env.RUNTIME_SHUTDOWN_DRAIN_TIMEOUT_MS, fallback);
 }
 
 export function parseProjectConcurrencyLimits(env: RuntimeConfigEnv): Record<string, number> | undefined {

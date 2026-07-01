@@ -154,7 +154,10 @@ state is `draining`, or when configured host-daemon stats are unavailable. Opera
 out of service locally with `POST /__runtime/drain` and restore readiness with
 `POST /__runtime/activate`; both management calls honor `WASMPLANE_RUNTIME_TOKEN` when it is set.
 Runtime heartbeats report the same local lifecycle status, so a drained node is also excluded from
-future snapshot publish target selection by the control plane.
+future snapshot publish target selection by the control plane. While draining, new worker requests
+are rejected with `503`; active invocations are allowed to finish. On `SIGTERM` or `SIGINT`, the
+runtime enters the same drain path before process exit. Tune the wait with
+`RUNTIME_SHUTDOWN_DRAIN_TIMEOUT_MS`, which defaults to `30000`.
 Autoscalers can read `GET /autoscaling/signals` from the control plane to get per-runtime
 `activeRequests`, `concurrentRequests`, `loadRatio`, and saturation state. The autoscaling helpers
 turn these signals into scale-up/scale-down decisions, and the Fly Machines prototype reconciler can

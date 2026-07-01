@@ -54,6 +54,10 @@ export interface RuntimeNodeAppOptions {
   now?: () => string;
 }
 
+export interface RuntimeNodeCloseOptions {
+  drainTimeoutMs?: number;
+}
+
 export interface RuntimeHostDaemonMetricsOptions {
   url: string;
   fetch?: typeof fetch;
@@ -81,6 +85,7 @@ export function createRuntimeNodeApp(options: RuntimeNodeAppOptions) {
   const projectConcurrency = createProjectConcurrencyLimiter(options.maxConcurrentInvocationsByProject);
   const projectRateLimiter = createProjectRateLimiter(options.requestRateLimitsByProject, monotonicNowMs);
   const cacheRetentionJob = createRuntimeCacheRetentionJob(options);
+  const invocationDrain = createInvocationDrainTracker();
   let lifecycleStatus: RuntimeNodeStatus = options.initialLifecycleStatus ?? "active";
   const server = createServer(async (request, response) => {
     let workerRequest = false;
@@ -207,6 +212,10 @@ export function createRuntimeNodeApp(options: RuntimeNodeAppOptions) {
       eventHost = requestHost(request.headers);
       eventPath = url.pathname;
       metrics.recordRequest();
+      if (lifecycleStatus !== "active") {
+        metrics.recordInvocationRejected();
+        throw new RuntimeError("draining", "runtime node is draining");
+      }
       const prepared = await options.supervisor.prepareRoute({
         host: eventHost,
         path: url.pathname,
@@ -231,6 +240,7 @@ export function createRuntimeNodeApp(options: RuntimeNodeAppOptions) {
           projectInvocation.release();
           throw new RuntimeError("overloaded", "runtime node concurrency limit exceeded");
         }
+        const finishInvocationDrain = invocationDrain.start();
         invocationStarted = true;
         try {
           const invocation = await withWallTimeout(
@@ -263,6 +273,7 @@ export function createRuntimeNodeApp(options: RuntimeNodeAppOptions) {
           eventStatus = invocation.status;
           writeInvocationResponse(response, component, invocation, requestId);
         } finally {
+          finishInvocationDrain();
           metrics.recordInvocationEnd();
           projectInvocation.release();
         }
@@ -349,21 +360,11 @@ export function createRuntimeNodeApp(options: RuntimeNodeAppOptions) {
         });
       });
     },
-    close() {
-      return new Promise<void>((resolve, reject) => {
-        cacheRetentionJob.stop();
-        if (!server.listening) {
-          resolve();
-          return;
-        }
-        server.close((error) => {
-          if (error) {
-            reject(error);
-            return;
-          }
-          resolve();
-        });
-      });
+    async close(closeOptions: RuntimeNodeCloseOptions = {}) {
+      lifecycleStatus = "draining";
+      cacheRetentionJob.stop();
+      await invocationDrain.wait(closeOptions.drainTimeoutMs ?? 30_000);
+      await closeServer(server);
     },
     metrics() {
       return metrics.snapshot();
@@ -373,6 +374,73 @@ export function createRuntimeNodeApp(options: RuntimeNodeAppOptions) {
     },
     lifecycleStatus() {
       return lifecycleStatus;
+    },
+  };
+}
+
+function closeServer(server: ReturnType<typeof createServer>): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    if (!server.listening) {
+      resolve();
+      return;
+    }
+    server.close((error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
+function createInvocationDrainTracker() {
+  let active = 0;
+  const waiters = new Set<() => void>();
+
+  function notifyIfIdle() {
+    if (active !== 0) {
+      return;
+    }
+    for (const waiter of waiters) {
+      waiter();
+    }
+    waiters.clear();
+  }
+
+  return {
+    start() {
+      active += 1;
+      let finished = false;
+      return () => {
+        if (finished) {
+          return;
+        }
+        finished = true;
+        active = Math.max(0, active - 1);
+        notifyIfIdle();
+      };
+    },
+    wait(timeoutMs: number): Promise<void> {
+      if (active === 0) {
+        return Promise.resolve();
+      }
+      return new Promise<void>((resolve, reject) => {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const resolveWhenIdle = () => {
+          if (timer) {
+            clearTimeout(timer);
+          }
+          resolve();
+        };
+        waiters.add(resolveWhenIdle);
+        if (Number.isFinite(timeoutMs) && timeoutMs >= 0) {
+          timer = setTimeout(() => {
+            waiters.delete(resolveWhenIdle);
+            reject(new RuntimeError("timeout", `runtime drain timed out after ${timeoutMs}ms`));
+          }, timeoutMs);
+        }
+      });
     },
   };
 }
@@ -980,6 +1048,9 @@ function runtimeErrorResponse(error: unknown): { status: number; code: string; m
     return { status: 400, code: error.code, message: error.message };
   }
   if (error instanceof RuntimeError && error.code === "overloaded") {
+    return { status: 503, code: error.code, message: error.message };
+  }
+  if (error instanceof RuntimeError && error.code === "draining") {
     return { status: 503, code: error.code, message: error.message };
   }
   if (error instanceof RuntimeError && error.code === "rate_limited") {

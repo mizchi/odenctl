@@ -7,6 +7,7 @@ import {
   parseRuntimeCacheRetentionPolicy,
   parseRuntimeIdentityKeys,
   parseRuntimeLabels,
+  parseRuntimeShutdownDrainTimeoutMs,
   resolveRuntimeIdentity,
   resolveRuntimeMemoryMb,
   resolveRuntimeNodeId,
@@ -122,5 +123,21 @@ test("runtime config parses cache retention policy", () => {
   assert.equal(
     parseRuntimeCacheGcIntervalMs({ WASMPLANE_RUNTIME_CACHE_GC_INTERVAL_MS: "0" }),
     undefined,
+  );
+});
+
+test("runtime config parses shutdown drain timeout", () => {
+  assert.equal(parseRuntimeShutdownDrainTimeoutMs({}, 30000), 30000);
+  assert.equal(
+    parseRuntimeShutdownDrainTimeoutMs({ RUNTIME_SHUTDOWN_DRAIN_TIMEOUT_MS: "5000" }, 30000),
+    5000,
+  );
+  assert.equal(
+    parseRuntimeShutdownDrainTimeoutMs({ RUNTIME_SHUTDOWN_DRAIN_TIMEOUT_MS: "0" }, 30000),
+    30000,
+  );
+  assert.equal(
+    parseRuntimeShutdownDrainTimeoutMs({ RUNTIME_SHUTDOWN_DRAIN_TIMEOUT_MS: "bad" }, 30000),
+    30000,
   );
 });
