@@ -26,6 +26,20 @@ export interface BillingInvoiceRetentionRetained {
   legalHoldReason?: string;
 }
 
+export interface BillingInvoiceRetentionSubject {
+  id: string;
+  organizationId: string;
+}
+
+export type BillingInvoiceRetentionDecision =
+  | {
+    action: "delete";
+  }
+  | {
+    action: "retain";
+    retained: BillingInvoiceRetentionRetained;
+  };
+
 export function createBillingInvoiceRetentionPolicyRecord(input: {
   invoiceId: string;
   organizationId: string;
@@ -41,6 +55,47 @@ export function createBillingInvoiceRetentionPolicyRecord(input: {
     updatedAt: input.updatedAt,
     ...normalized,
   };
+}
+
+export function decideBillingInvoiceRetention(input: {
+  invoice: BillingInvoiceRetentionSubject;
+  policy?: BillingInvoiceRetentionPolicy;
+  at: string;
+}): BillingInvoiceRetentionDecision {
+  if (!input.policy) {
+    return {
+      action: "retain",
+      retained: {
+        invoiceId: input.invoice.id,
+        organizationId: input.invoice.organizationId,
+        reason: "no_policy",
+      },
+    };
+  }
+  if (input.policy.legalHold) {
+    return {
+      action: "retain",
+      retained: {
+        invoiceId: input.invoice.id,
+        organizationId: input.invoice.organizationId,
+        reason: "legal_hold",
+        retainUntil: input.policy.retainUntil,
+        ...(input.policy.legalHoldReason ? { legalHoldReason: input.policy.legalHoldReason } : {}),
+      },
+    };
+  }
+  if (input.policy.retainUntil > input.at) {
+    return {
+      action: "retain",
+      retained: {
+        invoiceId: input.invoice.id,
+        organizationId: input.invoice.organizationId,
+        reason: "retention_active",
+        retainUntil: input.policy.retainUntil,
+      },
+    };
+  }
+  return { action: "delete" };
 }
 
 export function normalizeBillingInvoiceRetentionPolicyInput(

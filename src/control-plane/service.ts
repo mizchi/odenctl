@@ -135,6 +135,7 @@ import {
 } from "./billing-adjustment.ts";
 import {
   createBillingInvoiceRetentionPolicyRecord,
+  decideBillingInvoiceRetention,
   type BillingInvoiceRetentionPolicy,
   type BillingInvoiceRetentionRetained,
 } from "./billing-retention.ts";
@@ -937,31 +938,9 @@ export function createControlPlane(options: ControlPlaneOptions) {
     const retained: BillingInvoiceRetentionRetained[] = [];
     for (const invoice of invoices) {
       const policy = repository.getBillingInvoiceRetentionPolicy(invoice.id);
-      if (!policy) {
-        retained.push({
-          invoiceId: invoice.id,
-          organizationId: invoice.organizationId,
-          reason: "no_policy",
-        });
-        continue;
-      }
-      if (policy.legalHold) {
-        retained.push({
-          invoiceId: invoice.id,
-          organizationId: invoice.organizationId,
-          reason: "legal_hold",
-          retainUntil: policy.retainUntil,
-          ...(policy.legalHoldReason ? { legalHoldReason: policy.legalHoldReason } : {}),
-        });
-        continue;
-      }
-      if (policy.retainUntil > at) {
-        retained.push({
-          invoiceId: invoice.id,
-          organizationId: invoice.organizationId,
-          reason: "retention_active",
-          retainUntil: policy.retainUntil,
-        });
+      const decision = decideBillingInvoiceRetention({ invoice, policy, at });
+      if (decision.action === "retain") {
+        retained.push(decision.retained);
         continue;
       }
       deleted.push(repository.deleteBillingInvoice(invoice.id));

@@ -143,11 +143,14 @@ export {
 } from "./control-plane/billing-adjustment.ts";
 export {
   createBillingInvoiceRetentionPolicyRecord,
+  decideBillingInvoiceRetention,
   normalizeBillingInvoiceRetentionPolicyInput,
+  type BillingInvoiceRetentionDecision,
   type BillingInvoiceRetentionPolicy,
   type BillingInvoiceRetentionPolicyInput,
   type BillingInvoiceRetentionRetained,
   type BillingInvoiceRetentionRetainedReason,
+  type BillingInvoiceRetentionSubject,
 } from "./control-plane/billing-retention.ts";
 export {
   billingInvoiceRetentionOrganizationsFromEnv,
