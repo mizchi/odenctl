@@ -116,6 +116,14 @@ export {
   type OrganizationBillingInvoice,
 } from "./control-plane/billing-invoice.ts";
 export {
+  billingInvoiceExportSignerFromEnv,
+  createBillingInvoiceExportBundle,
+  verifyBillingInvoiceExportBundle,
+  type BillingInvoiceExportBundle,
+  type BillingInvoiceExportSignature,
+  type BillingInvoiceExportSigner,
+} from "./control-plane/billing-export.ts";
+export {
   enforceProjectQuota,
   projectQuotasFromEnv,
 } from "./control-plane/quotas.ts";

@@ -83,7 +83,9 @@ snapshots record the exact rate card version used for that period. Issue immutab
 invoices with `POST /organizations/:id/billing-invoices`; the same organization/month returns the
 existing saved invoice even if rates later change. Each saved invoice includes a `contentDigest`
 over the invoice payload for audit comparisons. List saved invoices for an organization with
-`GET /organizations/:id/billing-invoices`.
+`GET /organizations/:id/billing-invoices`. Set `WASMPLANE_BILLING_EXPORT_SIGNATURE_KEY_ID` and
+`WASMPLANE_BILLING_EXPORT_SIGNATURE_KEY_BASE64` or `WASMPLANE_BILLING_EXPORT_SIGNATURE_KEY` to
+enable signed accounting export bundles from `GET /billing-invoices/:id/export`.
 Set `WASMPLANE_SNAPSHOT_PUBLISH_INTERVAL_MS` to run a background publish job that periodically
 generates the current route snapshot and publishes it to configured/registered active runtime
 nodes. Each generated route snapshot includes a content-derived `snap_<hash>` id, and publish
@@ -737,6 +739,7 @@ Available endpoints:
 - `GET /organizations/:id/billing-invoices`
 - `POST /organizations/:id/billing-invoices`
 - `GET /billing-invoices/:id`
+- `GET /billing-invoices/:id/export`
 - `POST /users`
 - `POST /projects`
 - `POST /projects/:id/memberships`

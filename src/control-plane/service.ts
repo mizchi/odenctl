@@ -115,6 +115,11 @@ import {
   createOrganizationBillingInvoice,
   type OrganizationBillingInvoice,
 } from "./billing-invoice.ts";
+import {
+  createBillingInvoiceExportBundle,
+  type BillingInvoiceExportBundle,
+  type BillingInvoiceExportSigner,
+} from "./billing-export.ts";
 
 export interface ControlPlaneOptions {
   repository: ControlPlaneRepository;
@@ -128,6 +133,7 @@ export interface ControlPlaneOptions {
   projectBillingRates?: ProjectBillingRates;
   projectBillingBudgets?: ProjectBillingBudgetPolicies;
   billingRateCardVersion?: string;
+  billingInvoiceExportSigner?: BillingInvoiceExportSigner;
   artifactSignatureVerifier?: ArtifactSignatureVerifier;
   admissionPolicy?: ControlPlaneAdmissionPolicy;
 }
@@ -228,6 +234,10 @@ export interface IssueOrganizationBillingInvoiceInput {
 }
 
 export interface GetBillingInvoiceInput {
+  id: string;
+}
+
+export interface ExportBillingInvoiceInput {
   id: string;
 }
 
@@ -445,6 +455,7 @@ export function createControlPlane(options: ControlPlaneOptions) {
   const projectBillingRates = options.projectBillingRates;
   const projectBillingBudgets = options.projectBillingBudgets;
   const billingRateCardVersion = normalizeBillingRateCardVersion(options.billingRateCardVersion);
+  const billingInvoiceExportSigner = options.billingInvoiceExportSigner;
   const artifactSignatureVerifier = options.artifactSignatureVerifier;
   const admissionPolicy = options.admissionPolicy;
 
@@ -715,6 +726,17 @@ export function createControlPlane(options: ControlPlaneOptions) {
       throw new ControlPlaneError("not_found", `billing invoice ${input.id} was not found`);
     }
     return invoice;
+  }
+
+  function exportBillingInvoice(input: ExportBillingInvoiceInput): BillingInvoiceExportBundle {
+    if (!billingInvoiceExportSigner) {
+      throw new ControlPlaneError("validation", "billing invoice export signer is not configured");
+    }
+    return createBillingInvoiceExportBundle({
+      invoice: getBillingInvoice(input),
+      generatedAt: now(),
+      signer: billingInvoiceExportSigner,
+    });
   }
 
   function listOrganizationBillingInvoices(
@@ -1236,6 +1258,7 @@ export function createControlPlane(options: ControlPlaneOptions) {
     getOrganizationBillingStatement,
     issueOrganizationBillingInvoice,
     getBillingInvoice,
+    exportBillingInvoice,
     listOrganizationBillingInvoices,
     createCustomDomain,
     listProjectCustomDomains,

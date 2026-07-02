@@ -605,6 +605,7 @@ test("HTTP API issues and reads organization billing invoices", async () => {
       invocationsPerMillionUsd: 1,
     },
     billingRateCardVersion: "2026-07-v1",
+    billingInvoiceExportSigner: { keyId: "billing", key: "secret-key" },
   });
   const app = createHttpApp({ controlPlane: control });
   const server = await app.listen({ port: 0, host: "127.0.0.1" });
@@ -661,6 +662,13 @@ test("HTTP API issues and reads organization billing invoices", async () => {
     const listResponse = await fetch(`${baseUrl}/organizations/${organization.id}/billing-invoices`);
     assert.equal(listResponse.status, 200);
     assert.deepEqual(await listResponse.json(), [august, invoice]);
+
+    const exportResponse = await fetch(`${baseUrl}/billing-invoices/${invoice.id}/export`);
+    assert.equal(exportResponse.status, 200);
+    const exportBundle = await exportResponse.json();
+    assert.equal(exportBundle.invoice.id, invoice.id);
+    assert.equal(exportBundle.signature.keyId, "billing");
+    assert.match(exportBundle.contentDigest, /^sha256:[a-f0-9]{64}$/);
   } finally {
     await app.close();
   }

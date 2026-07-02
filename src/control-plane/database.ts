@@ -5,6 +5,7 @@ import { projectEnforcementPoliciesFromEnv } from "./enforcement-report.ts";
 import { projectUsageQuotasFromEnv } from "./usage-quota.ts";
 import { projectBillingRatesFromEnv } from "./billing-statement.ts";
 import { projectBillingBudgetsFromEnv } from "./billing-budget.ts";
+import { billingInvoiceExportSignerFromEnv } from "./billing-export.ts";
 import { projectQuotasFromEnv } from "./quotas.ts";
 import { admissionPolicyFromEnv } from "./admission.ts";
 import {
@@ -57,6 +58,7 @@ export async function createConfiguredControlPlane(
   const projectBillingRates = projectBillingRatesFromEnv(env);
   const projectBillingBudgets = projectBillingBudgetsFromEnv(env);
   const billingRateCardVersion = firstNonEmpty(env.WASMPLANE_BILLING_RATE_CARD_VERSION);
+  const billingInvoiceExportSigner = billingInvoiceExportSignerFromEnv(env);
   const admissionPolicy = admissionPolicyFromEnv(env);
   if (config.kind === "postgres") {
     const [{ createAsyncControlPlane }, { createPostgresRepository }] = await Promise.all([
@@ -78,6 +80,7 @@ export async function createConfiguredControlPlane(
       projectBillingRates,
       projectBillingBudgets,
       billingRateCardVersion,
+      billingInvoiceExportSigner,
       admissionPolicy,
     });
     assertMigrationStatus(await checkControlPlaneMigrations(config));
@@ -93,6 +96,7 @@ export async function createConfiguredControlPlane(
     projectBillingRates,
     projectBillingBudgets,
     billingRateCardVersion,
+    billingInvoiceExportSigner,
     admissionPolicy,
   });
   assertMigrationStatus(await checkControlPlaneMigrations(config));

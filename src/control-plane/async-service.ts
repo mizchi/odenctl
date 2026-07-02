@@ -115,6 +115,11 @@ import {
   createOrganizationBillingInvoice,
   type OrganizationBillingInvoice,
 } from "./billing-invoice.ts";
+import {
+  createBillingInvoiceExportBundle,
+  type BillingInvoiceExportBundle,
+  type BillingInvoiceExportSigner,
+} from "./billing-export.ts";
 
 export interface AsyncControlPlaneRepository {
   createOrganization(organization: Organization): Promise<Organization>;
@@ -195,6 +200,7 @@ export interface AsyncControlPlaneOptions {
   projectBillingRates?: ProjectBillingRates;
   projectBillingBudgets?: ProjectBillingBudgetPolicies;
   billingRateCardVersion?: string;
+  billingInvoiceExportSigner?: BillingInvoiceExportSigner;
   artifactSignatureVerifier?: ArtifactSignatureVerifier;
   admissionPolicy?: ControlPlaneAdmissionPolicy;
 }
@@ -295,6 +301,10 @@ export interface IssueOrganizationBillingInvoiceInput {
 }
 
 export interface GetBillingInvoiceInput {
+  id: string;
+}
+
+export interface ExportBillingInvoiceInput {
   id: string;
 }
 
@@ -512,6 +522,7 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
   const projectBillingRates = options.projectBillingRates;
   const projectBillingBudgets = options.projectBillingBudgets;
   const billingRateCardVersion = normalizeBillingRateCardVersion(options.billingRateCardVersion);
+  const billingInvoiceExportSigner = options.billingInvoiceExportSigner;
   const artifactSignatureVerifier = options.artifactSignatureVerifier;
   const admissionPolicy = options.admissionPolicy;
 
@@ -801,6 +812,17 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
       throw new ControlPlaneError("not_found", `billing invoice ${input.id} was not found`);
     }
     return invoice;
+  }
+
+  async function exportBillingInvoice(input: ExportBillingInvoiceInput): Promise<BillingInvoiceExportBundle> {
+    if (!billingInvoiceExportSigner) {
+      throw new ControlPlaneError("validation", "billing invoice export signer is not configured");
+    }
+    return createBillingInvoiceExportBundle({
+      invoice: await getBillingInvoice(input),
+      generatedAt: now(),
+      signer: billingInvoiceExportSigner,
+    });
   }
 
   async function listOrganizationBillingInvoices(
@@ -1335,6 +1357,7 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
     getOrganizationBillingStatement,
     issueOrganizationBillingInvoice,
     getBillingInvoice,
+    exportBillingInvoice,
     listOrganizationBillingInvoices,
     createCustomDomain,
     listProjectCustomDomains,

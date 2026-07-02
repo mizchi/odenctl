@@ -67,6 +67,7 @@ export interface HttpAppOptions {
     getOrganizationBillingStatement(input: any): MaybePromise<unknown>;
     issueOrganizationBillingInvoice(input: any): MaybePromise<unknown>;
     getBillingInvoice(input: any): MaybePromise<unknown>;
+    exportBillingInvoice(input: any): MaybePromise<unknown>;
     listOrganizationBillingInvoices(input: any): MaybePromise<unknown>;
     createCustomDomain(input: any): MaybePromise<unknown>;
     listProjectCustomDomains(input: any): MaybePromise<unknown>;
@@ -485,6 +486,11 @@ export function createHttpApp(options: HttpAppOptions) {
       const billingInvoice = billingInvoiceMatch(method, url.pathname);
       if (billingInvoice) {
         writeJson(response, 200, await options.controlPlane.getBillingInvoice({ id: billingInvoice.id }));
+        return;
+      }
+      const billingInvoiceExport = billingInvoiceExportMatch(method, url.pathname);
+      if (billingInvoiceExport) {
+        writeJson(response, 200, await options.controlPlane.exportBillingInvoice({ id: billingInvoiceExport.id }));
         return;
       }
       if (method === "POST" && url.pathname === "/artifacts/local") {
@@ -1527,6 +1533,17 @@ function billingInvoiceMatch(method: string, pathname: string): { id: string } |
     return undefined;
   }
   const match = /^\/billing-invoices\/([^/]+)$/.exec(pathname);
+  if (!match) {
+    return undefined;
+  }
+  return { id: decodeURIComponent(match[1]) };
+}
+
+function billingInvoiceExportMatch(method: string, pathname: string): { id: string } | undefined {
+  if (method !== "GET") {
+    return undefined;
+  }
+  const match = /^\/billing-invoices\/([^/]+)\/export$/.exec(pathname);
   if (!match) {
     return undefined;
   }

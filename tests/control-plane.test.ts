@@ -582,6 +582,7 @@ test("control plane issues immutable organization billing invoices", () => {
       invocationsPerMillionUsd: 1,
     },
     billingRateCardVersion: "2026-07-v1",
+    billingInvoiceExportSigner: { keyId: "billing", key: "secret-key" },
   });
   const organization = control.createOrganization({ id: "org_invoice", name: "Invoice Org" });
   const project = control.createProject({
@@ -638,6 +639,11 @@ test("control plane issues immutable organization billing invoices", () => {
     changedRateControl.listOrganizationBillingInvoices({ organizationId: organization.id }),
     [invoice],
   );
+
+  const exportBundle = control.exportBillingInvoice({ id: invoice.id });
+  assert.equal(exportBundle.invoice.id, invoice.id);
+  assert.equal(exportBundle.signature.keyId, "billing");
+  assert.match(exportBundle.contentDigest, /^sha256:[a-f0-9]{64}$/);
 });
 
 test("control plane lists organization billing invoices newest first", () => {
@@ -959,6 +965,7 @@ test("async control plane issues immutable organization billing invoices", async
       invocationsPerMillionUsd: 1,
     },
     billingRateCardVersion: "2026-07-v1",
+    billingInvoiceExportSigner: { keyId: "billing", key: "secret-key" },
   });
   const organization = await control.createOrganization({
     id: "org_async_invoice",
@@ -991,6 +998,7 @@ test("async control plane issues immutable organization billing invoices", async
     await control.listOrganizationBillingInvoices({ organizationId: organization.id }),
     [invoice],
   );
+  assert.equal((await control.exportBillingInvoice({ id: invoice.id })).signature.keyId, "billing");
 });
 
 test("async control plane lists organization billing invoices newest first", async () => {
