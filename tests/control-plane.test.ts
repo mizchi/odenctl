@@ -644,6 +644,21 @@ test("control plane issues immutable organization billing invoices", () => {
   assert.equal(exportBundle.invoice.id, invoice.id);
   assert.equal(exportBundle.signature.keyId, "billing");
   assert.match(exportBundle.contentDigest, /^sha256:[a-f0-9]{64}$/);
+
+  const invoiceBeforeAdjustment = control.getBillingInvoice({ id: invoice.id });
+  const adjustment = control.createBillingInvoiceAdjustment({
+    id: "adj_invoice_credit",
+    invoiceId: invoice.id,
+    type: "credit_note",
+    amountUsd: 0.25,
+    reason: "sla credit",
+  });
+  assert.equal(adjustment.invoiceId, invoice.id);
+  assert.equal(adjustment.organizationId, organization.id);
+  assert.equal(adjustment.type, "credit_note");
+  assert.equal(adjustment.amountUsd, 0.25);
+  assert.deepEqual(control.getBillingInvoice({ id: invoice.id }), invoiceBeforeAdjustment);
+  assert.deepEqual(control.listBillingInvoiceAdjustments({ invoiceId: invoice.id }), [adjustment]);
 });
 
 test("control plane lists organization billing invoices newest first", () => {
@@ -2557,6 +2572,7 @@ test("sqlite repository records schema migrations and upgrades existing database
     "202607020001_billing_invoices",
     "202607020002_billing_invoice_digest",
     "202607020003_billing_webhook_deliveries",
+    "202607020004_billing_invoice_adjustments",
   ]);
   assert.ok(routeColumns.includes("targets_json"));
   const artifactColumns = db
@@ -2592,6 +2608,7 @@ test("sqlite repository records schema migrations and upgrades existing database
   assert.equal(db.prepare("select count(*) as count from deploy_previews").get().count, 0);
   assert.equal(db.prepare("select count(*) as count from billing_invoices").get().count, 0);
   assert.equal(db.prepare("select count(*) as count from billing_webhook_deliveries").get().count, 0);
+  assert.equal(db.prepare("select count(*) as count from billing_invoice_adjustments").get().count, 0);
   const billingInvoiceColumns = db
     .prepare("pragma table_info(billing_invoices)")
     .all()
@@ -2603,6 +2620,12 @@ test("sqlite repository records schema migrations and upgrades existing database
     .map((row: any) => row.name);
   assert.ok(billingWebhookColumns.includes("idempotency_key"));
   assert.ok(billingWebhookColumns.includes("payload_json"));
+  const billingAdjustmentColumns = db
+    .prepare("pragma table_info(billing_invoice_adjustments)")
+    .all()
+    .map((row: any) => row.name);
+  assert.ok(billingAdjustmentColumns.includes("invoice_id"));
+  assert.ok(billingAdjustmentColumns.includes("amount_usd"));
   assert.equal(db.prepare("select count(*) as count from route_snapshot_publications").get().count, 1);
   const publicationColumns = db
     .prepare("pragma table_info(route_snapshot_publications)")

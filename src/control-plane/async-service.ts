@@ -128,6 +128,11 @@ import {
   type BillingWebhookDeliveryStatus,
   type BillingWebhookFetchLike,
 } from "./billing-webhook.ts";
+import {
+  createBillingInvoiceAdjustmentRecord,
+  type BillingInvoiceAdjustment,
+  type BillingInvoiceAdjustmentType,
+} from "./billing-adjustment.ts";
 
 export interface AsyncControlPlaneRepository {
   createOrganization(organization: Organization): Promise<Organization>;
@@ -154,6 +159,8 @@ export interface AsyncControlPlaneRepository {
   getBillingWebhookDeliveryByIdempotencyKey(idempotencyKey: string): Promise<BillingWebhookDelivery | undefined>;
   listBillingWebhookDeliveries(status?: BillingWebhookDeliveryStatus): Promise<BillingWebhookDelivery[]>;
   updateBillingWebhookDelivery(delivery: BillingWebhookDelivery): Promise<BillingWebhookDelivery>;
+  createBillingInvoiceAdjustment(adjustment: BillingInvoiceAdjustment): Promise<BillingInvoiceAdjustment>;
+  listBillingInvoiceAdjustments(invoiceId: string): Promise<BillingInvoiceAdjustment[]>;
   createCustomDomain(domain: CustomDomain): Promise<CustomDomain>;
   getCustomDomain(id: string): Promise<CustomDomain | undefined>;
   getCustomDomainByHost(host: string): Promise<CustomDomain | undefined>;
@@ -338,6 +345,18 @@ export interface DeliverPendingBillingWebhooksInput {
 export interface DeliverPendingBillingWebhooksReport {
   attempted: number;
   deliveries: BillingWebhookDelivery[];
+}
+
+export interface CreateBillingInvoiceAdjustmentInput {
+  id?: string;
+  invoiceId: string;
+  type: BillingInvoiceAdjustmentType;
+  amountUsd: number;
+  reason: string;
+}
+
+export interface ListBillingInvoiceAdjustmentsInput {
+  invoiceId: string;
 }
 
 export interface CreateCustomDomainInput {
@@ -920,6 +939,30 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
     }
   }
 
+  async function createBillingInvoiceAdjustment(
+    input: CreateBillingInvoiceAdjustmentInput,
+  ): Promise<BillingInvoiceAdjustment> {
+    const invoice = await getBillingInvoice({ id: input.invoiceId });
+    return repository.createBillingInvoiceAdjustment(
+      createBillingInvoiceAdjustmentRecord({
+        id: optionalId(input.id, "billing invoice adjustment id") ?? idGenerator("adj"),
+        invoiceId: invoice.id,
+        organizationId: invoice.organizationId,
+        type: input.type,
+        amountUsd: input.amountUsd,
+        reason: input.reason,
+        createdAt: now(),
+      }),
+    );
+  }
+
+  async function listBillingInvoiceAdjustments(
+    input: ListBillingInvoiceAdjustmentsInput,
+  ): Promise<BillingInvoiceAdjustment[]> {
+    await getBillingInvoice({ id: input.invoiceId });
+    return repository.listBillingInvoiceAdjustments(input.invoiceId);
+  }
+
   async function createCustomDomain(input: CreateCustomDomainInput): Promise<CustomDomain> {
     await requireProject(repository, input.projectId);
     const host = normalizeHost(input.host);
@@ -1449,6 +1492,8 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
     listOrganizationBillingInvoices,
     listBillingWebhookDeliveries,
     deliverPendingBillingWebhooks,
+    createBillingInvoiceAdjustment,
+    listBillingInvoiceAdjustments,
     createCustomDomain,
     listProjectCustomDomains,
     verifyCustomDomainOwnership,

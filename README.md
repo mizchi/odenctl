@@ -91,6 +91,8 @@ record whenever an invoice is issued. Webhook POSTs include an `Idempotency-Key`
 from the invoice id and content digest. Set `WASMPLANE_BILLING_WEBHOOK_DELIVERY_INTERVAL_MS` to
 run the delivery loop in-process; tune retry behavior with `WASMPLANE_BILLING_WEBHOOK_MAX_ATTEMPTS`
 and `WASMPLANE_BILLING_WEBHOOK_RETRY_DELAY_MS`.
+Credit notes and debit adjustments are stored as separate immutable records linked to an issued
+invoice; they do not mutate the saved invoice payload, rate card, or `contentDigest`.
 Set `WASMPLANE_SNAPSHOT_PUBLISH_INTERVAL_MS` to run a background publish job that periodically
 generates the current route snapshot and publishes it to configured/registered active runtime
 nodes. Each generated route snapshot includes a content-derived `snap_<hash>` id, and publish

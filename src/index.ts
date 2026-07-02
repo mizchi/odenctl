@@ -135,6 +135,13 @@ export {
   type BillingWebhookPayload,
 } from "./control-plane/billing-webhook.ts";
 export {
+  createBillingInvoiceAdjustmentRecord,
+  normalizeBillingInvoiceAdjustmentInput,
+  type BillingInvoiceAdjustment,
+  type BillingInvoiceAdjustmentInput,
+  type BillingInvoiceAdjustmentType,
+} from "./control-plane/billing-adjustment.ts";
+export {
   enforceProjectQuota,
   projectQuotasFromEnv,
 } from "./control-plane/quotas.ts";

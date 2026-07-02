@@ -25,6 +25,7 @@ import type {
 import { ControlPlaneError } from "./errors.ts";
 import { invoiceContentDigest, type OrganizationBillingInvoice } from "./billing-invoice.ts";
 import type { BillingWebhookDelivery, BillingWebhookDeliveryStatus } from "./billing-webhook.ts";
+import type { BillingInvoiceAdjustment } from "./billing-adjustment.ts";
 
 const { Pool } = pg;
 const initMigrationId = "202606300001_postgres_init";
@@ -437,6 +438,48 @@ export class PostgresControlPlaneRepository implements AsyncControlPlaneReposito
       throw new ControlPlaneError("not_found", `billing webhook delivery ${delivery.id} was not found`);
     }
     return delivery;
+  }
+
+  async createBillingInvoiceAdjustment(
+    adjustment: BillingInvoiceAdjustment,
+  ): Promise<BillingInvoiceAdjustment> {
+    try {
+      await this.pool.query(
+        `insert into billing_invoice_adjustments (
+          id,
+          invoice_id,
+          organization_id,
+          type,
+          currency,
+          amount_usd,
+          reason,
+          created_at
+        ) values ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [
+          adjustment.id,
+          adjustment.invoiceId,
+          adjustment.organizationId,
+          adjustment.type,
+          adjustment.currency,
+          adjustment.amountUsd,
+          adjustment.reason,
+          adjustment.createdAt,
+        ],
+      );
+      return adjustment;
+    } catch (error) {
+      throw writeError("billing invoice adjustment", adjustment.id, error);
+    }
+  }
+
+  async listBillingInvoiceAdjustments(invoiceId: string): Promise<BillingInvoiceAdjustment[]> {
+    const result = await this.pool.query(
+      `select * from billing_invoice_adjustments
+       where invoice_id = $1
+       order by created_at asc, id asc`,
+      [invoiceId],
+    );
+    return result.rows.map(billingInvoiceAdjustmentFromRow);
   }
 
   async createCustomDomain(domain: CustomDomain): Promise<CustomDomain> {
@@ -1339,6 +1382,19 @@ function billingWebhookDeliveryFromRow(row: any): BillingWebhookDelivery {
     ...(row.last_status === null || row.last_status === undefined ? {} : { lastStatus: Number(row.last_status) }),
     ...(row.last_error ? { lastError: row.last_error } : {}),
     ...(row.delivered_at ? { deliveredAt: row.delivered_at } : {}),
+  };
+}
+
+function billingInvoiceAdjustmentFromRow(row: any): BillingInvoiceAdjustment {
+  return {
+    id: row.id,
+    invoiceId: row.invoice_id,
+    organizationId: row.organization_id,
+    type: row.type,
+    currency: row.currency,
+    amountUsd: Number(row.amount_usd),
+    reason: row.reason,
+    createdAt: row.created_at,
   };
 }
 

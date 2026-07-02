@@ -22,6 +22,7 @@ import type {
 import { ControlPlaneError } from "./errors.ts";
 import { invoiceContentDigest, type OrganizationBillingInvoice } from "./billing-invoice.ts";
 import type { BillingWebhookDelivery, BillingWebhookDeliveryStatus } from "./billing-webhook.ts";
+import type { BillingInvoiceAdjustment } from "./billing-adjustment.ts";
 
 export interface ControlPlaneRepository {
   createOrganization(organization: Organization): Organization;
@@ -48,6 +49,8 @@ export interface ControlPlaneRepository {
   getBillingWebhookDeliveryByIdempotencyKey(idempotencyKey: string): BillingWebhookDelivery | undefined;
   listBillingWebhookDeliveries(status?: BillingWebhookDeliveryStatus): BillingWebhookDelivery[];
   updateBillingWebhookDelivery(delivery: BillingWebhookDelivery): BillingWebhookDelivery;
+  createBillingInvoiceAdjustment(adjustment: BillingInvoiceAdjustment): BillingInvoiceAdjustment;
+  listBillingInvoiceAdjustments(invoiceId: string): BillingInvoiceAdjustment[];
   createCustomDomain(domain: CustomDomain): CustomDomain;
   getCustomDomain(id: string): CustomDomain | undefined;
   getCustomDomainByHost(host: string): CustomDomain | undefined;
@@ -468,6 +471,48 @@ class SqliteControlPlaneRepository implements ControlPlaneRepository {
       throw new ControlPlaneError("not_found", `billing webhook delivery ${delivery.id} was not found`);
     }
     return delivery;
+  }
+
+  createBillingInvoiceAdjustment(adjustment: BillingInvoiceAdjustment): BillingInvoiceAdjustment {
+    try {
+      this.db
+        .prepare(
+          `insert into billing_invoice_adjustments (
+            id,
+            invoice_id,
+            organization_id,
+            type,
+            currency,
+            amount_usd,
+            reason,
+            created_at
+          ) values (?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          adjustment.id,
+          adjustment.invoiceId,
+          adjustment.organizationId,
+          adjustment.type,
+          adjustment.currency,
+          adjustment.amountUsd,
+          adjustment.reason,
+          adjustment.createdAt,
+        );
+      return adjustment;
+    } catch (error) {
+      throw writeError("billing invoice adjustment", adjustment.id, error);
+    }
+  }
+
+  listBillingInvoiceAdjustments(invoiceId: string): BillingInvoiceAdjustment[] {
+    return this.db
+      .prepare(
+        `select * from billing_invoice_adjustments
+         where invoice_id = ?
+         order by created_at asc, id asc`,
+      )
+      .all(invoiceId)
+      .map(billingInvoiceAdjustmentFromRow);
   }
 
   createCustomDomain(domain: CustomDomain): CustomDomain {
@@ -1406,6 +1451,19 @@ function billingWebhookDeliveryFromRow(row: any): BillingWebhookDelivery {
   };
 }
 
+function billingInvoiceAdjustmentFromRow(row: any): BillingInvoiceAdjustment {
+  return {
+    id: row.id,
+    invoiceId: row.invoice_id,
+    organizationId: row.organization_id,
+    type: row.type,
+    currency: row.currency,
+    amountUsd: Number(row.amount_usd),
+    reason: row.reason,
+    createdAt: row.created_at,
+  };
+}
+
 function writeError(kind: string, id: string, error: unknown): ControlPlaneError {
   const message = error instanceof Error ? error.message : String(error);
   if (message.includes("UNIQUE constraint failed")) {
@@ -1526,6 +1584,22 @@ create table if not exists billing_webhook_deliveries (
 
 create index if not exists billing_webhook_deliveries_status_next_idx
   on billing_webhook_deliveries (status, next_attempt_at, created_at, id);
+
+create table if not exists billing_invoice_adjustments (
+  id text primary key,
+  invoice_id text not null,
+  organization_id text not null,
+  type text not null,
+  currency text not null,
+  amount_usd real not null,
+  reason text not null,
+  created_at text not null,
+  foreign key (invoice_id) references billing_invoices(id),
+  foreign key (organization_id) references organizations(id)
+);
+
+create index if not exists billing_invoice_adjustments_invoice_idx
+  on billing_invoice_adjustments (invoice_id, created_at asc, id asc);
 
 create table if not exists custom_domains (
   id text primary key,
@@ -2011,6 +2085,28 @@ const migrations: SchemaMigration[] = [
 
         create index if not exists billing_webhook_deliveries_status_next_idx
           on billing_webhook_deliveries (status, next_attempt_at, created_at, id);
+      `);
+    },
+  },
+  {
+    id: "202607020004_billing_invoice_adjustments",
+    apply(db) {
+      db.exec(`
+        create table if not exists billing_invoice_adjustments (
+          id text primary key,
+          invoice_id text not null,
+          organization_id text not null,
+          type text not null,
+          currency text not null,
+          amount_usd real not null,
+          reason text not null,
+          created_at text not null,
+          foreign key (invoice_id) references billing_invoices(id),
+          foreign key (organization_id) references organizations(id)
+        );
+
+        create index if not exists billing_invoice_adjustments_invoice_idx
+          on billing_invoice_adjustments (invoice_id, created_at asc, id asc);
       `);
     },
   },

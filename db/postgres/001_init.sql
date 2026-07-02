@@ -93,6 +93,17 @@ create table if not exists billing_webhook_deliveries (
   delivered_at text
 );
 
+create table if not exists billing_invoice_adjustments (
+  id text primary key,
+  invoice_id text not null references billing_invoices(id),
+  organization_id text not null references organizations(id),
+  type text not null check (type in ('credit_note', 'debit_adjustment')),
+  currency text not null check (currency = 'USD'),
+  amount_usd double precision not null check (amount_usd > 0),
+  reason text not null,
+  created_at text not null
+);
+
 create table if not exists custom_domains (
   id text primary key,
   project_id text not null references projects(id),
@@ -279,6 +290,9 @@ create index if not exists billing_invoices_org_issued_idx
 
 create index if not exists billing_webhook_deliveries_status_next_idx
   on billing_webhook_deliveries (status, next_attempt_at, created_at, id);
+
+create index if not exists billing_invoice_adjustments_invoice_idx
+  on billing_invoice_adjustments (invoice_id, created_at asc, id asc);
 
 create index if not exists custom_domains_project_idx
   on custom_domains (project_id, host);

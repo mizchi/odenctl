@@ -128,6 +128,11 @@ import {
   type BillingWebhookDeliveryStatus,
   type BillingWebhookFetchLike,
 } from "./billing-webhook.ts";
+import {
+  createBillingInvoiceAdjustmentRecord,
+  type BillingInvoiceAdjustment,
+  type BillingInvoiceAdjustmentType,
+} from "./billing-adjustment.ts";
 
 export interface ControlPlaneOptions {
   repository: ControlPlaneRepository;
@@ -267,6 +272,18 @@ export interface DeliverPendingBillingWebhooksInput {
 export interface DeliverPendingBillingWebhooksReport {
   attempted: number;
   deliveries: BillingWebhookDelivery[];
+}
+
+export interface CreateBillingInvoiceAdjustmentInput {
+  id?: string;
+  invoiceId: string;
+  type: BillingInvoiceAdjustmentType;
+  amountUsd: number;
+  reason: string;
+}
+
+export interface ListBillingInvoiceAdjustmentsInput {
+  invoiceId: string;
 }
 
 export interface CreateCustomDomainInput {
@@ -829,6 +846,30 @@ export function createControlPlane(options: ControlPlaneOptions) {
     }
   }
 
+  function createBillingInvoiceAdjustment(
+    input: CreateBillingInvoiceAdjustmentInput,
+  ): BillingInvoiceAdjustment {
+    const invoice = getBillingInvoice({ id: input.invoiceId });
+    return repository.createBillingInvoiceAdjustment(
+      createBillingInvoiceAdjustmentRecord({
+        id: optionalId(input.id, "billing invoice adjustment id") ?? idGenerator("adj"),
+        invoiceId: invoice.id,
+        organizationId: invoice.organizationId,
+        type: input.type,
+        amountUsd: input.amountUsd,
+        reason: input.reason,
+        createdAt: now(),
+      }),
+    );
+  }
+
+  function listBillingInvoiceAdjustments(
+    input: ListBillingInvoiceAdjustmentsInput,
+  ): BillingInvoiceAdjustment[] {
+    getBillingInvoice({ id: input.invoiceId });
+    return repository.listBillingInvoiceAdjustments(input.invoiceId);
+  }
+
   function createCustomDomain(input: CreateCustomDomainInput): CustomDomain {
     requireProject(repository, input.projectId);
     const host = normalizeHost(input.host);
@@ -1345,6 +1386,8 @@ export function createControlPlane(options: ControlPlaneOptions) {
     listOrganizationBillingInvoices,
     listBillingWebhookDeliveries,
     deliverPendingBillingWebhooks,
+    createBillingInvoiceAdjustment,
+    listBillingInvoiceAdjustments,
     createCustomDomain,
     listProjectCustomDomains,
     verifyCustomDomainOwnership,
