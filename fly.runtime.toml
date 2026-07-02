@@ -1,4 +1,4 @@
-app = "wasmplane-runtime"
+app = "mz-wasmplane-runtime"
 primary_region = "nrt"
 
 [build]

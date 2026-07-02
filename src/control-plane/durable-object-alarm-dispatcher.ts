@@ -42,6 +42,7 @@ export interface DurableObjectAlarmDispatcherJobOptions
   dispatch?: () => DurableObjectAlarmDispatchReport | Promise<DurableObjectAlarmDispatchReport>;
   onReport?(report: DurableObjectAlarmDispatchReport): void;
   onError?(error: unknown): void;
+  reportIdleTicks?: boolean;
   setIntervalFn?: (callback: () => void, intervalMs: number) => unknown;
   clearIntervalFn?: (timer: unknown) => void;
 }
@@ -109,7 +110,9 @@ export function createDurableObjectAlarmDispatcherJob(
     inFlight = true;
     try {
       const report = await runConfiguredDispatch(options);
-      options.onReport?.(report);
+      if (options.reportIdleTicks !== false || !isIdleDispatchReport(report)) {
+        options.onReport?.(report);
+      }
       if (!report.ok) {
         throw new Error("durable object alarm dispatcher result was unsuccessful");
       }
@@ -165,6 +168,14 @@ function runConfiguredDispatch(
     now: options.now,
     limit: options.limit,
   });
+}
+
+function isIdleDispatchReport(report: DurableObjectAlarmDispatchReport): boolean {
+  return report.ok
+    && report.due === 0
+    && report.dispatched === 0
+    && report.failed === 0
+    && report.errors.length === 0;
 }
 
 function resolveNow(now: DurableObjectAlarmDispatchOptions["now"]): number {

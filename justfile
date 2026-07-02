@@ -6,9 +6,9 @@ guest_component := "examples/hello-worker/target/wasm32-wasip1/debug/hello_worke
 rust_interop_wasm := "examples/rust-interop/target/wasm32-wasip1/debug/rust_interop.wasm"
 rust_interop_component := "examples/rust-interop/target/wasm32-wasip1/debug/rust_interop.component.wasm"
 moonbit_interop_component := "examples/moonbit-interop/target/moonbit-interop.component.wasm"
-fly_control_app := env_var_or_default("FLY_CONTROL_APP", "wasmplane-control")
-fly_runtime_app := env_var_or_default("FLY_RUNTIME_APP", "wasmplane-runtime")
-fly_collector_app := env_var_or_default("FLY_COLLECTOR_APP", "wasmplane-otel-collector")
+fly_control_app := env_var_or_default("FLY_CONTROL_APP", "mz-wasmplane-control")
+fly_runtime_app := env_var_or_default("FLY_RUNTIME_APP", "mz-wasmplane-runtime")
+fly_collector_app := env_var_or_default("FLY_COLLECTOR_APP", "mz-wasmplane-otel-collector")
 fly_region := env_var_or_default("FLY_REGION", "nrt")
 perf_iterations := env_var_or_default("WASMPLANE_PERF_ITERATIONS", "20")
 perf_warmup := env_var_or_default("WASMPLANE_PERF_WARMUP", "2")
@@ -121,6 +121,9 @@ fly-status:
     fly status -a "{{ fly_control_app }}"
     fly status -a "{{ fly_runtime_app }}"
     fly status -a "{{ fly_collector_app }}"
+
+fly-smoke:
+    pnpm ops-smoke
 
 dev:
     pnpm start

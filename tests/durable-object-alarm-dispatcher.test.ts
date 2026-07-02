@@ -128,3 +128,49 @@ test("durable object alarm dispatcher job schedules ticks and skips overlapping 
   job.stop();
   assert.equal(job.running(), false);
 });
+
+test("durable object alarm dispatcher job can suppress idle reports", async () => {
+  const reports: unknown[] = [];
+  const errors: unknown[] = [];
+  const job = createDurableObjectAlarmDispatcherJob({
+    intervalMs: 30_000,
+    reportIdleTicks: false,
+    dispatch: async () => ({
+      ok: true,
+      checkedAt: "2026-07-02T00:00:00.000Z",
+      due: 0,
+      dispatched: 0,
+      failed: 0,
+      errors: [],
+    }),
+    onReport: (report) => reports.push(report),
+    onError: (error) => errors.push(error),
+  });
+
+  assert.equal(await job.tick(), true);
+  assert.deepEqual(reports, []);
+  assert.deepEqual(errors, []);
+});
+
+test("durable object alarm dispatcher job still reports non-idle ticks when idle reports are suppressed", async () => {
+  const reports: unknown[] = [];
+  const errors: unknown[] = [];
+  const job = createDurableObjectAlarmDispatcherJob({
+    intervalMs: 30_000,
+    reportIdleTicks: false,
+    dispatch: async () => ({
+      ok: true,
+      checkedAt: "2026-07-02T00:00:00.000Z",
+      due: 1,
+      dispatched: 1,
+      failed: 0,
+      errors: [],
+    }),
+    onReport: (report) => reports.push(report),
+    onError: (error) => errors.push(error),
+  });
+
+  assert.equal(await job.tick(), true);
+  assert.equal(reports.length, 1);
+  assert.deepEqual(errors, []);
+});

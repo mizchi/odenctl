@@ -28,6 +28,7 @@ export interface ConfiguredDurableObjectAlarmDispatcherOptions {
   now?: () => DurableObjectAlarmTime;
   onReport?(namespace: string, report: DurableObjectAlarmDispatchReport): void;
   onError?(namespace: string, error: unknown): void;
+  reportIdleTicks?: boolean;
 }
 
 export function createDurableObjectAlarmWebhookHandler(
@@ -99,6 +100,8 @@ export function createConfiguredDurableObjectAlarmDispatcherJobs(
     fetchFn: options.fetchFn,
   });
   const limit = optionalPositiveInteger(env.WASMPLANE_DURABLE_OBJECT_ALARM_LIMIT);
+  const reportIdleTicks = options.reportIdleTicks
+    ?? env.WASMPLANE_DURABLE_OBJECT_ALARM_LOG_IDLE_TICKS === "1";
 
   return namespaces.map((namespaceName) => {
     const namespace = createDurableObjectStorageNamespace({
@@ -111,6 +114,7 @@ export function createConfiguredDurableObjectAlarmDispatcherJobs(
       handler,
       limit,
       now: options.now,
+      reportIdleTicks,
       onReport: (report) => options.onReport?.(namespaceName, report),
       onError: (error) => options.onError?.(namespaceName, error),
     });

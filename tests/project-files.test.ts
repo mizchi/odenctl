@@ -8,6 +8,7 @@ test("project tooling keeps Wasm E2E portable", async () => {
   const workflow = await readFile(".github/workflows/ci.yml", "utf8");
   const flyControl = await readFile("fly.control.toml", "utf8");
   const flyRuntime = await readFile("fly.runtime.toml", "utf8");
+  const flyCollector = await readFile("fly.collector.toml", "utf8");
   const readme = await readFile("README.md", "utf8");
   await readFile("pnpm-lock.yaml", "utf8");
 
@@ -16,7 +17,12 @@ test("project tooling keeps Wasm E2E portable", async () => {
   assert.match(justfile, /^db-migrate-apply:/m);
   assert.match(justfile, /^volume-sqlite-bench:/m);
   assert.match(justfile, /^fly-volume-sqlite-bench:/m);
+  assert.match(justfile, /fly_control_app := env_var_or_default\("FLY_CONTROL_APP", "mz-wasmplane-control"\)/);
+  assert.match(justfile, /fly_runtime_app := env_var_or_default\("FLY_RUNTIME_APP", "mz-wasmplane-runtime"\)/);
+  assert.match(justfile, /fly_collector_app := env_var_or_default\("FLY_COLLECTOR_APP", "mz-wasmplane-otel-collector"\)/);
+  assert.match(justfile, /^fly-smoke:/m);
   assert.doesNotMatch(justfile, /\/Users\//);
+  assert.match(packageJson.scripts["ops-smoke"], /src\/ops-smoke\.ts/);
   assert.match(packageJson.scripts["volume-sqlite-bench"], /src\/volume-sqlite-bench\.ts/);
   assert.equal(packageJson.devDependencies["@bytecodealliance/jco"], "1.15.4");
   assert.match(workflow, /pnpm\/action-setup@v4/);
@@ -25,6 +31,7 @@ test("project tooling keeps Wasm E2E portable", async () => {
   assert.match(workflow, /rustup target add wasm32-wasip1/);
   assert.match(workflow, /just test/);
   assert.match(workflow, /just e2e/);
+  assert.match(flyControl, /app = "mz-wasmplane-control"/);
   assert.match(flyControl, /WASMPLANE_SNAPSHOT_PUBLISH_INTERVAL_MS = "5000"/);
   assert.match(flyControl, /WASMPLANE_VOLUME_SQLITE_ROOT = "\/data\/sqlite"/);
   assert.match(flyControl, /WASMPLANE_VOLUME_SQLITE_MAX_OPEN = "64"/);
@@ -35,10 +42,13 @@ test("project tooling keeps Wasm E2E portable", async () => {
   assert.match(readme, /WASMPLANE_VOLUME_SQLITE_BACKUP_KEYS_BASE64/);
   assert.match(readme, /WASMPLANE_DURABLE_OBJECT_ALARM_INTERVAL_MS/);
   assert.match(readme, /WASMPLANE_DURABLE_OBJECT_ALARM_WEBHOOK_URL/);
+  assert.match(readme, /just fly-smoke/);
   assert.match(justfile, /--max-pending-writes 64/);
+  assert.match(flyRuntime, /app = "mz-wasmplane-runtime"/);
   assert.match(flyRuntime, /RUNTIME_HOST = "::"/);
   assert.match(flyRuntime, /RUNTIME_ROUTE_SNAPSHOT_FILE = "\/data\/route-snapshot\.json"/);
   assert.match(flyRuntime, /path = "\/__runtime\/healthz"/);
+  assert.match(flyCollector, /app = "mz-wasmplane-otel-collector"/);
 });
 
 test("Rust and MoonBit interop examples share a WASI p3 component contract", async () => {

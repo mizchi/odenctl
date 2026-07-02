@@ -339,11 +339,20 @@ just fly-deploy-runtime
 Check the deployed services:
 
 ```sh
+just fly-status
+just fly-smoke
+
 curl -H "authorization: Bearer $WASMPLANE_CONTROL_PLANE_TOKEN" \
   "https://$FLY_CONTROL_APP.fly.dev/runtime-nodes"
 curl "https://$FLY_RUNTIME_APP.fly.dev/__runtime/healthz"
 curl "https://$FLY_COLLECTOR_APP.fly.dev/"
 ```
+
+`just fly-smoke` checks public health endpoints, authenticated control-plane
+`/autoscaling/signals` and `/snapshots/routes`, authenticated runtime `/__runtime/metrics`, and one
+worker request using `WASMPLANE_SMOKE_WORKER_HOST`/`WASMPLANE_SMOKE_WORKER_PATH` defaulting to
+`hello.example.dev` and `/`. Run `pnpm ops-smoke -- --skip-worker` when no route has been deployed
+yet.
 
 The control app stores SQLite state and uploaded local artifacts on `/data`. For Fly, local uploads
 are recorded as `https://<control-app>/artifacts/local/<digest>.wasm`, so the separate runtime app can
@@ -418,6 +427,8 @@ For the packaged control-plane process, set `WASMPLANE_DURABLE_OBJECT_ALARM_INTE
 poll due alarms from the volume SQLite registry and POST them to an application webhook. Optional
 settings are `WASMPLANE_DURABLE_OBJECT_ALARM_WEBHOOK_TOKEN`,
 `WASMPLANE_DURABLE_OBJECT_ALARM_WEBHOOK_TIMEOUT_MS`, and `WASMPLANE_DURABLE_OBJECT_ALARM_LIMIT`.
+Idle alarm polling ticks are not logged by default; set
+`WASMPLANE_DURABLE_OBJECT_ALARM_LOG_IDLE_TICKS=1` when diagnosing scheduler liveness.
 Set `WASMPLANE_VOLUME_SQLITE_BACKUP_INTERVAL_MS` on the control plane to run scheduled backups for
 all cataloged volume SQLite databases. Scheduled backups require encryption by default; set
 `WASMPLANE_VOLUME_SQLITE_BACKUP_REQUIRE_ENCRYPTION=0` only for local development. Enable
