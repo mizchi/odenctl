@@ -24,6 +24,7 @@ import type {
 } from "./contracts.ts";
 import { ControlPlaneError } from "./errors.ts";
 import { invoiceContentDigest, type OrganizationBillingInvoice } from "./billing-invoice.ts";
+import type { BillingWebhookDelivery, BillingWebhookDeliveryStatus } from "./billing-webhook.ts";
 
 const { Pool } = pg;
 const initMigrationId = "202606300001_postgres_init";
@@ -331,6 +332,111 @@ export class PostgresControlPlaneRepository implements AsyncControlPlaneReposito
       [organizationId],
     );
     return result.rows.map(billingInvoiceFromRow);
+  }
+
+  async createBillingWebhookDelivery(
+    delivery: BillingWebhookDelivery,
+  ): Promise<BillingWebhookDelivery> {
+    try {
+      await this.pool.query(
+        `insert into billing_webhook_deliveries (
+          id,
+          event_type,
+          target_url,
+          idempotency_key,
+          status,
+          payload_json,
+          attempts,
+          next_attempt_at,
+          last_attempt_at,
+          last_status,
+          last_error,
+          created_at,
+          updated_at,
+          delivered_at
+        ) values ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11, $12, $13, $14)`,
+        [
+          delivery.id,
+          delivery.eventType,
+          delivery.targetUrl,
+          delivery.idempotencyKey,
+          delivery.status,
+          JSON.stringify(delivery.payload),
+          delivery.attempts,
+          delivery.nextAttemptAt ?? null,
+          delivery.lastAttemptAt ?? null,
+          delivery.lastStatus ?? null,
+          delivery.lastError ?? null,
+          delivery.createdAt,
+          delivery.updatedAt,
+          delivery.deliveredAt ?? null,
+        ],
+      );
+      return delivery;
+    } catch (error) {
+      throw writeError("billing webhook delivery", delivery.id, error);
+    }
+  }
+
+  async getBillingWebhookDeliveryByIdempotencyKey(
+    idempotencyKey: string,
+  ): Promise<BillingWebhookDelivery | undefined> {
+    const result = await this.pool.query(
+      "select * from billing_webhook_deliveries where idempotency_key = $1",
+      [idempotencyKey],
+    );
+    return result.rows[0] ? billingWebhookDeliveryFromRow(result.rows[0]) : undefined;
+  }
+
+  async listBillingWebhookDeliveries(
+    status?: BillingWebhookDeliveryStatus,
+  ): Promise<BillingWebhookDelivery[]> {
+    const result = status
+      ? await this.pool.query(
+        `select * from billing_webhook_deliveries
+         where status = $1
+         order by created_at asc, id asc`,
+        [status],
+      )
+      : await this.pool.query(
+        `select * from billing_webhook_deliveries
+         order by created_at asc, id asc`,
+      );
+    return result.rows.map(billingWebhookDeliveryFromRow);
+  }
+
+  async updateBillingWebhookDelivery(
+    delivery: BillingWebhookDelivery,
+  ): Promise<BillingWebhookDelivery> {
+    const result = await this.pool.query(
+      `update billing_webhook_deliveries set
+        status = $1,
+        payload_json = $2::jsonb,
+        attempts = $3,
+        next_attempt_at = $4,
+        last_attempt_at = $5,
+        last_status = $6,
+        last_error = $7,
+        updated_at = $8,
+        delivered_at = $9
+       where id = $10`,
+      [
+        delivery.status,
+        JSON.stringify(delivery.payload),
+        delivery.attempts,
+        delivery.nextAttemptAt ?? null,
+        delivery.lastAttemptAt ?? null,
+        delivery.lastStatus ?? null,
+        delivery.lastError ?? null,
+        delivery.updatedAt,
+        delivery.deliveredAt ?? null,
+        delivery.id,
+      ],
+    );
+    if (result.rowCount === 0) {
+      throw new ControlPlaneError("not_found", `billing webhook delivery ${delivery.id} was not found`);
+    }
+    return delivery;
   }
 
   async createCustomDomain(domain: CustomDomain): Promise<CustomDomain> {
@@ -1214,6 +1320,25 @@ function billingInvoiceFromRow(row: any): OrganizationBillingInvoice {
   return {
     ...invoice,
     contentDigest: row.content_digest || invoiceContentDigest(invoice),
+  };
+}
+
+function billingWebhookDeliveryFromRow(row: any): BillingWebhookDelivery {
+  return {
+    id: row.id,
+    eventType: row.event_type,
+    targetUrl: row.target_url,
+    idempotencyKey: row.idempotency_key,
+    status: row.status,
+    payload: jsonValue(row.payload_json),
+    attempts: Number(row.attempts),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    ...(row.next_attempt_at ? { nextAttemptAt: row.next_attempt_at } : {}),
+    ...(row.last_attempt_at ? { lastAttemptAt: row.last_attempt_at } : {}),
+    ...(row.last_status === null || row.last_status === undefined ? {} : { lastStatus: Number(row.last_status) }),
+    ...(row.last_error ? { lastError: row.last_error } : {}),
+    ...(row.delivered_at ? { deliveredAt: row.delivered_at } : {}),
   };
 }
 

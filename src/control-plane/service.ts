@@ -120,6 +120,14 @@ import {
   type BillingInvoiceExportBundle,
   type BillingInvoiceExportSigner,
 } from "./billing-export.ts";
+import {
+  attemptBillingWebhookDelivery,
+  billingInvoiceIssuedIdempotencyKey,
+  createBillingInvoiceIssuedWebhookDelivery,
+  type BillingWebhookDelivery,
+  type BillingWebhookDeliveryStatus,
+  type BillingWebhookFetchLike,
+} from "./billing-webhook.ts";
 
 export interface ControlPlaneOptions {
   repository: ControlPlaneRepository;
@@ -134,6 +142,9 @@ export interface ControlPlaneOptions {
   projectBillingBudgets?: ProjectBillingBudgetPolicies;
   billingRateCardVersion?: string;
   billingInvoiceExportSigner?: BillingInvoiceExportSigner;
+  billingWebhookTargetUrl?: string;
+  billingWebhookMaxAttempts?: number;
+  billingWebhookRetryDelayMs?: number;
   artifactSignatureVerifier?: ArtifactSignatureVerifier;
   admissionPolicy?: ControlPlaneAdmissionPolicy;
 }
@@ -243,6 +254,19 @@ export interface ExportBillingInvoiceInput {
 
 export interface ListOrganizationBillingInvoicesInput {
   organizationId: string;
+}
+
+export interface ListBillingWebhookDeliveriesInput {
+  status?: BillingWebhookDeliveryStatus;
+}
+
+export interface DeliverPendingBillingWebhooksInput {
+  fetch?: BillingWebhookFetchLike;
+}
+
+export interface DeliverPendingBillingWebhooksReport {
+  attempted: number;
+  deliveries: BillingWebhookDelivery[];
 }
 
 export interface CreateCustomDomainInput {
@@ -456,6 +480,9 @@ export function createControlPlane(options: ControlPlaneOptions) {
   const projectBillingBudgets = options.projectBillingBudgets;
   const billingRateCardVersion = normalizeBillingRateCardVersion(options.billingRateCardVersion);
   const billingInvoiceExportSigner = options.billingInvoiceExportSigner;
+  const billingWebhookTargetUrl = options.billingWebhookTargetUrl?.trim();
+  const billingWebhookMaxAttempts = options.billingWebhookMaxAttempts;
+  const billingWebhookRetryDelayMs = options.billingWebhookRetryDelayMs;
   const artifactSignatureVerifier = options.artifactSignatureVerifier;
   const admissionPolicy = options.admissionPolicy;
 
@@ -686,6 +713,7 @@ export function createControlPlane(options: ControlPlaneOptions) {
     const period = usageQuotaPeriodFor(at, undefined);
     const existing = repository.getOrganizationBillingInvoiceByPeriod(input.organizationId, period.key);
     if (existing) {
+      enqueueBillingInvoiceWebhook(existing);
       return existing;
     }
     const summaries = repository
@@ -708,11 +736,14 @@ export function createControlPlane(options: ControlPlaneOptions) {
       issuedAt: now(),
     });
     try {
-      return repository.createBillingInvoice(invoice);
+      const created = repository.createBillingInvoice(invoice);
+      enqueueBillingInvoiceWebhook(created);
+      return created;
     } catch (error) {
       if (isConflictError(error)) {
         const raced = repository.getOrganizationBillingInvoiceByPeriod(input.organizationId, period.key);
         if (raced) {
+          enqueueBillingInvoiceWebhook(raced);
           return raced;
         }
       }
@@ -744,6 +775,58 @@ export function createControlPlane(options: ControlPlaneOptions) {
   ): OrganizationBillingInvoice[] {
     requireOrganization(repository, input.organizationId);
     return repository.listOrganizationBillingInvoices(input.organizationId);
+  }
+
+  function listBillingWebhookDeliveries(
+    input: ListBillingWebhookDeliveriesInput = {},
+  ): BillingWebhookDelivery[] {
+    return repository.listBillingWebhookDeliveries(input.status);
+  }
+
+  async function deliverPendingBillingWebhooks(
+    input: DeliverPendingBillingWebhooksInput = {},
+  ): Promise<DeliverPendingBillingWebhooksReport> {
+    const due = repository
+      .listBillingWebhookDeliveries("pending")
+      .filter((delivery) => !delivery.nextAttemptAt || delivery.nextAttemptAt <= now());
+    const deliveries: BillingWebhookDelivery[] = [];
+    for (const delivery of due) {
+      const updated = await attemptBillingWebhookDelivery(delivery, input.fetch ?? fetch, {
+        now,
+        maxAttempts: billingWebhookMaxAttempts,
+        retryDelayMs: billingWebhookRetryDelayMs,
+      });
+      deliveries.push(repository.updateBillingWebhookDelivery(updated));
+    }
+    return { attempted: deliveries.length, deliveries };
+  }
+
+  function enqueueBillingInvoiceWebhook(invoice: OrganizationBillingInvoice): BillingWebhookDelivery | undefined {
+    if (!billingWebhookTargetUrl) {
+      return undefined;
+    }
+    const idempotencyKey = billingInvoiceIssuedIdempotencyKey(invoice);
+    const existing = repository.getBillingWebhookDeliveryByIdempotencyKey(idempotencyKey);
+    if (existing) {
+      return existing;
+    }
+    const delivery = createBillingInvoiceIssuedWebhookDelivery({
+      id: idGenerator("bwh"),
+      invoice,
+      targetUrl: billingWebhookTargetUrl,
+      createdAt: now(),
+    });
+    try {
+      return repository.createBillingWebhookDelivery(delivery);
+    } catch (error) {
+      if (isConflictError(error)) {
+        const raced = repository.getBillingWebhookDeliveryByIdempotencyKey(idempotencyKey);
+        if (raced) {
+          return raced;
+        }
+      }
+      throw error;
+    }
   }
 
   function createCustomDomain(input: CreateCustomDomainInput): CustomDomain {
@@ -1260,6 +1343,8 @@ export function createControlPlane(options: ControlPlaneOptions) {
     getBillingInvoice,
     exportBillingInvoice,
     listOrganizationBillingInvoices,
+    listBillingWebhookDeliveries,
+    deliverPendingBillingWebhooks,
     createCustomDomain,
     listProjectCustomDomains,
     verifyCustomDomainOwnership,

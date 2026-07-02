@@ -124,6 +124,17 @@ export {
   type BillingInvoiceExportSigner,
 } from "./control-plane/billing-export.ts";
 export {
+  attemptBillingWebhookDelivery,
+  billingInvoiceIssuedIdempotencyKey,
+  createBillingInvoiceIssuedWebhookDelivery,
+  type BillingInvoiceIssuedWebhookPayload,
+  type BillingWebhookDelivery,
+  type BillingWebhookDeliveryStatus,
+  type BillingWebhookEventType,
+  type BillingWebhookFetchLike,
+  type BillingWebhookPayload,
+} from "./control-plane/billing-webhook.ts";
+export {
   enforceProjectQuota,
   projectQuotasFromEnv,
 } from "./control-plane/quotas.ts";

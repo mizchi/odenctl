@@ -36,6 +36,9 @@ const runtimeNodeActiveTtlMs = positiveInteger(
 const snapshotPublishIntervalMs = optionalPositiveInteger(
   process.env.WASMPLANE_SNAPSHOT_PUBLISH_INTERVAL_MS,
 );
+const billingWebhookDeliveryIntervalMs = optionalPositiveInteger(
+  process.env.WASMPLANE_BILLING_WEBHOOK_DELIVERY_INTERVAL_MS,
+);
 const volumeSqliteBackupIntervalMs = optionalPositiveInteger(
   process.env.WASMPLANE_VOLUME_SQLITE_BACKUP_INTERVAL_MS,
 );
@@ -119,6 +122,16 @@ if (snapshotPublishIntervalMs) {
     onError(error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error(`snapshot publish job failed: ${message}`);
+    },
+  }).start();
+}
+if (billingWebhookDeliveryIntervalMs) {
+  createSnapshotPublishJob({
+    intervalMs: billingWebhookDeliveryIntervalMs,
+    publish: () => controlPlane.deliverPendingBillingWebhooks(),
+    onError(error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`billing webhook delivery job failed: ${message}`);
     },
   }).start();
 }

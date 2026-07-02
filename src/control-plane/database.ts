@@ -59,6 +59,9 @@ export async function createConfiguredControlPlane(
   const projectBillingBudgets = projectBillingBudgetsFromEnv(env);
   const billingRateCardVersion = firstNonEmpty(env.WASMPLANE_BILLING_RATE_CARD_VERSION);
   const billingInvoiceExportSigner = billingInvoiceExportSignerFromEnv(env);
+  const billingWebhookTargetUrl = firstNonEmpty(env.WASMPLANE_BILLING_WEBHOOK_URL);
+  const billingWebhookMaxAttempts = positiveInteger(env.WASMPLANE_BILLING_WEBHOOK_MAX_ATTEMPTS);
+  const billingWebhookRetryDelayMs = positiveInteger(env.WASMPLANE_BILLING_WEBHOOK_RETRY_DELAY_MS);
   const admissionPolicy = admissionPolicyFromEnv(env);
   if (config.kind === "postgres") {
     const [{ createAsyncControlPlane }, { createPostgresRepository }] = await Promise.all([
@@ -81,6 +84,9 @@ export async function createConfiguredControlPlane(
       projectBillingBudgets,
       billingRateCardVersion,
       billingInvoiceExportSigner,
+      billingWebhookTargetUrl,
+      billingWebhookMaxAttempts,
+      billingWebhookRetryDelayMs,
       admissionPolicy,
     });
     assertMigrationStatus(await checkControlPlaneMigrations(config));
@@ -97,6 +103,9 @@ export async function createConfiguredControlPlane(
     projectBillingBudgets,
     billingRateCardVersion,
     billingInvoiceExportSigner,
+    billingWebhookTargetUrl,
+    billingWebhookMaxAttempts,
+    billingWebhookRetryDelayMs,
     admissionPolicy,
   });
   assertMigrationStatus(await checkControlPlaneMigrations(config));

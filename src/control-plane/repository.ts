@@ -21,6 +21,7 @@ import type {
 } from "./contracts.ts";
 import { ControlPlaneError } from "./errors.ts";
 import { invoiceContentDigest, type OrganizationBillingInvoice } from "./billing-invoice.ts";
+import type { BillingWebhookDelivery, BillingWebhookDeliveryStatus } from "./billing-webhook.ts";
 
 export interface ControlPlaneRepository {
   createOrganization(organization: Organization): Organization;
@@ -43,6 +44,10 @@ export interface ControlPlaneRepository {
     periodKey: string,
   ): OrganizationBillingInvoice | undefined;
   listOrganizationBillingInvoices(organizationId: string): OrganizationBillingInvoice[];
+  createBillingWebhookDelivery(delivery: BillingWebhookDelivery): BillingWebhookDelivery;
+  getBillingWebhookDeliveryByIdempotencyKey(idempotencyKey: string): BillingWebhookDelivery | undefined;
+  listBillingWebhookDeliveries(status?: BillingWebhookDeliveryStatus): BillingWebhookDelivery[];
+  updateBillingWebhookDelivery(delivery: BillingWebhookDelivery): BillingWebhookDelivery;
   createCustomDomain(domain: CustomDomain): CustomDomain;
   getCustomDomain(id: string): CustomDomain | undefined;
   getCustomDomainByHost(host: string): CustomDomain | undefined;
@@ -362,6 +367,107 @@ class SqliteControlPlaneRepository implements ControlPlaneRepository {
       )
       .all(organizationId)
       .map(billingInvoiceFromRow);
+  }
+
+  createBillingWebhookDelivery(delivery: BillingWebhookDelivery): BillingWebhookDelivery {
+    try {
+      this.db
+        .prepare(
+          `insert into billing_webhook_deliveries (
+            id,
+            event_type,
+            target_url,
+            idempotency_key,
+            status,
+            payload_json,
+            attempts,
+            next_attempt_at,
+            last_attempt_at,
+            last_status,
+            last_error,
+            created_at,
+            updated_at,
+            delivered_at
+          ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          delivery.id,
+          delivery.eventType,
+          delivery.targetUrl,
+          delivery.idempotencyKey,
+          delivery.status,
+          JSON.stringify(delivery.payload),
+          delivery.attempts,
+          delivery.nextAttemptAt ?? null,
+          delivery.lastAttemptAt ?? null,
+          delivery.lastStatus ?? null,
+          delivery.lastError ?? null,
+          delivery.createdAt,
+          delivery.updatedAt,
+          delivery.deliveredAt ?? null,
+        );
+      return delivery;
+    } catch (error) {
+      throw writeError("billing webhook delivery", delivery.id, error);
+    }
+  }
+
+  getBillingWebhookDeliveryByIdempotencyKey(idempotencyKey: string): BillingWebhookDelivery | undefined {
+    const row = this.db
+      .prepare("select * from billing_webhook_deliveries where idempotency_key = ?")
+      .get(idempotencyKey);
+    return row ? billingWebhookDeliveryFromRow(row) : undefined;
+  }
+
+  listBillingWebhookDeliveries(status?: BillingWebhookDeliveryStatus): BillingWebhookDelivery[] {
+    const rows = status
+      ? this.db
+        .prepare(
+          `select * from billing_webhook_deliveries
+           where status = ?
+           order by created_at asc, id asc`,
+        )
+        .all(status)
+      : this.db
+        .prepare(
+          `select * from billing_webhook_deliveries
+           order by created_at asc, id asc`,
+        )
+        .all();
+    return rows.map(billingWebhookDeliveryFromRow);
+  }
+
+  updateBillingWebhookDelivery(delivery: BillingWebhookDelivery): BillingWebhookDelivery {
+    const result = this.db
+      .prepare(
+        `update billing_webhook_deliveries set
+          status = ?,
+          payload_json = ?,
+          attempts = ?,
+          next_attempt_at = ?,
+          last_attempt_at = ?,
+          last_status = ?,
+          last_error = ?,
+          updated_at = ?,
+          delivered_at = ?
+         where id = ?`,
+      )
+      .run(
+        delivery.status,
+        JSON.stringify(delivery.payload),
+        delivery.attempts,
+        delivery.nextAttemptAt ?? null,
+        delivery.lastAttemptAt ?? null,
+        delivery.lastStatus ?? null,
+        delivery.lastError ?? null,
+        delivery.updatedAt,
+        delivery.deliveredAt ?? null,
+        delivery.id,
+      );
+    if (result.changes === 0) {
+      throw new ControlPlaneError("not_found", `billing webhook delivery ${delivery.id} was not found`);
+    }
+    return delivery;
   }
 
   createCustomDomain(domain: CustomDomain): CustomDomain {
@@ -1281,6 +1387,25 @@ function billingInvoiceFromRow(row: any): OrganizationBillingInvoice {
   };
 }
 
+function billingWebhookDeliveryFromRow(row: any): BillingWebhookDelivery {
+  return {
+    id: row.id,
+    eventType: row.event_type,
+    targetUrl: row.target_url,
+    idempotencyKey: row.idempotency_key,
+    status: row.status,
+    payload: JSON.parse(row.payload_json),
+    attempts: Number(row.attempts),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    ...(row.next_attempt_at ? { nextAttemptAt: row.next_attempt_at } : {}),
+    ...(row.last_attempt_at ? { lastAttemptAt: row.last_attempt_at } : {}),
+    ...(row.last_status === null || row.last_status === undefined ? {} : { lastStatus: Number(row.last_status) }),
+    ...(row.last_error ? { lastError: row.last_error } : {}),
+    ...(row.delivered_at ? { deliveredAt: row.delivered_at } : {}),
+  };
+}
+
 function writeError(kind: string, id: string, error: unknown): ControlPlaneError {
   const message = error instanceof Error ? error.message : String(error);
   if (message.includes("UNIQUE constraint failed")) {
@@ -1381,6 +1506,26 @@ create table if not exists billing_invoices (
 
 create index if not exists billing_invoices_org_issued_idx
   on billing_invoices (organization_id, issued_at desc, id desc);
+
+create table if not exists billing_webhook_deliveries (
+  id text primary key,
+  event_type text not null,
+  target_url text not null,
+  idempotency_key text not null unique,
+  status text not null,
+  payload_json text not null,
+  attempts integer not null,
+  next_attempt_at text,
+  last_attempt_at text,
+  last_status integer,
+  last_error text,
+  created_at text not null,
+  updated_at text not null,
+  delivered_at text
+);
+
+create index if not exists billing_webhook_deliveries_status_next_idx
+  on billing_webhook_deliveries (status, next_attempt_at, created_at, id);
 
 create table if not exists custom_domains (
   id text primary key,
@@ -1841,6 +1986,32 @@ const migrations: SchemaMigration[] = [
     id: "202607020002_billing_invoice_digest",
     apply(db) {
       ensureColumn(db, "billing_invoices", "content_digest", "text not null default ''");
+    },
+  },
+  {
+    id: "202607020003_billing_webhook_deliveries",
+    apply(db) {
+      db.exec(`
+        create table if not exists billing_webhook_deliveries (
+          id text primary key,
+          event_type text not null,
+          target_url text not null,
+          idempotency_key text not null unique,
+          status text not null,
+          payload_json text not null,
+          attempts integer not null,
+          next_attempt_at text,
+          last_attempt_at text,
+          last_status integer,
+          last_error text,
+          created_at text not null,
+          updated_at text not null,
+          delivered_at text
+        );
+
+        create index if not exists billing_webhook_deliveries_status_next_idx
+          on billing_webhook_deliveries (status, next_attempt_at, created_at, id);
+      `);
     },
   },
 ];

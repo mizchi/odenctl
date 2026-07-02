@@ -717,6 +717,84 @@ test("control plane lists organization billing invoices newest first", () => {
   );
 });
 
+test("control plane enqueues and retries billing webhook deliveries", async () => {
+  let currentNow = "2026-08-01T00:00:00.000Z";
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: () => currentNow,
+    projectBillingRates: {
+      invocationsPerMillionUsd: 1,
+    },
+    billingWebhookTargetUrl: "https://accounting.example/webhooks/wasmplane",
+    billingWebhookRetryDelayMs: 1_000,
+    billingWebhookMaxAttempts: 3,
+  });
+  const organization = control.createOrganization({ id: "org_billing_webhook", name: "Billing Webhook Org" });
+  const project = control.createProject({
+    id: "prj_billing_webhook",
+    name: "billing webhook",
+    organizationId: organization.id,
+  });
+  control.recordUsageEvent({
+    id: "use_billing_webhook",
+    projectId: project.id,
+    metric: "invocation",
+    quantity: 1_000_000,
+    recordedAt: "2026-07-01T00:00:00.000Z",
+  });
+
+  const invoice = control.issueOrganizationBillingInvoice({
+    id: "inv_billing_webhook",
+    organizationId: organization.id,
+    at: "2026-07-15T00:00:00.000Z",
+  });
+  control.issueOrganizationBillingInvoice({
+    id: "inv_billing_webhook_duplicate",
+    organizationId: organization.id,
+    at: "2026-07-20T00:00:00.000Z",
+  });
+
+  const deliveries = control.listBillingWebhookDeliveries();
+  assert.equal(deliveries.length, 1);
+  assert.equal(deliveries[0].eventType, "billing.invoice.issued");
+  assert.equal(deliveries[0].payload.invoice.id, invoice.id);
+  assert.match(deliveries[0].idempotencyKey, /^billing\.invoice\.issued:inv_billing_webhook:/);
+  assert.equal(deliveries[0].status, "pending");
+
+  const requests: Array<{ headers: Record<string, string>; body: any }> = [];
+  const first = await control.deliverPendingBillingWebhooks({
+    fetch: async (_url, init) => {
+      requests.push({ headers: init.headers, body: JSON.parse(init.body) });
+      return {
+        ok: false,
+        status: 503,
+        text: async () => "try later",
+      };
+    },
+  });
+  assert.equal(first.attempted, 1);
+  assert.equal(requests[0].headers["idempotency-key"], deliveries[0].idempotencyKey);
+  assert.equal(requests[0].body.invoice.id, invoice.id);
+  assert.equal(first.deliveries[0].status, "pending");
+  assert.equal(first.deliveries[0].attempts, 1);
+  assert.equal(first.deliveries[0].nextAttemptAt, "2026-08-01T00:00:01.000Z");
+
+  currentNow = "2026-08-01T00:00:01.000Z";
+  const second = await control.deliverPendingBillingWebhooks({
+    fetch: async () => ({
+      ok: true,
+      status: 202,
+      text: async () => "",
+    }),
+  });
+
+  assert.equal(second.attempted, 1);
+  assert.equal(second.deliveries[0].status, "delivered");
+  assert.equal(second.deliveries[0].attempts, 2);
+  assert.equal(control.listBillingWebhookDeliveries({ status: "delivered" })[0].id, deliveries[0].id);
+});
+
 test("control plane enforces monthly billing budgets from usage ledgers", () => {
   const control = createControlPlane({
     repository: createMemoryRepository(),
@@ -2478,6 +2556,7 @@ test("sqlite repository records schema migrations and upgrades existing database
     "202607010007_deploy_previews",
     "202607020001_billing_invoices",
     "202607020002_billing_invoice_digest",
+    "202607020003_billing_webhook_deliveries",
   ]);
   assert.ok(routeColumns.includes("targets_json"));
   const artifactColumns = db
@@ -2512,11 +2591,18 @@ test("sqlite repository records schema migrations and upgrades existing database
   assert.equal(db.prepare("select count(*) as count from custom_domains").get().count, 0);
   assert.equal(db.prepare("select count(*) as count from deploy_previews").get().count, 0);
   assert.equal(db.prepare("select count(*) as count from billing_invoices").get().count, 0);
+  assert.equal(db.prepare("select count(*) as count from billing_webhook_deliveries").get().count, 0);
   const billingInvoiceColumns = db
     .prepare("pragma table_info(billing_invoices)")
     .all()
     .map((row: any) => row.name);
   assert.ok(billingInvoiceColumns.includes("content_digest"));
+  const billingWebhookColumns = db
+    .prepare("pragma table_info(billing_webhook_deliveries)")
+    .all()
+    .map((row: any) => row.name);
+  assert.ok(billingWebhookColumns.includes("idempotency_key"));
+  assert.ok(billingWebhookColumns.includes("payload_json"));
   assert.equal(db.prepare("select count(*) as count from route_snapshot_publications").get().count, 1);
   const publicationColumns = db
     .prepare("pragma table_info(route_snapshot_publications)")

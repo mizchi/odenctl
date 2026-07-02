@@ -76,6 +76,23 @@ create table if not exists billing_invoices (
   unique (organization_id, period_key)
 );
 
+create table if not exists billing_webhook_deliveries (
+  id text primary key,
+  event_type text not null check (event_type in ('billing.invoice.issued')),
+  target_url text not null,
+  idempotency_key text not null unique,
+  status text not null check (status in ('pending', 'delivered', 'failed')),
+  payload_json jsonb not null,
+  attempts integer not null check (attempts >= 0),
+  next_attempt_at text,
+  last_attempt_at text,
+  last_status integer,
+  last_error text,
+  created_at text not null,
+  updated_at text not null,
+  delivered_at text
+);
+
 create table if not exists custom_domains (
   id text primary key,
   project_id text not null references projects(id),
@@ -259,6 +276,9 @@ create index if not exists usage_events_org_time_idx
 
 create index if not exists billing_invoices_org_issued_idx
   on billing_invoices (organization_id, issued_at desc, id desc);
+
+create index if not exists billing_webhook_deliveries_status_next_idx
+  on billing_webhook_deliveries (status, next_attempt_at, created_at, id);
 
 create index if not exists custom_domains_project_idx
   on custom_domains (project_id, host);

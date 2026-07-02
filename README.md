@@ -86,6 +86,11 @@ over the invoice payload for audit comparisons. List saved invoices for an organ
 `GET /organizations/:id/billing-invoices`. Set `WASMPLANE_BILLING_EXPORT_SIGNATURE_KEY_ID` and
 `WASMPLANE_BILLING_EXPORT_SIGNATURE_KEY_BASE64` or `WASMPLANE_BILLING_EXPORT_SIGNATURE_KEY` to
 enable signed accounting export bundles from `GET /billing-invoices/:id/export`.
+Set `WASMPLANE_BILLING_WEBHOOK_URL` to enqueue a durable `billing.invoice.issued` webhook outbox
+record whenever an invoice is issued. Webhook POSTs include an `Idempotency-Key` header derived
+from the invoice id and content digest. Set `WASMPLANE_BILLING_WEBHOOK_DELIVERY_INTERVAL_MS` to
+run the delivery loop in-process; tune retry behavior with `WASMPLANE_BILLING_WEBHOOK_MAX_ATTEMPTS`
+and `WASMPLANE_BILLING_WEBHOOK_RETRY_DELAY_MS`.
 Set `WASMPLANE_SNAPSHOT_PUBLISH_INTERVAL_MS` to run a background publish job that periodically
 generates the current route snapshot and publishes it to configured/registered active runtime
 nodes. Each generated route snapshot includes a content-derived `snap_<hash>` id, and publish

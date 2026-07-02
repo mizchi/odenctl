@@ -120,6 +120,14 @@ import {
   type BillingInvoiceExportBundle,
   type BillingInvoiceExportSigner,
 } from "./billing-export.ts";
+import {
+  attemptBillingWebhookDelivery,
+  billingInvoiceIssuedIdempotencyKey,
+  createBillingInvoiceIssuedWebhookDelivery,
+  type BillingWebhookDelivery,
+  type BillingWebhookDeliveryStatus,
+  type BillingWebhookFetchLike,
+} from "./billing-webhook.ts";
 
 export interface AsyncControlPlaneRepository {
   createOrganization(organization: Organization): Promise<Organization>;
@@ -142,6 +150,10 @@ export interface AsyncControlPlaneRepository {
     periodKey: string,
   ): Promise<OrganizationBillingInvoice | undefined>;
   listOrganizationBillingInvoices(organizationId: string): Promise<OrganizationBillingInvoice[]>;
+  createBillingWebhookDelivery(delivery: BillingWebhookDelivery): Promise<BillingWebhookDelivery>;
+  getBillingWebhookDeliveryByIdempotencyKey(idempotencyKey: string): Promise<BillingWebhookDelivery | undefined>;
+  listBillingWebhookDeliveries(status?: BillingWebhookDeliveryStatus): Promise<BillingWebhookDelivery[]>;
+  updateBillingWebhookDelivery(delivery: BillingWebhookDelivery): Promise<BillingWebhookDelivery>;
   createCustomDomain(domain: CustomDomain): Promise<CustomDomain>;
   getCustomDomain(id: string): Promise<CustomDomain | undefined>;
   getCustomDomainByHost(host: string): Promise<CustomDomain | undefined>;
@@ -201,6 +213,9 @@ export interface AsyncControlPlaneOptions {
   projectBillingBudgets?: ProjectBillingBudgetPolicies;
   billingRateCardVersion?: string;
   billingInvoiceExportSigner?: BillingInvoiceExportSigner;
+  billingWebhookTargetUrl?: string;
+  billingWebhookMaxAttempts?: number;
+  billingWebhookRetryDelayMs?: number;
   artifactSignatureVerifier?: ArtifactSignatureVerifier;
   admissionPolicy?: ControlPlaneAdmissionPolicy;
 }
@@ -310,6 +325,19 @@ export interface ExportBillingInvoiceInput {
 
 export interface ListOrganizationBillingInvoicesInput {
   organizationId: string;
+}
+
+export interface ListBillingWebhookDeliveriesInput {
+  status?: BillingWebhookDeliveryStatus;
+}
+
+export interface DeliverPendingBillingWebhooksInput {
+  fetch?: BillingWebhookFetchLike;
+}
+
+export interface DeliverPendingBillingWebhooksReport {
+  attempted: number;
+  deliveries: BillingWebhookDelivery[];
 }
 
 export interface CreateCustomDomainInput {
@@ -523,6 +551,9 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
   const projectBillingBudgets = options.projectBillingBudgets;
   const billingRateCardVersion = normalizeBillingRateCardVersion(options.billingRateCardVersion);
   const billingInvoiceExportSigner = options.billingInvoiceExportSigner;
+  const billingWebhookTargetUrl = options.billingWebhookTargetUrl?.trim();
+  const billingWebhookMaxAttempts = options.billingWebhookMaxAttempts;
+  const billingWebhookRetryDelayMs = options.billingWebhookRetryDelayMs;
   const artifactSignatureVerifier = options.artifactSignatureVerifier;
   const admissionPolicy = options.admissionPolicy;
 
@@ -771,6 +802,7 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
     const period = usageQuotaPeriodFor(at, undefined);
     const existing = await repository.getOrganizationBillingInvoiceByPeriod(input.organizationId, period.key);
     if (existing) {
+      await enqueueBillingInvoiceWebhook(existing);
       return existing;
     }
     const projects = await repository.listOrganizationProjects(input.organizationId);
@@ -794,11 +826,14 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
       issuedAt: now(),
     });
     try {
-      return await repository.createBillingInvoice(invoice);
+      const created = await repository.createBillingInvoice(invoice);
+      await enqueueBillingInvoiceWebhook(created);
+      return created;
     } catch (error) {
       if (isConflictError(error)) {
         const raced = await repository.getOrganizationBillingInvoiceByPeriod(input.organizationId, period.key);
         if (raced) {
+          await enqueueBillingInvoiceWebhook(raced);
           return raced;
         }
       }
@@ -830,6 +865,59 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
   ): Promise<OrganizationBillingInvoice[]> {
     await requireOrganization(repository, input.organizationId);
     return repository.listOrganizationBillingInvoices(input.organizationId);
+  }
+
+  async function listBillingWebhookDeliveries(
+    input: ListBillingWebhookDeliveriesInput = {},
+  ): Promise<BillingWebhookDelivery[]> {
+    return repository.listBillingWebhookDeliveries(input.status);
+  }
+
+  async function deliverPendingBillingWebhooks(
+    input: DeliverPendingBillingWebhooksInput = {},
+  ): Promise<DeliverPendingBillingWebhooksReport> {
+    const pending = await repository.listBillingWebhookDeliveries("pending");
+    const due = pending.filter((delivery) => !delivery.nextAttemptAt || delivery.nextAttemptAt <= now());
+    const deliveries: BillingWebhookDelivery[] = [];
+    for (const delivery of due) {
+      const updated = await attemptBillingWebhookDelivery(delivery, input.fetch ?? fetch, {
+        now,
+        maxAttempts: billingWebhookMaxAttempts,
+        retryDelayMs: billingWebhookRetryDelayMs,
+      });
+      deliveries.push(await repository.updateBillingWebhookDelivery(updated));
+    }
+    return { attempted: deliveries.length, deliveries };
+  }
+
+  async function enqueueBillingInvoiceWebhook(
+    invoice: OrganizationBillingInvoice,
+  ): Promise<BillingWebhookDelivery | undefined> {
+    if (!billingWebhookTargetUrl) {
+      return undefined;
+    }
+    const idempotencyKey = billingInvoiceIssuedIdempotencyKey(invoice);
+    const existing = await repository.getBillingWebhookDeliveryByIdempotencyKey(idempotencyKey);
+    if (existing) {
+      return existing;
+    }
+    const delivery = createBillingInvoiceIssuedWebhookDelivery({
+      id: idGenerator("bwh"),
+      invoice,
+      targetUrl: billingWebhookTargetUrl,
+      createdAt: now(),
+    });
+    try {
+      return await repository.createBillingWebhookDelivery(delivery);
+    } catch (error) {
+      if (isConflictError(error)) {
+        const raced = await repository.getBillingWebhookDeliveryByIdempotencyKey(idempotencyKey);
+        if (raced) {
+          return raced;
+        }
+      }
+      throw error;
+    }
   }
 
   async function createCustomDomain(input: CreateCustomDomainInput): Promise<CustomDomain> {
@@ -1359,6 +1447,8 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
     getBillingInvoice,
     exportBillingInvoice,
     listOrganizationBillingInvoices,
+    listBillingWebhookDeliveries,
+    deliverPendingBillingWebhooks,
     createCustomDomain,
     listProjectCustomDomains,
     verifyCustomDomainOwnership,
