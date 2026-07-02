@@ -98,6 +98,9 @@ Retention and legal hold controls are stored as separate invoice policy records.
 `GET /billing-invoices/:id/retention-policy` to audit it, and
 `POST /billing-invoices/retention/prune` to delete only expired, non-held invoices for an
 organization.
+Set `WASMPLANE_BILLING_RETENTION_PRUNE_INTERVAL_MS` with
+`WASMPLANE_BILLING_RETENTION_ORGANIZATIONS=org_a,org_b` to run the same retention prune loop
+in-process on a schedule.
 Set `WASMPLANE_SNAPSHOT_PUBLISH_INTERVAL_MS` to run a background publish job that periodically
 generates the current route snapshot and publishes it to configured/registered active runtime
 nodes. Each generated route snapshot includes a content-derived `snap_<hash>` id, and publish

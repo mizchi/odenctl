@@ -12,6 +12,10 @@ import { runtimePlacementPolicyFromEnv } from "./control-plane/placement.ts";
 import { createVolumeSqliteBackupJob } from "./control-plane/volume-sqlite-backup-job.ts";
 import { createConfiguredVolumeSqliteBackupCipher, createVolumeSqliteRegistry } from "./control-plane/volume-sqlite.ts";
 import {
+  billingInvoiceRetentionOrganizationsFromEnv,
+  pruneBillingInvoicesForOrganizations,
+} from "./control-plane/billing-retention-job.ts";
+import {
   createInMemoryRouteSnapshotReplicaStore,
   routeSnapshotReplicaTargetsFromEnv,
   type RouteSnapshotReplicationOptions,
@@ -38,6 +42,12 @@ const snapshotPublishIntervalMs = optionalPositiveInteger(
 );
 const billingWebhookDeliveryIntervalMs = optionalPositiveInteger(
   process.env.WASMPLANE_BILLING_WEBHOOK_DELIVERY_INTERVAL_MS,
+);
+const billingInvoiceRetentionPruneIntervalMs = optionalPositiveInteger(
+  process.env.WASMPLANE_BILLING_RETENTION_PRUNE_INTERVAL_MS,
+);
+const billingInvoiceRetentionOrganizations = billingInvoiceRetentionOrganizationsFromEnv(
+  process.env.WASMPLANE_BILLING_RETENTION_ORGANIZATIONS,
 );
 const volumeSqliteBackupIntervalMs = optionalPositiveInteger(
   process.env.WASMPLANE_VOLUME_SQLITE_BACKUP_INTERVAL_MS,
@@ -132,6 +142,43 @@ if (billingWebhookDeliveryIntervalMs) {
     onError(error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error(`billing webhook delivery job failed: ${message}`);
+    },
+  }).start();
+}
+if (billingInvoiceRetentionPruneIntervalMs && billingInvoiceRetentionOrganizations.length === 0) {
+  throw new Error(
+    "WASMPLANE_BILLING_RETENTION_PRUNE_INTERVAL_MS requires WASMPLANE_BILLING_RETENTION_ORGANIZATIONS",
+  );
+}
+if (billingInvoiceRetentionPruneIntervalMs) {
+  createSnapshotPublishJob({
+    intervalMs: billingInvoiceRetentionPruneIntervalMs,
+    publish: async () => {
+      const report = await pruneBillingInvoicesForOrganizations({
+        controlPlane,
+        organizationIds: billingInvoiceRetentionOrganizations,
+      });
+      const summary = [
+        `ok=${report.ok}`,
+        `organizations=${report.organizations}`,
+        `scanned=${report.scanned}`,
+        `deleted=${report.deleted}`,
+        `retained=${report.retained}`,
+      ].join(" ");
+      if (report.ok) {
+        console.log(`billing invoice retention prune ${summary}`);
+      } else {
+        console.error(`billing invoice retention prune ${summary}`);
+        for (const error of report.errors) {
+          console.error(`billing invoice retention prune ${error.organizationId} failed: ${error.message}`);
+        }
+        throw new Error(`billing invoice retention prune failed for ${report.errors.length} organizations`);
+      }
+      return report;
+    },
+    onError(error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`billing invoice retention prune job failed: ${message}`);
     },
   }).start();
 }

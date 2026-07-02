@@ -150,6 +150,14 @@ export {
   type BillingInvoiceRetentionRetainedReason,
 } from "./control-plane/billing-retention.ts";
 export {
+  billingInvoiceRetentionOrganizationsFromEnv,
+  pruneBillingInvoicesForOrganizations,
+  type BillingInvoiceRetentionPruneControlPlane,
+  type BillingInvoiceRetentionPruneJobError,
+  type BillingInvoiceRetentionPruneJobReport,
+  type BillingInvoiceRetentionPruneOrganizationReport,
+} from "./control-plane/billing-retention-job.ts";
+export {
   enforceProjectQuota,
   projectQuotasFromEnv,
 } from "./control-plane/quotas.ts";
