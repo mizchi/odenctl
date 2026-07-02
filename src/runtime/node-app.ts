@@ -1396,6 +1396,7 @@ function assertCapabilities(value: unknown, field: string) {
   const capabilities = objectRecord(value, field);
   assertOutboundHttp(capabilities.outboundHttp, `${field}.outboundHttp`);
   assertKvBindings(capabilities.kv, `${field}.kv`);
+  assertDurableObjectBindings(capabilities.durableObjects, `${field}.durableObjects`);
   assertSecretBindings(capabilities.secrets, `${field}.secrets`);
   falseValue(capabilities.arbitraryFilesystem, `${field}.arbitraryFilesystem`);
   falseValue(capabilities.arbitrarySockets, `${field}.arbitrarySockets`);
@@ -1414,6 +1415,20 @@ function assertOutboundHttp(value: unknown, field: string) {
 }
 
 function assertKvBindings(value: unknown, field: string) {
+  if (!Array.isArray(value)) {
+    throw new RuntimeError("validation", `${field} must be an array`);
+  }
+  value.forEach((item, index) => {
+    const binding = objectRecord(item, `${field}[${index}]`);
+    bindingName(binding.binding, `${field}[${index}].binding`);
+    nonEmptyString(binding.namespaceId, `${field}[${index}].namespaceId`);
+  });
+}
+
+function assertDurableObjectBindings(value: unknown, field: string) {
+  if (value === undefined) {
+    return;
+  }
   if (!Array.isArray(value)) {
     throw new RuntimeError("validation", `${field} must be an array`);
   }

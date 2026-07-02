@@ -92,6 +92,10 @@ export interface HttpAppOptions {
     getKvNamespace(input: any): MaybePromise<unknown>;
     listProjectKvNamespaces(input: any): MaybePromise<unknown>;
     deleteKvNamespace(input: any): MaybePromise<void>;
+    createDurableObjectNamespace(input: any): MaybePromise<unknown>;
+    getDurableObjectNamespace(input: any): MaybePromise<unknown>;
+    listProjectDurableObjectNamespaces(input: any): MaybePromise<unknown>;
+    deleteDurableObjectNamespace(input: any): MaybePromise<void>;
     createDeployment(input: any): MaybePromise<unknown>;
     pointRoute(input: any): MaybePromise<unknown>;
     startRouteCanary(input: any): MaybePromise<unknown>;
@@ -614,6 +618,35 @@ export function createHttpApp(options: HttpAppOptions) {
       }
       if (kvNamespace && method === "DELETE") {
         await options.controlPlane.deleteKvNamespace({ id: kvNamespace.id });
+        response.writeHead(204).end();
+        return;
+      }
+      if (method === "POST" && url.pathname === "/durable-object-namespaces") {
+        writeJson(response, 201, await options.controlPlane.createDurableObjectNamespace(await readJson(request)));
+        return;
+      }
+      const projectDurableObjectNamespaces = projectDurableObjectNamespacesMatch(method, url.pathname);
+      if (projectDurableObjectNamespaces) {
+        writeJson(
+          response,
+          200,
+          await options.controlPlane.listProjectDurableObjectNamespaces({
+            projectId: projectDurableObjectNamespaces.projectId,
+          }),
+        );
+        return;
+      }
+      const durableObjectNamespace = durableObjectNamespaceMatch(method, url.pathname);
+      if (durableObjectNamespace && method === "GET") {
+        writeJson(
+          response,
+          200,
+          await options.controlPlane.getDurableObjectNamespace({ id: durableObjectNamespace.id }),
+        );
+        return;
+      }
+      if (durableObjectNamespace && method === "DELETE") {
+        await options.controlPlane.deleteDurableObjectNamespace({ id: durableObjectNamespace.id });
         response.writeHead(204).end();
         return;
       }
@@ -1760,6 +1793,28 @@ function kvNamespaceMatch(method: string, pathname: string): { id: string } | un
     return undefined;
   }
   const match = /^\/kv-namespaces\/([^/]+)$/.exec(pathname);
+  if (!match) {
+    return undefined;
+  }
+  return { id: decodeURIComponent(match[1]) };
+}
+
+function projectDurableObjectNamespacesMatch(method: string, pathname: string): { projectId: string } | undefined {
+  if (method !== "GET") {
+    return undefined;
+  }
+  const match = /^\/projects\/([^/]+)\/durable-object-namespaces$/.exec(pathname);
+  if (!match) {
+    return undefined;
+  }
+  return { projectId: decodeURIComponent(match[1]) };
+}
+
+function durableObjectNamespaceMatch(method: string, pathname: string): { id: string } | undefined {
+  if (method !== "GET" && method !== "DELETE") {
+    return undefined;
+  }
+  const match = /^\/durable-object-namespaces\/([^/]+)$/.exec(pathname);
   if (!match) {
     return undefined;
   }

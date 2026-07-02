@@ -10,6 +10,7 @@ import type {
   DeployPreviewEnvironment,
   DeployPreviewPreviousRoute,
   Deployment,
+  DurableObjectNamespace,
   KvNamespace,
   Organization,
   Project,
@@ -39,6 +40,7 @@ import {
   normalizeArtifactProvenance,
   normalizeArtifactSignature,
   normalizeDigest,
+  normalizeDurableObjectNamespaceName,
   normalizeHost,
   normalizeKvNamespaceName,
   normalizeLimits,
@@ -418,6 +420,24 @@ export interface ListProjectKvNamespacesInput {
 }
 
 export interface DeleteKvNamespaceInput {
+  id: string;
+}
+
+export interface CreateDurableObjectNamespaceInput {
+  id?: string;
+  projectId: string;
+  name: string;
+}
+
+export interface GetDurableObjectNamespaceInput {
+  id: string;
+}
+
+export interface ListProjectDurableObjectNamespacesInput {
+  projectId: string;
+}
+
+export interface DeleteDurableObjectNamespaceInput {
   id: string;
 }
 
@@ -1189,6 +1209,35 @@ export function createControlPlane(options: ControlPlaneOptions) {
     repository.deleteKvNamespace(input.id);
   }
 
+  function createDurableObjectNamespace(input: CreateDurableObjectNamespaceInput): DurableObjectNamespace {
+    requireProject(repository, input.projectId);
+    enforceQuota(input.projectId, "durable object namespace");
+    const namespace: DurableObjectNamespace = {
+      id: optionalId(input.id, "durable object namespace id") ?? idGenerator("do"),
+      projectId: input.projectId,
+      name: normalizeDurableObjectNamespaceName(input.name),
+      createdAt: now(),
+      updatedAt: now(),
+    };
+    return repository.createDurableObjectNamespace(namespace);
+  }
+
+  function getDurableObjectNamespace(input: GetDurableObjectNamespaceInput): DurableObjectNamespace {
+    return requireDurableObjectNamespace(repository, input.id);
+  }
+
+  function listProjectDurableObjectNamespaces(
+    input: ListProjectDurableObjectNamespacesInput,
+  ): DurableObjectNamespace[] {
+    requireProject(repository, input.projectId);
+    return repository.listProjectDurableObjectNamespaces(input.projectId);
+  }
+
+  function deleteDurableObjectNamespace(input: DeleteDurableObjectNamespaceInput): void {
+    requireDurableObjectNamespace(repository, input.id);
+    repository.deleteDurableObjectNamespace(input.id);
+  }
+
   function createDeployment(input: CreateDeploymentInput): Deployment {
     requireProject(repository, input.projectId);
     enforceQuota(input.projectId, "deployment");
@@ -1209,6 +1258,7 @@ export function createControlPlane(options: ControlPlaneOptions) {
       capabilities,
     });
     requireDeploymentKvNamespaces(repository, input.projectId, capabilities);
+    requireDeploymentDurableObjectNamespaces(repository, input.projectId, capabilities);
     requireDeploymentSecrets(repository, input.projectId, capabilities);
 
     const deployment: Deployment = {
@@ -1493,6 +1543,10 @@ export function createControlPlane(options: ControlPlaneOptions) {
     getKvNamespace,
     listProjectKvNamespaces,
     deleteKvNamespace,
+    createDurableObjectNamespace,
+    getDurableObjectNamespace,
+    listProjectDurableObjectNamespaces,
+    deleteDurableObjectNamespace,
     createDeployment,
     pointRoute,
     startRouteCanary,
@@ -1736,6 +1790,17 @@ function requireKvNamespace(repository: ControlPlaneRepository, id: string): KvN
   return namespace;
 }
 
+function requireDurableObjectNamespace(
+  repository: ControlPlaneRepository,
+  id: string,
+): DurableObjectNamespace {
+  const namespace = repository.getDurableObjectNamespace(id);
+  if (!namespace) {
+    throw new ControlPlaneError("not_found", `durable object namespace ${id} was not found`);
+  }
+  return namespace;
+}
+
 function requireDeploymentKvNamespaces(
   repository: ControlPlaneRepository,
   projectId: string,
@@ -1750,6 +1815,28 @@ function requireDeploymentKvNamespaces(
       throw new ControlPlaneError(
         "validation",
         `deployment kv namespace ${binding.namespaceId} must belong to the same project`,
+      );
+    }
+  }
+}
+
+function requireDeploymentDurableObjectNamespaces(
+  repository: ControlPlaneRepository,
+  projectId: string,
+  capabilities: CapabilityPolicy,
+) {
+  for (const binding of capabilities.durableObjects) {
+    const namespace = repository.getDurableObjectNamespace(binding.namespaceId);
+    if (!namespace) {
+      throw new ControlPlaneError(
+        "validation",
+        `durable object namespace ${binding.namespaceId} was not found`,
+      );
+    }
+    if (namespace.projectId !== projectId) {
+      throw new ControlPlaneError(
+        "validation",
+        `deployment durable object namespace ${binding.namespaceId} must belong to the same project`,
       );
     }
   }

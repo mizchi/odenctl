@@ -61,6 +61,7 @@ function routeEntry(input: {
   limits?: Partial<RouteSnapshotEntry["limits"]>;
   outboundAllow?: string[];
   kv?: RouteSnapshotEntry["capabilities"]["kv"];
+  durableObjects?: RouteSnapshotEntry["capabilities"]["durableObjects"];
   secrets?: RouteSnapshotEntry["capabilities"]["secrets"];
 }): RouteSnapshotEntry {
   const limits = {
@@ -79,6 +80,7 @@ function routeEntry(input: {
       allow: input.outboundAllow ?? [],
     },
     kv: input.kv ?? [],
+    durableObjects: input.durableObjects ?? [],
     secrets: input.secrets ?? [],
     arbitraryFilesystem: false,
     arbitrarySockets: false,

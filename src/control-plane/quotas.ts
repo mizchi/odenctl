@@ -7,6 +7,7 @@ export interface ProjectQuotas {
   maxRoutes?: number;
   maxSecrets?: number;
   maxKvNamespaces?: number;
+  maxDurableObjectNamespaces?: number;
 }
 
 export type ProjectQuotaResource =
@@ -14,7 +15,8 @@ export type ProjectQuotaResource =
   | "deployment"
   | "route"
   | "secret"
-  | "kv namespace";
+  | "kv namespace"
+  | "durable object namespace";
 
 export function enforceProjectQuota(
   projectId: string,
@@ -44,6 +46,9 @@ export function projectQuotasFromEnv(
     maxRoutes: positiveLimit(envInteger(env.WASMPLANE_QUOTA_MAX_ROUTES)),
     maxSecrets: positiveLimit(envInteger(env.WASMPLANE_QUOTA_MAX_SECRETS)),
     maxKvNamespaces: positiveLimit(envInteger(env.WASMPLANE_QUOTA_MAX_KV_NAMESPACES)),
+    maxDurableObjectNamespaces: positiveLimit(
+      envInteger(env.WASMPLANE_QUOTA_MAX_DURABLE_OBJECT_NAMESPACES),
+    ),
   };
   return Object.values(quotas).some((value) => value !== undefined) ? quotas : undefined;
 }
@@ -60,6 +65,8 @@ function quotaLimit(quotas: ProjectQuotas | undefined, resource: ProjectQuotaRes
       return positiveLimit(quotas?.maxSecrets);
     case "kv namespace":
       return positiveLimit(quotas?.maxKvNamespaces);
+    case "durable object namespace":
+      return positiveLimit(quotas?.maxDurableObjectNamespaces);
   }
 }
 
@@ -75,6 +82,8 @@ function usageCount(usage: ProjectResourceUsage, resource: ProjectQuotaResource)
       return usage.secrets;
     case "kv namespace":
       return usage.kvNamespaces;
+    case "durable object namespace":
+      return usage.durableObjectNamespaces;
   }
 }
 

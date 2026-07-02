@@ -167,6 +167,15 @@ create table if not exists kv_namespaces (
   unique (project_id, name)
 );
 
+create table if not exists durable_object_namespaces (
+  id text primary key,
+  project_id text not null references projects(id),
+  name text not null,
+  created_at text not null,
+  updated_at text not null,
+  unique (project_id, name)
+);
+
 create table if not exists deployments (
   id text primary key,
   project_id text not null references projects(id),

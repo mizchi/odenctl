@@ -236,6 +236,39 @@ export {
   type VolumeSqliteScheduledBackupRegistry,
   type VolumeSqliteScheduledBackupReport,
 } from "./control-plane/volume-sqlite-backup-job.ts";
+export {
+  createDurableObjectAlarmDispatcherJob,
+  dispatchDurableObjectAlarms,
+  type DurableObjectAlarmDispatchError,
+  type DurableObjectAlarmDispatcherJobOptions,
+  type DurableObjectAlarmDispatchOptions,
+  type DurableObjectAlarmDispatchReport,
+  type DurableObjectAlarmHandlerInput,
+} from "./control-plane/durable-object-alarm-dispatcher.ts";
+export {
+  createConfiguredDurableObjectAlarmDispatcherJobs,
+  createDurableObjectAlarmWebhookHandler,
+  type ConfiguredDurableObjectAlarmDispatcherOptions,
+  type DurableObjectAlarmFetch,
+  type DurableObjectAlarmWebhookHandlerOptions,
+} from "./control-plane/durable-object-alarm-runtime.ts";
+export {
+  createDurableObjectStorageNamespace,
+  DurableObjectSqlCursor,
+  DurableObjectSqlRawCursor,
+  DurableObjectSqlStorage,
+  DurableObjectStorage,
+  DurableObjectStorageNamespace,
+  DurableObjectStorageTransaction,
+  type DurableObjectAlarmTime,
+  type DurableObjectDueAlarm,
+  type DurableObjectDueAlarmListOptions,
+  type DurableObjectSqlBinding,
+  type DurableObjectStorageListOptions,
+  type DurableObjectStorageNamespaceOptions,
+  type DurableObjectStorageObject,
+  type DurableObjectStorageValue,
+} from "./control-plane/durable-object-storage.ts";
 export { createWasip3HostArtifactValidator } from "./control-plane/artifact-validation.ts";
 export { ingestLocalArtifact } from "./control-plane/local-artifacts.ts";
 export {

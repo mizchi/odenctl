@@ -10,6 +10,7 @@ import type {
   DeployPreviewEnvironment,
   DeployPreviewPreviousRoute,
   Deployment,
+  DurableObjectNamespace,
   KvNamespace,
   Organization,
   Project,
@@ -39,6 +40,7 @@ import {
   normalizeArtifactProvenance,
   normalizeArtifactSignature,
   normalizeDigest,
+  normalizeDurableObjectNamespaceName,
   normalizeHost,
   normalizeKvNamespaceName,
   normalizeLimits,
@@ -196,6 +198,10 @@ export interface AsyncControlPlaneRepository {
   getKvNamespace(id: string): Promise<KvNamespace | undefined>;
   listProjectKvNamespaces(projectId: string): Promise<KvNamespace[]>;
   deleteKvNamespace(id: string): Promise<void>;
+  createDurableObjectNamespace(namespace: DurableObjectNamespace): Promise<DurableObjectNamespace>;
+  getDurableObjectNamespace(id: string): Promise<DurableObjectNamespace | undefined>;
+  listProjectDurableObjectNamespaces(projectId: string): Promise<DurableObjectNamespace[]>;
+  deleteDurableObjectNamespace(id: string): Promise<void>;
   createDeployment(deployment: Deployment): Promise<Deployment>;
   getDeployment(id: string): Promise<Deployment | undefined>;
   upsertRoute(route: RoutePointer): Promise<RoutePointer>;
@@ -494,6 +500,24 @@ export interface ListProjectKvNamespacesInput {
 }
 
 export interface DeleteKvNamespaceInput {
+  id: string;
+}
+
+export interface CreateDurableObjectNamespaceInput {
+  id?: string;
+  projectId: string;
+  name: string;
+}
+
+export interface GetDurableObjectNamespaceInput {
+  id: string;
+}
+
+export interface ListProjectDurableObjectNamespacesInput {
+  projectId: string;
+}
+
+export interface DeleteDurableObjectNamespaceInput {
   id: string;
 }
 
@@ -1291,6 +1315,39 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
     await repository.deleteKvNamespace(input.id);
   }
 
+  async function createDurableObjectNamespace(
+    input: CreateDurableObjectNamespaceInput,
+  ): Promise<DurableObjectNamespace> {
+    await requireProject(repository, input.projectId);
+    await enforceQuota(input.projectId, "durable object namespace");
+    const namespace: DurableObjectNamespace = {
+      id: optionalId(input.id, "durable object namespace id") ?? idGenerator("do"),
+      projectId: input.projectId,
+      name: normalizeDurableObjectNamespaceName(input.name),
+      createdAt: now(),
+      updatedAt: now(),
+    };
+    return repository.createDurableObjectNamespace(namespace);
+  }
+
+  async function getDurableObjectNamespace(
+    input: GetDurableObjectNamespaceInput,
+  ): Promise<DurableObjectNamespace> {
+    return requireDurableObjectNamespace(repository, input.id);
+  }
+
+  async function listProjectDurableObjectNamespaces(
+    input: ListProjectDurableObjectNamespacesInput,
+  ): Promise<DurableObjectNamespace[]> {
+    await requireProject(repository, input.projectId);
+    return repository.listProjectDurableObjectNamespaces(input.projectId);
+  }
+
+  async function deleteDurableObjectNamespace(input: DeleteDurableObjectNamespaceInput): Promise<void> {
+    await requireDurableObjectNamespace(repository, input.id);
+    await repository.deleteDurableObjectNamespace(input.id);
+  }
+
   async function createDeployment(input: CreateDeploymentInput): Promise<Deployment> {
     await requireProject(repository, input.projectId);
     await enforceQuota(input.projectId, "deployment");
@@ -1311,6 +1368,7 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
       capabilities,
     });
     await requireDeploymentKvNamespaces(repository, input.projectId, capabilities);
+    await requireDeploymentDurableObjectNamespaces(repository, input.projectId, capabilities);
     await requireDeploymentSecrets(repository, input.projectId, capabilities);
 
     const deployment: Deployment = {
@@ -1601,6 +1659,10 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
     getKvNamespace,
     listProjectKvNamespaces,
     deleteKvNamespace,
+    createDurableObjectNamespace,
+    getDurableObjectNamespace,
+    listProjectDurableObjectNamespaces,
+    deleteDurableObjectNamespace,
     createDeployment,
     pointRoute,
     startRouteCanary,
@@ -1856,6 +1918,17 @@ async function requireKvNamespace(
   return namespace;
 }
 
+async function requireDurableObjectNamespace(
+  repository: AsyncControlPlaneRepository,
+  id: string,
+): Promise<DurableObjectNamespace> {
+  const namespace = await repository.getDurableObjectNamespace(id);
+  if (!namespace) {
+    throw new ControlPlaneError("not_found", `durable object namespace ${id} was not found`);
+  }
+  return namespace;
+}
+
 async function requireDeploymentKvNamespaces(
   repository: AsyncControlPlaneRepository,
   projectId: string,
@@ -1870,6 +1943,28 @@ async function requireDeploymentKvNamespaces(
       throw new ControlPlaneError(
         "validation",
         `deployment kv namespace ${binding.namespaceId} must belong to the same project`,
+      );
+    }
+  }
+}
+
+async function requireDeploymentDurableObjectNamespaces(
+  repository: AsyncControlPlaneRepository,
+  projectId: string,
+  capabilities: CapabilityPolicy,
+) {
+  for (const binding of capabilities.durableObjects) {
+    const namespace = await repository.getDurableObjectNamespace(binding.namespaceId);
+    if (!namespace) {
+      throw new ControlPlaneError(
+        "validation",
+        `durable object namespace ${binding.namespaceId} was not found`,
+      );
+    }
+    if (namespace.projectId !== projectId) {
+      throw new ControlPlaneError(
+        "validation",
+        `deployment durable object namespace ${binding.namespaceId} must belong to the same project`,
       );
     }
   }

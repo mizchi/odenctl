@@ -29,6 +29,7 @@ bindgen!({
         "myedge:runtime/http.outgoing-body": OutgoingBody,
         "myedge:runtime/kv.namespace": KvNamespace,
         "myedge:runtime/secrets.secret": Secret,
+        "myedge:runtime/durable.object": DurableObject,
     },
 });
 
@@ -177,6 +178,11 @@ pub struct Secret {
     value: Option<String>,
 }
 
+pub struct DurableObject {
+    namespace_id: String,
+    name: String,
+}
+
 #[derive(Debug, Clone)]
 struct KvValue {
     bytes: Vec<u8>,
@@ -224,6 +230,7 @@ pub struct HostPolicy {
     outbound_http: OutboundHttpPolicy,
     kv_bindings: Vec<KvBindingPolicy>,
     secret_bindings: Vec<SecretBindingPolicy>,
+    durable_object_bindings: Vec<DurableObjectBindingPolicy>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -245,6 +252,12 @@ pub struct SecretBindingPolicy {
     value: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DurableObjectBindingPolicy {
+    binding: String,
+    namespace_id: String,
+}
+
 impl HostPolicy {
     pub fn deny_all() -> Self {
         Self::default()
@@ -263,10 +276,20 @@ impl HostPolicy {
         kv_bindings: Vec<KvBindingPolicy>,
         secret_bindings: Vec<SecretBindingPolicy>,
     ) -> Self {
+        Self::with_durable_bindings(outbound_http, kv_bindings, secret_bindings, Vec::new())
+    }
+
+    pub fn with_durable_bindings(
+        outbound_http: OutboundHttpPolicy,
+        kv_bindings: Vec<KvBindingPolicy>,
+        secret_bindings: Vec<SecretBindingPolicy>,
+        durable_object_bindings: Vec<DurableObjectBindingPolicy>,
+    ) -> Self {
         Self {
             outbound_http,
             kv_bindings,
             secret_bindings,
+            durable_object_bindings,
         }
     }
 
@@ -291,6 +314,19 @@ impl HostPolicy {
         self.secret_bindings
             .iter()
             .find(|item| item.binding == binding)
+    }
+
+    pub fn durable_object_namespace_for_binding(&self, binding: &str) -> Option<&str> {
+        self.durable_object_bindings
+            .iter()
+            .find(|item| item.binding == binding)
+            .map(|item| item.namespace_id.as_str())
+    }
+
+    pub fn allows_durable_object_namespace(&self, namespace: &str) -> bool {
+        self.durable_object_bindings
+            .iter()
+            .any(|item| item.namespace_id == namespace)
     }
 
     fn secret_values(&self) -> impl Iterator<Item = &str> {
@@ -358,6 +394,15 @@ impl SecretBindingPolicy {
     }
 }
 
+impl DurableObjectBindingPolicy {
+    pub fn new(binding: impl Into<String>, namespace_id: impl Into<String>) -> Self {
+        Self {
+            binding: binding.into(),
+            namespace_id: namespace_id.into(),
+        }
+    }
+}
+
 impl KvStore {
     fn memory() -> Self {
         Self::Memory(HashMap::new())
@@ -406,12 +451,11 @@ impl KvStore {
         }
     }
 
-    fn delete(&mut self, namespace: &str, key: &str) -> Result<()> {
+    fn delete(&mut self, namespace: &str, key: &str) -> Result<bool> {
         match self {
-            KvStore::Memory(items) => {
-                items.remove(&(namespace.to_string(), key.to_string()));
-                Ok(())
-            }
+            KvStore::Memory(items) => Ok(items
+                .remove(&(namespace.to_string(), key.to_string()))
+                .is_some()),
             KvStore::File(store) => store.delete(namespace, key),
         }
     }
@@ -464,10 +508,10 @@ impl FileKvStore {
         Ok(())
     }
 
-    fn delete(&self, namespace: &str, key: &str) -> Result<()> {
+    fn delete(&self, namespace: &str, key: &str) -> Result<bool> {
         match fs::remove_file(self.key_path(namespace, key)) {
-            Ok(()) => Ok(()),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Ok(()) => Ok(true),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
             Err(error) => Err(error.into()),
         }
     }
@@ -528,6 +572,14 @@ fn hex_decode(value: &str) -> Result<Vec<u8>> {
         bytes.push(u8::from_str_radix(&value[index..index + 2], 16)?);
     }
     Ok(bytes)
+}
+
+fn durable_object_store_namespace(namespace_id: &str, name: &str) -> String {
+    format!(
+        "durable:{}:{}",
+        hex_encode(namespace_id.as_bytes()),
+        hex_encode(name.as_bytes())
+    )
 }
 
 pub struct WorkerHost {
@@ -694,6 +746,7 @@ impl WorkerHost {
         let namespace = self.check_kv_allowed(ns)?;
         self.kv
             .delete(&namespace, &key)
+            .map(|_| ())
             .map_err(|error| wasmtime::Error::msg(error.to_string()))
     }
 
@@ -733,6 +786,79 @@ impl WorkerHost {
             wasmtime::bail!("secret {} value is not loaded", secret.id);
         };
         Ok(value.clone())
+    }
+
+    fn durable_object_for_binding(
+        &mut self,
+        binding: String,
+        name: String,
+    ) -> wasmtime::Result<Option<Resource<DurableObject>>> {
+        self.check_host_call_allowed()?;
+        if name.is_empty() {
+            wasmtime::bail!("durable object name must not be empty");
+        }
+        let Some(namespace_id) = self
+            .policy
+            .durable_object_namespace_for_binding(&binding)
+            .map(str::to_string)
+        else {
+            return Ok(None);
+        };
+        Ok(Some(self.table.push(DurableObject { namespace_id, name })?))
+    }
+
+    fn check_durable_object_allowed(
+        &self,
+        obj: &Resource<DurableObject>,
+    ) -> wasmtime::Result<String> {
+        let obj = self.table.get(obj)?;
+        if !self
+            .policy
+            .allows_durable_object_namespace(&obj.namespace_id)
+        {
+            wasmtime::bail!(
+                "durable object namespace {} is not allowed by worker policy",
+                obj.namespace_id
+            );
+        }
+        Ok(durable_object_store_namespace(&obj.namespace_id, &obj.name))
+    }
+
+    fn durable_get(
+        &mut self,
+        obj: &Resource<DurableObject>,
+        key: String,
+    ) -> wasmtime::Result<Option<Vec<u8>>> {
+        self.check_host_call_allowed()?;
+        let namespace = self.check_durable_object_allowed(obj)?;
+        self.kv
+            .get(&namespace, &key)
+            .map_err(|error| wasmtime::Error::msg(error.to_string()))
+    }
+
+    fn durable_put(
+        &mut self,
+        obj: &Resource<DurableObject>,
+        key: String,
+        value: Vec<u8>,
+    ) -> wasmtime::Result<()> {
+        self.check_host_call_allowed()?;
+        let namespace = self.check_durable_object_allowed(obj)?;
+        self.kv
+            .put(&namespace, &key, value, None)
+            .map_err(|error| wasmtime::Error::msg(error.to_string()))
+    }
+
+    fn durable_delete(
+        &mut self,
+        obj: &Resource<DurableObject>,
+        key: String,
+    ) -> wasmtime::Result<bool> {
+        self.check_host_call_allowed()?;
+        let namespace = self.check_durable_object_allowed(obj)?;
+        self.kv
+            .delete(&namespace, &key)
+            .map_err(|error| wasmtime::Error::msg(error.to_string()))
     }
 
     fn next_subrequest_allowed(&mut self) -> bool {
@@ -838,6 +964,15 @@ impl myedge::runtime::secrets::Host for WorkerHost {
         self.secret_for_binding(binding)
     }
 }
+impl myedge::runtime::durable::Host for WorkerHost {
+    async fn open_object(
+        &mut self,
+        binding: String,
+        name: String,
+    ) -> wasmtime::Result<Option<Resource<DurableObject>>> {
+        self.durable_object_for_binding(binding, name)
+    }
+}
 
 impl myedge::runtime::kv::HostNamespace for WorkerHost {
     async fn drop(&mut self, rep: Resource<KvNamespace>) -> wasmtime::Result<()> {
@@ -853,12 +988,46 @@ impl myedge::runtime::secrets::HostSecret for WorkerHost {
     }
 }
 
+impl myedge::runtime::durable::HostObject for WorkerHost {
+    async fn drop(&mut self, rep: Resource<DurableObject>) -> wasmtime::Result<()> {
+        self.table.delete(rep)?;
+        Ok(())
+    }
+}
+
 impl myedge::runtime::secrets::HostWithStore for WorkerHost {
     async fn reveal<T: Send>(
         accessor: &wasmtime::component::Accessor<T, Self>,
         secret: Resource<Secret>,
     ) -> wasmtime::Result<String> {
         accessor.with(|mut access| access.get().reveal_secret(&secret))
+    }
+}
+
+impl myedge::runtime::durable::HostWithStore for WorkerHost {
+    async fn get<T: Send>(
+        accessor: &wasmtime::component::Accessor<T, Self>,
+        obj: Resource<DurableObject>,
+        key: String,
+    ) -> wasmtime::Result<Option<Vec<u8>>> {
+        accessor.with(|mut access| access.get().durable_get(&obj, key))
+    }
+
+    async fn put<T: Send>(
+        accessor: &wasmtime::component::Accessor<T, Self>,
+        obj: Resource<DurableObject>,
+        key: String,
+        value: Vec<u8>,
+    ) -> wasmtime::Result<()> {
+        accessor.with(|mut access| access.get().durable_put(&obj, key, value))
+    }
+
+    async fn delete<T: Send>(
+        accessor: &wasmtime::component::Accessor<T, Self>,
+        obj: Resource<DurableObject>,
+        key: String,
+    ) -> wasmtime::Result<bool> {
+        accessor.with(|mut access| access.get().durable_delete(&obj, key))
     }
 }
 
@@ -2553,6 +2722,71 @@ mod tests {
         );
         assert!(
             host.namespace_for_binding("OTHER".to_string())
+                .expect("unknown binding")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn durable_object_storage_is_scoped_by_binding_and_object_name() {
+        let dir = temp_dir("durable-object-store");
+        let policy = HostPolicy::with_durable_bindings(
+            OutboundHttpPolicy::disabled(),
+            Vec::new(),
+            Vec::new(),
+            vec![DurableObjectBindingPolicy::new("ROOMS", "rooms")],
+        );
+        let mut writer = WorkerHost::with_persistent_kv(
+            InvocationLimits::default(),
+            policy.clone(),
+            dir.clone(),
+        );
+        let lobby = writer
+            .durable_object_for_binding("ROOMS".to_string(), "lobby".to_string())
+            .expect("binding lookup")
+            .expect("object handle");
+        let random = writer
+            .durable_object_for_binding("ROOMS".to_string(), "random".to_string())
+            .expect("binding lookup")
+            .expect("object handle");
+
+        writer
+            .durable_put(&lobby, "counter".to_string(), b"1".to_vec())
+            .expect("put durable object key");
+        writer
+            .durable_put(&random, "counter".to_string(), b"99".to_vec())
+            .expect("put other durable object key");
+
+        let mut reader = WorkerHost::with_persistent_kv(
+            InvocationLimits::default(),
+            policy.clone(),
+            dir.clone(),
+        );
+        let lobby = reader
+            .durable_object_for_binding("ROOMS".to_string(), "lobby".to_string())
+            .expect("binding lookup")
+            .expect("object handle");
+        assert_eq!(
+            reader
+                .durable_get(&lobby, "counter".to_string())
+                .expect("get durable object key"),
+            Some(b"1".to_vec())
+        );
+        assert_eq!(
+            reader
+                .durable_delete(&lobby, "counter".to_string())
+                .expect("delete durable object key"),
+            true
+        );
+        assert_eq!(
+            reader
+                .durable_get(&lobby, "counter".to_string())
+                .expect("get deleted durable object key"),
+            None
+        );
+        assert!(
+            reader
+                .durable_object_for_binding("OTHER".to_string(), "lobby".to_string())
                 .expect("unknown binding")
                 .is_none()
         );

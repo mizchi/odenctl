@@ -9,6 +9,7 @@ import { createSnapshotPublishJob } from "./control-plane/snapshot-publish-job.t
 import { createWasip3HostArtifactValidator } from "./control-plane/artifact-validation.ts";
 import { runtimeNodeTargetsFromEnv, type RouteSnapshotPublishOptions } from "./control-plane/snapshot-publisher.ts";
 import { runtimePlacementPolicyFromEnv } from "./control-plane/placement.ts";
+import { createConfiguredDurableObjectAlarmDispatcherJobs } from "./control-plane/durable-object-alarm-runtime.ts";
 import { createVolumeSqliteBackupJob } from "./control-plane/volume-sqlite-backup-job.ts";
 import { createConfiguredVolumeSqliteBackupCipher, createVolumeSqliteRegistry } from "./control-plane/volume-sqlite.ts";
 import {
@@ -52,6 +53,9 @@ const billingInvoiceRetentionOrganizations = billingInvoiceRetentionOrganization
 const volumeSqliteBackupIntervalMs = optionalPositiveInteger(
   process.env.WASMPLANE_VOLUME_SQLITE_BACKUP_INTERVAL_MS,
 );
+const durableObjectAlarmIntervalMs = optionalPositiveInteger(
+  process.env.WASMPLANE_DURABLE_OBJECT_ALARM_INTERVAL_MS,
+);
 const volumeSqliteBackupRequireEncryption =
   process.env.WASMPLANE_VOLUME_SQLITE_BACKUP_REQUIRE_ENCRYPTION !== "0";
 const volumeSqliteBackupRestoreDrill =
@@ -86,6 +90,9 @@ const volumeSqliteRegistry = volumeSqliteRoot
   : undefined;
 if (volumeSqliteBackupIntervalMs && !volumeSqliteRegistry) {
   throw new Error("WASMPLANE_VOLUME_SQLITE_BACKUP_INTERVAL_MS requires WASMPLANE_VOLUME_SQLITE_ROOT");
+}
+if (durableObjectAlarmIntervalMs && !volumeSqliteRegistry) {
+  throw new Error("WASMPLANE_DURABLE_OBJECT_ALARM_INTERVAL_MS requires WASMPLANE_VOLUME_SQLITE_ROOT");
 }
 if (volumeSqliteBackupIntervalMs && volumeSqliteBackupRequireEncryption && !volumeSqliteBackupCipher) {
   throw new Error(
@@ -214,6 +221,36 @@ if (volumeSqliteBackupIntervalMs && volumeSqliteRegistry) {
       console.error(`volume sqlite backup job failed: ${message}`);
     },
   }).start();
+}
+if (durableObjectAlarmIntervalMs) {
+  const jobs = createConfiguredDurableObjectAlarmDispatcherJobs({
+    env: process.env,
+    registry: volumeSqliteRegistry,
+    onReport(namespace, report) {
+      const summary = [
+        `namespace=${namespace}`,
+        `ok=${report.ok}`,
+        `due=${report.due}`,
+        `dispatched=${report.dispatched}`,
+        `failed=${report.failed}`,
+      ].join(" ");
+      if (report.ok) {
+        console.log(`durable object alarm dispatch ${summary}`);
+      } else {
+        console.error(`durable object alarm dispatch ${summary}`);
+        for (const error of report.errors) {
+          console.error(`durable object alarm ${namespace}/${error.objectId} failed: ${error.message}`);
+        }
+      }
+    },
+    onError(namespace, error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`durable object alarm dispatcher ${namespace} failed: ${message}`);
+    },
+  });
+  for (const job of jobs) {
+    job.start();
+  }
 }
 console.log(`wasmplane control plane listening on http://${host}:${port}`);
 console.log(

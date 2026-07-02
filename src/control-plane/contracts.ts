@@ -153,6 +153,14 @@ export interface KvNamespace {
   updatedAt: string;
 }
 
+export interface DurableObjectNamespace {
+  id: string;
+  projectId: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface RuntimeSpec {
   backend: RuntimeBackend;
   version: string;
@@ -184,9 +192,15 @@ export interface SecretBinding {
   secretId: string;
 }
 
+export interface DurableObjectBinding {
+  binding: string;
+  namespaceId: string;
+}
+
 export interface CapabilityPolicy {
   outboundHttp: OutboundHttpCapability;
   kv: KvBinding[];
+  durableObjects: DurableObjectBinding[];
   secrets: SecretBinding[];
   arbitraryFilesystem: false;
   arbitrarySockets: false;
@@ -601,6 +615,17 @@ export function normalizeKvNamespaceName(value: unknown): string {
   return name;
 }
 
+export function normalizeDurableObjectNamespaceName(value: unknown): string {
+  const name = nonEmptyString(value, "durable object namespace name");
+  if (name.length > 120 || /[\u0000-\u001f\u007f]/.test(name)) {
+    throw new ControlPlaneError(
+      "validation",
+      "durable object namespace name must be between 1 and 120 printable characters",
+    );
+  }
+  return name;
+}
+
 export function normalizeWorld(value: unknown): typeof MVP_WORKER_WORLD {
   if (value !== MVP_WORKER_WORLD) {
     throw new ControlPlaneError("validation", `deployment world must be ${MVP_WORKER_WORLD}`);
@@ -659,6 +684,7 @@ export function normalizeCapabilities(value: unknown): CapabilityPolicy {
   return {
     outboundHttp: normalizeOutboundHttp(record.outboundHttp),
     kv: normalizeKvBindings(record.kv),
+    durableObjects: normalizeDurableObjectBindings(record.durableObjects),
     secrets: normalizeSecretBindings(record.secrets),
     arbitraryFilesystem: false,
     arbitrarySockets: false,
@@ -902,6 +928,22 @@ function normalizeKvBindings(value: unknown): KvBinding[] {
     return {
       binding: bindingName(record.binding, `capabilities.kv[${index}].binding`),
       namespaceId: nonEmptyString(record.namespaceId, `capabilities.kv[${index}].namespaceId`),
+    };
+  });
+}
+
+function normalizeDurableObjectBindings(value: unknown): DurableObjectBinding[] {
+  if (value === undefined) {
+    return [];
+  }
+  if (!Array.isArray(value)) {
+    throw new ControlPlaneError("validation", "capabilities.durableObjects must be an array");
+  }
+  return value.map((item, index) => {
+    const record = objectRecord(item, `capabilities.durableObjects[${index}]`);
+    return {
+      binding: bindingName(record.binding, `capabilities.durableObjects[${index}].binding`),
+      namespaceId: nonEmptyString(record.namespaceId, `capabilities.durableObjects[${index}].namespaceId`),
     };
   });
 }

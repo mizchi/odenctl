@@ -10,10 +10,10 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, bail};
 use serde_json::Value;
 use wasmplane_wasip3_host::{
-    HostPolicy, HttpRequestInput, InstanceReuseContract, InvocationLimits, KvBindingPolicy,
-    OutboundHttpPolicy, SecretBindingPolicy, Wasip3PoolingConfig, Wasip3Runtime,
-    Wasip3RuntimeOptions, invoke_component_handle_with_limits_and_policy,
-    invoke_component_handle_with_persistent_kv,
+    DurableObjectBindingPolicy, HostPolicy, HttpRequestInput, InstanceReuseContract,
+    InvocationLimits, KvBindingPolicy, OutboundHttpPolicy, SecretBindingPolicy,
+    Wasip3PoolingConfig, Wasip3Runtime, Wasip3RuntimeOptions,
+    invoke_component_handle_with_limits_and_policy, invoke_component_handle_with_persistent_kv,
     invoke_precompiled_component_handle_with_limits_and_policy,
     invoke_precompiled_component_handle_with_persistent_kv, precompile_component_with_pooling,
 };
@@ -966,11 +966,13 @@ fn parse_host_policy(value: &str) -> Result<HostPolicy> {
         .unwrap_or_else(OutboundHttpPolicy::disabled);
     let kv_bindings = parse_kv_bindings(json.get("kv"))?;
     let secret_bindings = parse_secret_bindings(json.get("secrets"))?;
+    let durable_object_bindings = parse_durable_object_bindings(json.get("durableObjects"))?;
 
-    Ok(HostPolicy::with_bindings(
+    Ok(HostPolicy::with_durable_bindings(
         outbound_http,
         kv_bindings,
         secret_bindings,
+        durable_object_bindings,
     ))
 }
 
@@ -1061,6 +1063,29 @@ fn parse_secret_bindings(value: Option<&Value>) -> Result<Vec<SecretBindingPolic
         .collect()
 }
 
+fn parse_durable_object_bindings(value: Option<&Value>) -> Result<Vec<DurableObjectBindingPolicy>> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+    let Value::Array(items) = value else {
+        bail!("capabilities.durableObjects must be an array");
+    };
+    items
+        .iter()
+        .map(|item| {
+            let binding = item
+                .get("binding")
+                .and_then(Value::as_str)
+                .context("capabilities.durableObjects entries must include binding")?;
+            let namespace_id = item
+                .get("namespaceId")
+                .and_then(Value::as_str)
+                .context("capabilities.durableObjects entries must include namespaceId")?;
+            Ok(DurableObjectBindingPolicy::new(binding, namespace_id))
+        })
+        .collect()
+}
+
 fn print_usage() {
     eprintln!("usage:");
     eprintln!(
@@ -1102,6 +1127,7 @@ mod tests {
         let capabilities = r#"{
             "outboundHttp": { "enabled": true, "allow": ["https://api.example.dev/"] },
             "kv": [{ "binding": "KV", "namespaceId": "kv_main" }],
+            "durableObjects": [{ "binding": "ROOMS", "namespaceId": "rooms" }],
             "secrets": [{ "binding": "API_KEY", "secretId": "sec_api_key", "value": "super-secret" }],
             "arbitraryFilesystem": false,
             "arbitrarySockets": false,
@@ -1172,6 +1198,10 @@ mod tests {
         assert_eq!(
             parsed.policy.kv_namespace_for_binding("KV"),
             Some("kv_main")
+        );
+        assert_eq!(
+            parsed.policy.durable_object_namespace_for_binding("ROOMS"),
+            Some("rooms")
         );
         assert!(parsed.policy.secret_for_binding("API_KEY").is_some());
         assert_eq!(parsed.kv_store_dir, Some(kv_store_dir));
@@ -1361,6 +1391,7 @@ mod tests {
             "capabilities": {
                 "outboundHttp": { "enabled": true, "allow": ["https://api.example.dev/"] },
                 "kv": [{ "binding": "KV", "namespaceId": "kv_main" }],
+                "durableObjects": [{ "binding": "ROOMS", "namespaceId": "rooms" }],
                 "secrets": [],
                 "arbitraryFilesystem": false,
                 "arbitrarySockets": false,

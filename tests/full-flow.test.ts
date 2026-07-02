@@ -81,6 +81,11 @@ test(
         projectId: project.id,
         name: "Main KV",
       });
+      await postJson(controlBaseUrl, "/durable-object-namespaces", {
+        id: "do_rooms",
+        projectId: project.id,
+        name: "Rooms",
+      });
       const deployment = await postJson(controlBaseUrl, "/deployments", {
         projectId: project.id,
         artifactId: artifact.id,
@@ -102,6 +107,7 @@ test(
         capabilities: {
           outboundHttp: { enabled: true, allow: [`${upstream.baseUrl}/`] },
           kv: [{ binding: "MAIN", namespaceId: "kv_main" }],
+          durableObjects: [{ binding: "ROOMS", namespaceId: "do_rooms" }],
           secrets: [{ binding: "API_KEY", secretId: "sec_api_key" }],
         },
       });
@@ -137,7 +143,7 @@ test(
       }
       assert.equal(
         await capabilityResponse.text(),
-        "capabilities: kv=checked secret-len=12 outbound=upstream-ok",
+        "capabilities: kv=checked durable=checked/deleted=false secret-len=12 outbound=upstream-ok",
       );
     } finally {
       await controlApp.close();

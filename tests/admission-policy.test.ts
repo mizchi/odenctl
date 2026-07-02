@@ -11,6 +11,7 @@ test("admission policy parses production guardrails from environment", () => {
     WASMPLANE_ADMISSION_ALLOWED_WORLD_VERSIONS: "0.1.0",
     WASMPLANE_ADMISSION_OUTBOUND_HTTP_PREFIXES: "https://api.example.com/v1,https://auth.example.com",
     WASMPLANE_ADMISSION_KV_NAMESPACE_IDS: "kv_main,kv_cache",
+    WASMPLANE_ADMISSION_DURABLE_OBJECT_NAMESPACE_IDS: "do_rooms,do_sessions",
     WASMPLANE_ADMISSION_SECRET_IDS: "sec_api,sec_token",
   }), {
     requireArtifactSignature: true,
@@ -20,6 +21,7 @@ test("admission policy parses production guardrails from environment", () => {
     allowedWorldVersions: ["0.1.0"],
     allowedOutboundHttpPrefixes: ["https://api.example.com/v1", "https://auth.example.com"],
     allowedKvNamespaceIds: ["kv_main", "kv_cache"],
+    allowedDurableObjectNamespaceIds: ["do_rooms", "do_sessions"],
     allowedSecretIds: ["sec_api", "sec_token"],
   });
 });

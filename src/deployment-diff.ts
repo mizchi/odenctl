@@ -130,6 +130,12 @@ function addCapabilityChanges(
   addChange(changes, "capabilities.kv", before ? normalizeKv(before.kv) : undefined, normalizeKv(after.kv));
   addChange(
     changes,
+    "capabilities.durableObjects",
+    before ? normalizeDurableObjects(before.durableObjects) : undefined,
+    normalizeDurableObjects(after.durableObjects),
+  );
+  addChange(
+    changes,
     "capabilities.secrets",
     before ? normalizeSecrets(before.secrets) : undefined,
     normalizeSecrets(after.secrets),
@@ -152,6 +158,12 @@ function sortedStrings(values: string[]): string[] {
 
 function normalizeKv(values: CapabilityPolicy["kv"]) {
   return [...values]
+    .map((value) => ({ binding: value.binding, namespaceId: value.namespaceId }))
+    .sort((a, b) => `${a.binding}\0${a.namespaceId}`.localeCompare(`${b.binding}\0${b.namespaceId}`));
+}
+
+function normalizeDurableObjects(values: CapabilityPolicy["durableObjects"] | undefined) {
+  return [...(values ?? [])]
     .map((value) => ({ binding: value.binding, namespaceId: value.namespaceId }))
     .sort((a, b) => `${a.binding}\0${a.namespaceId}`.localeCompare(`${b.binding}\0${b.namespaceId}`));
 }

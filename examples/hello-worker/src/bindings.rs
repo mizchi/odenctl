@@ -1134,6 +1134,388 @@ pub async fn reveal(s: &Secret,) -> _rt::String{
 
 
 #[allow(dead_code, async_fn_in_trait, unused_imports, clippy::all)]
+pub mod durable {
+  #[used]
+  #[doc(hidden)]
+  static __FORCE_SECTION_REF: fn() =
+  super::super::super::__link_custom_section_describing_imports;
+
+  use super::super::super::_rt;
+
+  #[derive(Debug)]
+  #[repr(transparent)]
+  pub struct Object{
+    handle: _rt::Resource<Object>,
+  }
+
+  impl Object{
+    #[doc(hidden)]
+    pub unsafe fn from_handle(handle: u32) -> Self {
+      Self {
+        handle: unsafe { _rt::Resource::from_handle(handle) },
+      }
+    }
+
+    #[doc(hidden)]
+    pub fn take_handle(&self) -> u32 {
+      _rt::Resource::take_handle(&self.handle)
+    }
+
+    #[doc(hidden)]
+    pub fn handle(&self) -> u32 {
+      _rt::Resource::handle(&self.handle)
+    }
+  }
+
+
+  unsafe impl _rt::WasmResource for Object{
+    #[inline]
+    unsafe fn drop(_handle: u32) {
+
+      #[cfg(target_arch = "wasm32")]
+      #[link(wasm_import_module = "myedge:runtime/durable@0.1.0")]
+      unsafe extern "C" {
+        #[link_name = "[resource-drop]object"]
+        fn drop(_: i32, );
+      }
+
+      #[cfg(not(target_arch = "wasm32"))]
+      unsafe extern "C" fn drop(_: i32, ) { unreachable!() }
+
+      unsafe { drop(_handle as i32); }
+    }
+  }
+
+  #[allow(unused_unsafe, clippy::all)]
+  #[allow(async_fn_in_trait)]
+  pub async fn open_object(binding: _rt::String,name: _rt::String,) -> Option<Object>{
+    unsafe {
+
+      #[derive(Copy, Clone)]
+      struct ParamsLower(
+      *mut u8, usize, *mut u8, usize,
+      );
+      unsafe impl Send for ParamsLower {}
+
+
+      use wit_bindgen::rt::async_support::Subtask as _Subtask;
+      struct _MySubtask<'a> { _unused: core::marker::PhantomData<&'a ()> }
+      #[allow(unused_parens)]
+      unsafe impl<'a> _Subtask for _MySubtask<'a> {
+
+        type Params = (_rt::String, _rt::String, );
+        type Results = Option<Object>;
+        type ParamsLower = ParamsLower;
+        fn abi_layout(&mut self) -> ::core::alloc::Layout {
+          unsafe {
+            ::core::alloc::Layout::from_size_align_unchecked(8, 4)
+          }
+        }
+
+        fn results_offset(&mut self) -> usize { 0 }
+
+        unsafe fn call_import(&mut self, _params: Self::ParamsLower, _results: *mut u8) -> u32 {
+
+          #[cfg(target_arch = "wasm32")]
+          #[link(wasm_import_module = "myedge:runtime/durable@0.1.0")]
+          unsafe extern "C" {
+            #[link_name = "[async-lower]open-object"]
+            fn call(_: *mut u8, _: usize, _: *mut u8, _: usize, _: *mut u8, ) -> i32;
+          }
+
+          #[cfg(not(target_arch = "wasm32"))]
+          unsafe extern "C" fn call(_: *mut u8, _: usize, _: *mut u8, _: usize, _: *mut u8, ) -> i32 { unreachable!() }
+
+          unsafe { call(_params.0,_params.1,_params.2,_params.3,_results) as u32 }
+        }
+
+        unsafe fn params_dealloc_lists(&mut self, _params: Self::ParamsLower) {
+          unsafe { _rt::cabi_dealloc(_params.0, _params.1, 1);
+          _rt::cabi_dealloc(_params.2, _params.3, 1);
+        }
+      }
+      unsafe fn params_dealloc_lists_and_own(&mut self, _params: Self::ParamsLower) {
+        unsafe { _rt::cabi_dealloc(_params.0, _params.1, 1);
+        _rt::cabi_dealloc(_params.2, _params.3, 1);
+      }
+    }
+    unsafe fn params_lower(&mut self, (_lower0, _lower1,): Self::Params, _ptr: *mut u8) -> Self::ParamsLower {
+      unsafe { let vec0 = (_lower0.into_bytes()).into_boxed_slice();
+      let ptr0 = vec0.as_ptr().cast::<u8>();
+      let len0 = vec0.len();
+      ::core::mem::forget(vec0);
+      let vec1 = (_lower1.into_bytes()).into_boxed_slice();
+      let ptr1 = vec1.as_ptr().cast::<u8>();
+      let len1 = vec1.len();
+      ::core::mem::forget(vec1);
+      ParamsLower(ptr0.cast_mut(), len0, ptr1.cast_mut(), len1,) }
+    }
+    unsafe fn results_lift(&mut self, _ptr: *mut u8) -> Self::Results {
+      unsafe { let l0 = i32::from(*_ptr.add(0).cast::<u8>());
+
+      match l0 {
+        0 => None,
+        1 => {
+          let e = {
+            let l1 = *_ptr.add(4).cast::<i32>();
+
+            Object::from_handle(l1 as u32)
+          };
+          Some(e)
+        }
+        _ => _rt::invalid_enum_discriminant(),
+      } }
+    }
+  }
+  _MySubtask { _unused: core::marker::PhantomData }.call((binding, name,)).await
+}
+}
+#[allow(unused_unsafe, clippy::all)]
+#[allow(async_fn_in_trait)]
+pub async fn get(obj: &Object,key: _rt::String,) -> Option<_rt::Vec::<u8>>{
+  unsafe {
+
+    #[derive(Copy, Clone)]
+    struct ParamsLower(
+    i32, *mut u8, usize,
+    );
+    unsafe impl Send for ParamsLower {}
+
+
+    use wit_bindgen::rt::async_support::Subtask as _Subtask;
+    struct _MySubtask<'a> { _unused: core::marker::PhantomData<&'a ()> }
+    #[allow(unused_parens)]
+    unsafe impl<'a> _Subtask for _MySubtask<'a> {
+
+      type Params = (&'a Object, _rt::String, );
+      type Results = Option<_rt::Vec::<u8>>;
+      type ParamsLower = ParamsLower;
+      fn abi_layout(&mut self) -> ::core::alloc::Layout {
+        unsafe {
+          ::core::alloc::Layout::from_size_align_unchecked((3*::core::mem::size_of::<*const u8>()), ::core::mem::size_of::<*const u8>())
+        }
+      }
+
+      fn results_offset(&mut self) -> usize { 0 }
+
+      unsafe fn call_import(&mut self, _params: Self::ParamsLower, _results: *mut u8) -> u32 {
+
+        #[cfg(target_arch = "wasm32")]
+        #[link(wasm_import_module = "myedge:runtime/durable@0.1.0")]
+        unsafe extern "C" {
+          #[link_name = "[async-lower]get"]
+          fn call(_: i32, _: *mut u8, _: usize, _: *mut u8, ) -> i32;
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        unsafe extern "C" fn call(_: i32, _: *mut u8, _: usize, _: *mut u8, ) -> i32 { unreachable!() }
+
+        unsafe { call(_params.0,_params.1,_params.2,_results) as u32 }
+      }
+
+      unsafe fn params_dealloc_lists(&mut self, _params: Self::ParamsLower) {
+        unsafe { _rt::cabi_dealloc(_params.1, _params.2, 1);
+      }
+    }
+    unsafe fn params_dealloc_lists_and_own(&mut self, _params: Self::ParamsLower) {
+      unsafe { _rt::cabi_dealloc(_params.1, _params.2, 1);
+    }
+  }
+  unsafe fn params_lower(&mut self, (_lower0, _lower1,): Self::Params, _ptr: *mut u8) -> Self::ParamsLower {
+    unsafe { let vec0 = (_lower1.into_bytes()).into_boxed_slice();
+    let ptr0 = vec0.as_ptr().cast::<u8>();
+    let len0 = vec0.len();
+    ::core::mem::forget(vec0);
+    ParamsLower((_lower0).handle() as i32, ptr0.cast_mut(), len0,) }
+  }
+  unsafe fn results_lift(&mut self, _ptr: *mut u8) -> Self::Results {
+    unsafe { let l0 = i32::from(*_ptr.add(0).cast::<u8>());
+
+    match l0 {
+      0 => None,
+      1 => {
+        let e = {
+          let l1 = *_ptr.add(::core::mem::size_of::<*const u8>()).cast::<*mut u8>();
+          let l2 = *_ptr.add(2*::core::mem::size_of::<*const u8>()).cast::<usize>();
+          let len3 = l2;
+
+          <_ as From<_rt::Vec<_>>>::from(_rt::Vec::from_raw_parts(l1.cast(), len3, len3))
+        };
+        Some(e)
+      }
+      _ => _rt::invalid_enum_discriminant(),
+    } }
+  }
+}
+_MySubtask { _unused: core::marker::PhantomData }.call((obj, key,)).await
+}
+}
+#[allow(unused_unsafe, clippy::all)]
+#[allow(async_fn_in_trait)]
+pub async fn put(obj: &Object,key: _rt::String,value: _rt::Vec::<u8>,) -> (){
+  unsafe {
+
+    #[derive(Copy, Clone)]
+    struct ParamsLower(
+    *mut u8,
+    );
+    unsafe impl Send for ParamsLower {}
+
+
+    use wit_bindgen::rt::async_support::Subtask as _Subtask;
+    struct _MySubtask<'a> { _unused: core::marker::PhantomData<&'a ()> }
+    #[allow(unused_parens)]
+    unsafe impl<'a> _Subtask for _MySubtask<'a> {
+
+      type Params = (&'a Object, _rt::String, _rt::Vec::<u8>, );
+      type Results = ();
+      type ParamsLower = ParamsLower;
+      fn abi_layout(&mut self) -> ::core::alloc::Layout {
+        unsafe {
+          ::core::alloc::Layout::from_size_align_unchecked((5*::core::mem::size_of::<*const u8>()), ::core::mem::size_of::<*const u8>())
+        }
+      }
+
+      fn results_offset(&mut self) -> usize { 0 }
+
+      unsafe fn call_import(&mut self, _params: Self::ParamsLower, _results: *mut u8) -> u32 {
+
+        #[cfg(target_arch = "wasm32")]
+        #[link(wasm_import_module = "myedge:runtime/durable@0.1.0")]
+        unsafe extern "C" {
+          #[link_name = "[async-lower]put"]
+          fn call(_: *mut u8, ) -> i32;
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        unsafe extern "C" fn call(_: *mut u8, ) -> i32 { unreachable!() }
+
+        unsafe { call(_params.0,) as u32 }
+      }
+
+      unsafe fn params_dealloc_lists(&mut self, _params: Self::ParamsLower) {
+        unsafe { let l0 = *_params.0.add(::core::mem::size_of::<*const u8>()).cast::<*mut u8>();
+        let l1 = *_params.0.add(2*::core::mem::size_of::<*const u8>()).cast::<usize>();
+        _rt::cabi_dealloc(l0, l1, 1);
+        let l2 = *_params.0.add(3*::core::mem::size_of::<*const u8>()).cast::<*mut u8>();
+        let l3 = *_params.0.add(4*::core::mem::size_of::<*const u8>()).cast::<usize>();
+        let base4 = l2;
+        let len4 = l3;
+        _rt::cabi_dealloc(base4, len4 * 1, 1);
+      }
+    }
+    unsafe fn params_dealloc_lists_and_own(&mut self, _params: Self::ParamsLower) {
+      unsafe { let l0 = *_params.0.add(::core::mem::size_of::<*const u8>()).cast::<*mut u8>();
+      let l1 = *_params.0.add(2*::core::mem::size_of::<*const u8>()).cast::<usize>();
+      _rt::cabi_dealloc(l0, l1, 1);
+      let l2 = *_params.0.add(3*::core::mem::size_of::<*const u8>()).cast::<*mut u8>();
+      let l3 = *_params.0.add(4*::core::mem::size_of::<*const u8>()).cast::<usize>();
+      let base4 = l2;
+      let len4 = l3;
+      _rt::cabi_dealloc(base4, len4 * 1, 1);
+    }
+  }
+  unsafe fn params_lower(&mut self, (_lower0, _lower1, _lower2,): Self::Params, _ptr: *mut u8) -> Self::ParamsLower {
+    let _param_ptr = unsafe { _ptr.add(0) };
+    unsafe { *_param_ptr.add(0).cast::<i32>() = (_lower0).handle() as i32;
+  }
+  let _param_ptr = unsafe { _ptr.add(::core::mem::size_of::<*const u8>()) };
+  unsafe { let vec0 = (_lower1.into_bytes()).into_boxed_slice();
+  let ptr0 = vec0.as_ptr().cast::<u8>();
+  let len0 = vec0.len();
+  ::core::mem::forget(vec0);
+  *_param_ptr.add(::core::mem::size_of::<*const u8>()).cast::<usize>() = len0;
+  *_param_ptr.add(0).cast::<*mut u8>() = ptr0.cast_mut();
+}
+let _param_ptr = unsafe { _ptr.add((3*::core::mem::size_of::<*const u8>())) };
+unsafe { let vec0 = <_ as Into<_rt::Vec<_>>>::into(_lower2).into_boxed_slice();
+let ptr0 = vec0.as_ptr().cast::<u8>();
+let len0 = vec0.len();
+::core::mem::forget(vec0);
+*_param_ptr.add(::core::mem::size_of::<*const u8>()).cast::<usize>() = len0;
+*_param_ptr.add(0).cast::<*mut u8>() = ptr0.cast_mut();
+}
+ParamsLower(_ptr,)
+}
+unsafe fn results_lift(&mut self, _ptr: *mut u8) -> Self::Results {
+
+}
+}
+_MySubtask { _unused: core::marker::PhantomData }.call((obj, key, value,)).await
+}
+}
+#[allow(unused_unsafe, clippy::all)]
+#[allow(async_fn_in_trait)]
+pub async fn delete(obj: &Object,key: _rt::String,) -> bool{
+  unsafe {
+
+    #[derive(Copy, Clone)]
+    struct ParamsLower(
+    i32, *mut u8, usize,
+    );
+    unsafe impl Send for ParamsLower {}
+
+
+    use wit_bindgen::rt::async_support::Subtask as _Subtask;
+    struct _MySubtask<'a> { _unused: core::marker::PhantomData<&'a ()> }
+    #[allow(unused_parens)]
+    unsafe impl<'a> _Subtask for _MySubtask<'a> {
+
+      type Params = (&'a Object, _rt::String, );
+      type Results = bool;
+      type ParamsLower = ParamsLower;
+      fn abi_layout(&mut self) -> ::core::alloc::Layout {
+        unsafe {
+          ::core::alloc::Layout::from_size_align_unchecked(1, 1)
+        }
+      }
+
+      fn results_offset(&mut self) -> usize { 0 }
+
+      unsafe fn call_import(&mut self, _params: Self::ParamsLower, _results: *mut u8) -> u32 {
+
+        #[cfg(target_arch = "wasm32")]
+        #[link(wasm_import_module = "myedge:runtime/durable@0.1.0")]
+        unsafe extern "C" {
+          #[link_name = "[async-lower]delete"]
+          fn call(_: i32, _: *mut u8, _: usize, _: *mut u8, ) -> i32;
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        unsafe extern "C" fn call(_: i32, _: *mut u8, _: usize, _: *mut u8, ) -> i32 { unreachable!() }
+
+        unsafe { call(_params.0,_params.1,_params.2,_results) as u32 }
+      }
+
+      unsafe fn params_dealloc_lists(&mut self, _params: Self::ParamsLower) {
+        unsafe { _rt::cabi_dealloc(_params.1, _params.2, 1);
+      }
+    }
+    unsafe fn params_dealloc_lists_and_own(&mut self, _params: Self::ParamsLower) {
+      unsafe { _rt::cabi_dealloc(_params.1, _params.2, 1);
+    }
+  }
+  unsafe fn params_lower(&mut self, (_lower0, _lower1,): Self::Params, _ptr: *mut u8) -> Self::ParamsLower {
+    unsafe { let vec0 = (_lower1.into_bytes()).into_boxed_slice();
+    let ptr0 = vec0.as_ptr().cast::<u8>();
+    let len0 = vec0.len();
+    ::core::mem::forget(vec0);
+    ParamsLower((_lower0).handle() as i32, ptr0.cast_mut(), len0,) }
+  }
+  unsafe fn results_lift(&mut self, _ptr: *mut u8) -> Self::Results {
+    unsafe { let l0 = i32::from(*_ptr.add(0).cast::<u8>());
+
+    _rt::bool_lift(l0 as u8) }
+  }
+}
+_MySubtask { _unused: core::marker::PhantomData }.call((obj, key,)).await
+}
+}
+
+}
+
+
+#[allow(dead_code, async_fn_in_trait, unused_imports, clippy::all)]
 pub mod outbound {
   #[used]
   #[doc(hidden)]
@@ -1720,6 +2102,17 @@ mod _rt {
       unsafe { String::from_utf8_unchecked(bytes) }
     }
   }
+  pub unsafe fn bool_lift(val: u8) -> bool {
+    if cfg!(debug_assertions) {
+      match val {
+        0 => false,
+        1 => true,
+        _ => panic!("invalid bool discriminant"),
+      }
+    } else {
+      val != 0
+    }
+  }
   pub use alloc_crate::alloc;
 
   #[cfg(target_arch = "wasm32")]
@@ -1831,9 +2224,9 @@ pub(crate) use __export_worker_impl as export;
 #[unsafe(link_section = "component-type:wit-bindgen:0.51.0:myedge:runtime@0.1.0:worker:encoded world")]
 #[doc(hidden)]
 #[allow(clippy::octal_escapes)]
-pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 1316] = *b"\
-\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xa7\x09\x01A\x02\x01\
-A\x15\x01B\x07\x01r\x02\x04names\x05values\x04\0\x06header\x03\0\0\x01p\x01\x01r\
+pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 1493] = *b"\
+\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xd8\x0a\x01A\x02\x01\
+A\x17\x01B\x07\x01r\x02\x04names\x05values\x04\0\x06header\x03\0\0\x01p\x01\x01r\
 \x03\x06methods\x03uris\x07headers\x02\x04\0\x0crequest-head\x03\0\x03\x01r\x02\x06\
 status{\x07headers\x02\x04\0\x0dresponse-head\x03\0\x05\x03\0\x1amyedge:runtime/\
 types@0.1.0\x05\0\x02\x03\0\0\x0crequest-head\x02\x03\0\0\x0dresponse-head\x01B\x18\
@@ -1852,17 +2245,21 @@ value\x05\x0bttl-seconds\x08\x01\0\x04\0\x03put\x01\x09\x01C\x02\x02ns\x04\x03ke
 ys\x01\0\x04\0\x06delete\x01\x0a\x03\0\x17myedge:runtime/kv@0.1.0\x05\x04\x01B\x08\
 \x04\0\x06secret\x03\x01\x01i\0\x01k\x01\x01@\x01\x07bindings\0\x02\x04\0\x0bope\
 n-secret\x01\x03\x01h\0\x01C\x01\x01s\x04\0s\x04\0\x06reveal\x01\x05\x03\0\x1cmy\
-edge:runtime/secrets@0.1.0\x05\x05\x02\x03\0\0\x06header\x01B\x0a\x02\x03\x02\x01\
-\x06\x04\0\x06header\x03\0\0\x01p\x01\x01p}\x01r\x04\x06methods\x03uris\x07heade\
-rs\x02\x04body\x03\x04\0\x07request\x03\0\x04\x01r\x03\x06status{\x07headers\x02\
-\x04body\x03\x04\0\x08response\x03\0\x06\x01C\x01\x03req\x05\0\x07\x04\0\x05fetc\
-h\x01\x08\x03\0\x1dmyedge:runtime/outbound@0.1.0\x05\x07\x01B\x04\x01@\x01\x07me\
-ssages\x01\0\x04\0\x04info\x01\0\x04\0\x04warn\x01\0\x04\0\x05error\x01\0\x03\0\x18\
-myedge:runtime/log@0.1.0\x05\x08\x02\x03\0\x01\x07request\x03\0\x07request\x03\0\
-\x09\x02\x03\0\x01\x08response\x03\0\x08response\x03\0\x0b\x01C\x01\x03req\x0a\0\
-\x0c\x04\0\x06handle\x01\x0d\x04\0\x1bmyedge:runtime/worker@0.1.0\x04\0\x0b\x0c\x01\
-\0\x06worker\x03\0\0\0G\x09producers\x01\x0cprocessed-by\x02\x0dwit-component\x07\
-0.244.0\x10wit-bindgen-rust\x060.51.0";
+edge:runtime/secrets@0.1.0\x05\x05\x01B\x0e\x04\0\x06object\x03\x01\x01i\0\x01k\x01\
+\x01@\x02\x07bindings\x04names\0\x02\x04\0\x0bopen-object\x01\x03\x01h\0\x01p}\x01\
+k\x05\x01C\x02\x03obj\x04\x03keys\0\x06\x04\0\x03get\x01\x07\x01C\x03\x03obj\x04\
+\x03keys\x05value\x05\x01\0\x04\0\x03put\x01\x08\x01C\x02\x03obj\x04\x03keys\0\x7f\
+\x04\0\x06delete\x01\x09\x03\0\x1cmyedge:runtime/durable@0.1.0\x05\x06\x02\x03\0\
+\0\x06header\x01B\x0a\x02\x03\x02\x01\x07\x04\0\x06header\x03\0\0\x01p\x01\x01p}\
+\x01r\x04\x06methods\x03uris\x07headers\x02\x04body\x03\x04\0\x07request\x03\0\x04\
+\x01r\x03\x06status{\x07headers\x02\x04body\x03\x04\0\x08response\x03\0\x06\x01C\
+\x01\x03req\x05\0\x07\x04\0\x05fetch\x01\x08\x03\0\x1dmyedge:runtime/outbound@0.\
+1.0\x05\x08\x01B\x04\x01@\x01\x07messages\x01\0\x04\0\x04info\x01\0\x04\0\x04war\
+n\x01\0\x04\0\x05error\x01\0\x03\0\x18myedge:runtime/log@0.1.0\x05\x09\x02\x03\0\
+\x01\x07request\x03\0\x07request\x03\0\x0a\x02\x03\0\x01\x08response\x03\0\x08re\
+sponse\x03\0\x0c\x01C\x01\x03req\x0b\0\x0d\x04\0\x06handle\x01\x0e\x04\0\x1bmyed\
+ge:runtime/worker@0.1.0\x04\0\x0b\x0c\x01\0\x06worker\x03\0\0\0G\x09producers\x01\
+\x0cprocessed-by\x02\x0dwit-component\x070.244.0\x10wit-bindgen-rust\x060.51.0";
 
 #[inline(never)]
 #[doc(hidden)]

@@ -9,6 +9,7 @@ import type {
   CustomDomain,
   DeployPreview,
   Deployment,
+  DurableObjectNamespace,
   KvNamespace,
   Organization,
   Project,
@@ -747,7 +748,8 @@ export class PostgresControlPlaneRepository implements AsyncControlPlaneReposito
         (select count(*) from deployments where project_id = $1)::int as deployments,
         (select count(*) from routes where project_id = $1)::int as routes,
         (select count(*) from secrets where project_id = $1)::int as secrets,
-        (select count(*) from kv_namespaces where project_id = $1)::int as kv_namespaces`,
+        (select count(*) from kv_namespaces where project_id = $1)::int as kv_namespaces,
+        (select count(*) from durable_object_namespaces where project_id = $1)::int as durable_object_namespaces`,
       [projectId],
     );
     return usageFromRow(result.rows[0]);
@@ -880,6 +882,39 @@ export class PostgresControlPlaneRepository implements AsyncControlPlaneReposito
     const result = await this.pool.query("delete from kv_namespaces where id = $1", [id]);
     if (result.rowCount === 0) {
       throw new ControlPlaneError("not_found", `kv namespace ${id} was not found`);
+    }
+  }
+
+  async createDurableObjectNamespace(namespace: DurableObjectNamespace): Promise<DurableObjectNamespace> {
+    try {
+      await this.pool.query(
+        `insert into durable_object_namespaces (id, project_id, name, created_at, updated_at)
+         values ($1, $2, $3, $4, $5)`,
+        [namespace.id, namespace.projectId, namespace.name, namespace.createdAt, namespace.updatedAt],
+      );
+      return namespace;
+    } catch (error) {
+      throw writeError("durable object namespace", namespace.id, error);
+    }
+  }
+
+  async getDurableObjectNamespace(id: string): Promise<DurableObjectNamespace | undefined> {
+    const result = await this.pool.query("select * from durable_object_namespaces where id = $1", [id]);
+    return result.rows[0] ? durableObjectNamespaceFromRow(result.rows[0]) : undefined;
+  }
+
+  async listProjectDurableObjectNamespaces(projectId: string): Promise<DurableObjectNamespace[]> {
+    const result = await this.pool.query(
+      "select * from durable_object_namespaces where project_id = $1 order by name asc, id asc",
+      [projectId],
+    );
+    return result.rows.map(durableObjectNamespaceFromRow);
+  }
+
+  async deleteDurableObjectNamespace(id: string): Promise<void> {
+    const result = await this.pool.query("delete from durable_object_namespaces where id = $1", [id]);
+    if (result.rowCount === 0) {
+      throw new ControlPlaneError("not_found", `durable object namespace ${id} was not found`);
     }
   }
 
@@ -1280,6 +1315,16 @@ function kvNamespaceFromRow(row: any): KvNamespace {
   };
 }
 
+function durableObjectNamespaceFromRow(row: any): DurableObjectNamespace {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    name: row.name,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 function deploymentFromRow(row: any): Deployment {
   return {
     id: row.id,
@@ -1393,6 +1438,7 @@ function usageFromRow(row: any): ProjectResourceUsage {
     routes: Number(row.routes ?? 0),
     secrets: Number(row.secrets ?? 0),
     kvNamespaces: Number(row.kv_namespaces ?? 0),
+    durableObjectNamespaces: Number(row.durable_object_namespaces ?? 0),
   };
 }
 

@@ -13,6 +13,7 @@ export interface ControlPlaneAdmissionPolicy {
   allowedWorldVersions?: string[];
   allowedOutboundHttpPrefixes?: string[];
   allowedKvNamespaceIds?: string[];
+  allowedDurableObjectNamespaceIds?: string[];
   allowedSecretIds?: string[];
 }
 
@@ -54,6 +55,10 @@ export function admissionPolicyFromEnv(
   const kvNamespaceIds = csv(env.WASMPLANE_ADMISSION_KV_NAMESPACE_IDS);
   if (kvNamespaceIds.length > 0) {
     policy.allowedKvNamespaceIds = kvNamespaceIds;
+  }
+  const durableObjectNamespaceIds = csv(env.WASMPLANE_ADMISSION_DURABLE_OBJECT_NAMESPACE_IDS);
+  if (durableObjectNamespaceIds.length > 0) {
+    policy.allowedDurableObjectNamespaceIds = durableObjectNamespaceIds;
   }
   const secretIds = csv(env.WASMPLANE_ADMISSION_SECRET_IDS);
   if (secretIds.length > 0) {
@@ -108,6 +113,7 @@ export function enforceDeploymentAdmissionPolicy(
   }
   enforceOutboundHttpPolicy(policy, input.capabilities);
   enforceKvPolicy(policy, input.capabilities);
+  enforceDurableObjectPolicy(policy, input.capabilities);
   enforceSecretPolicy(policy, input.capabilities);
 }
 
@@ -134,6 +140,21 @@ function enforceKvPolicy(policy: ControlPlaneAdmissionPolicy, capabilities: Capa
   for (const binding of capabilities.kv) {
     if (!allowed.includes(binding.namespaceId)) {
       throw new ControlPlaneError("validation", `kv namespace ${binding.namespaceId} is not allowed`);
+    }
+  }
+}
+
+function enforceDurableObjectPolicy(policy: ControlPlaneAdmissionPolicy, capabilities: CapabilityPolicy) {
+  const allowed = policy.allowedDurableObjectNamespaceIds;
+  if (allowed === undefined) {
+    return;
+  }
+  for (const binding of capabilities.durableObjects) {
+    if (!allowed.includes(binding.namespaceId)) {
+      throw new ControlPlaneError(
+        "validation",
+        `durable object namespace ${binding.namespaceId} is not allowed`,
+      );
     }
   }
 }

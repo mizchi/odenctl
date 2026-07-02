@@ -6,6 +6,7 @@ import type {
   CustomDomain,
   DeployPreview,
   Deployment,
+  DurableObjectNamespace,
   KvNamespace,
   Organization,
   Project,
@@ -81,6 +82,10 @@ export interface ControlPlaneRepository {
   getKvNamespace(id: string): KvNamespace | undefined;
   listProjectKvNamespaces(projectId: string): KvNamespace[];
   deleteKvNamespace(id: string): void;
+  createDurableObjectNamespace(namespace: DurableObjectNamespace): DurableObjectNamespace;
+  getDurableObjectNamespace(id: string): DurableObjectNamespace | undefined;
+  listProjectDurableObjectNamespaces(projectId: string): DurableObjectNamespace[];
+  deleteDurableObjectNamespace(id: string): void;
   createDeployment(deployment: Deployment): Deployment;
   getDeployment(id: string): Deployment | undefined;
   upsertRoute(route: RoutePointer): RoutePointer;
@@ -105,6 +110,7 @@ export interface ProjectResourceUsage {
   routes: number;
   secrets: number;
   kvNamespaces: number;
+  durableObjectNamespaces: number;
 }
 
 export function createMemoryRepository(): ControlPlaneRepository {
@@ -773,9 +779,10 @@ class SqliteControlPlaneRepository implements ControlPlaneRepository {
           (select count(*) from deployments where project_id = ?) as deployments,
           (select count(*) from routes where project_id = ?) as routes,
           (select count(*) from secrets where project_id = ?) as secrets,
-          (select count(*) from kv_namespaces where project_id = ?) as kv_namespaces`,
+          (select count(*) from kv_namespaces where project_id = ?) as kv_namespaces,
+          (select count(*) from durable_object_namespaces where project_id = ?) as durable_object_namespaces`,
       )
-      .get(projectId, projectId, projectId, projectId, projectId) as any;
+      .get(projectId, projectId, projectId, projectId, projectId, projectId) as any;
     return usageFromRow(row);
   }
 
@@ -924,6 +931,50 @@ class SqliteControlPlaneRepository implements ControlPlaneRepository {
     const result = this.db.prepare("delete from kv_namespaces where id = ?").run(id);
     if (result.changes === 0) {
       throw new ControlPlaneError("not_found", `kv namespace ${id} was not found`);
+    }
+  }
+
+  createDurableObjectNamespace(namespace: DurableObjectNamespace): DurableObjectNamespace {
+    try {
+      this.db
+        .prepare(
+          `insert into durable_object_namespaces (
+            id,
+            project_id,
+            name,
+            created_at,
+            updated_at
+          ) values (?, ?, ?, ?, ?)`,
+        )
+        .run(
+          namespace.id,
+          namespace.projectId,
+          namespace.name,
+          namespace.createdAt,
+          namespace.updatedAt,
+        );
+      return namespace;
+    } catch (error) {
+      throw writeError("durable object namespace", namespace.id, error);
+    }
+  }
+
+  getDurableObjectNamespace(id: string): DurableObjectNamespace | undefined {
+    const row = this.db.prepare("select * from durable_object_namespaces where id = ?").get(id);
+    return row ? durableObjectNamespaceFromRow(row) : undefined;
+  }
+
+  listProjectDurableObjectNamespaces(projectId: string): DurableObjectNamespace[] {
+    const rows = this.db
+      .prepare("select * from durable_object_namespaces where project_id = ? order by name asc, id asc")
+      .all(projectId);
+    return rows.map(durableObjectNamespaceFromRow);
+  }
+
+  deleteDurableObjectNamespace(id: string): void {
+    const result = this.db.prepare("delete from durable_object_namespaces where id = ?").run(id);
+    if (result.changes === 0) {
+      throw new ControlPlaneError("not_found", `durable object namespace ${id} was not found`);
     }
   }
 
@@ -1370,6 +1421,16 @@ function deploymentFromRow(row: any): Deployment {
   };
 }
 
+function durableObjectNamespaceFromRow(row: any): DurableObjectNamespace {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    name: row.name,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 function routeFromRow(row: any): RoutePointer {
   return {
     id: row.id,
@@ -1453,6 +1514,7 @@ function usageFromRow(row: any): ProjectResourceUsage {
     routes: Number(row.routes ?? 0),
     secrets: Number(row.secrets ?? 0),
     kvNamespaces: Number(row.kv_namespaces ?? 0),
+    durableObjectNamespaces: Number(row.durable_object_namespaces ?? 0),
   };
 }
 
@@ -1748,6 +1810,16 @@ create table if not exists kv_namespaces (
   foreign key (project_id) references projects(id)
 );
 
+create table if not exists durable_object_namespaces (
+  id text primary key,
+  project_id text not null,
+  name text not null,
+  created_at text not null,
+  updated_at text not null,
+  unique (project_id, name),
+  foreign key (project_id) references projects(id)
+);
+
 create table if not exists deployments (
   id text primary key,
   project_id text not null,
@@ -1913,6 +1985,22 @@ const migrations: SchemaMigration[] = [
     apply(db) {
       db.exec(`
         create table if not exists kv_namespaces (
+          id text primary key,
+          project_id text not null,
+          name text not null,
+          created_at text not null,
+          updated_at text not null,
+          unique (project_id, name),
+          foreign key (project_id) references projects(id)
+        )
+      `);
+    },
+  },
+  {
+    id: "202606270003_durable_object_namespace_registry",
+    apply(db) {
+      db.exec(`
+        create table if not exists durable_object_namespaces (
           id text primary key,
           project_id text not null,
           name text not null,

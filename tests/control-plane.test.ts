@@ -37,6 +37,11 @@ test("creates immutable wasmtime deployments with denied-by-default host capabil
     projectId: project.id,
     name: "Main KV",
   });
+  control.createDurableObjectNamespace({
+    id: "do_rooms",
+    projectId: project.id,
+    name: "Rooms",
+  });
 
   const deployment = control.createDeployment({
     id: "dep_hello_v1",
@@ -60,6 +65,7 @@ test("creates immutable wasmtime deployments with denied-by-default host capabil
     capabilities: {
       outboundHttp: { enabled: true, allow: ["https://api.example.com"] },
       kv: [{ binding: "MAIN", namespaceId: "kv_main" }],
+      durableObjects: [{ binding: "ROOMS", namespaceId: "do_rooms" }],
       secrets: [{ binding: "API_KEY", secretId: "sec_api_key" }],
     },
   });
@@ -71,6 +77,7 @@ test("creates immutable wasmtime deployments with denied-by-default host capabil
   assert.equal(deployment.capabilities.arbitraryFilesystem, false);
   assert.equal(deployment.capabilities.arbitrarySockets, false);
   assert.equal(deployment.capabilities.processSpawn, false);
+  assert.deepEqual(deployment.capabilities.durableObjects, [{ binding: "ROOMS", namespaceId: "do_rooms" }]);
 
   assert.throws(
     () =>
@@ -330,6 +337,7 @@ test("control plane reports per-tenant enforcement status", () => {
       routes: 0,
       secrets: 0,
       kvNamespaces: 0,
+      durableObjectNamespaces: 0,
     },
     enforcement: {
       cpu: { used: 12, limit: 10, remaining: 0, status: "exceeded" },
@@ -1560,12 +1568,15 @@ test("control plane admission policy gates artifacts and deployment capabilities
       allowedWorldVersions: ["0.1.0"],
       allowedOutboundHttpPrefixes: ["https://api.example.com/v1"],
       allowedKvNamespaceIds: ["kv_allowed"],
+      allowedDurableObjectNamespaceIds: ["do_allowed"],
       allowedSecretIds: ["sec_allowed"],
     },
   });
   const project = control.createProject({ id: "prj_admission", name: "admission" });
   control.createKvNamespace({ id: "kv_allowed", projectId: project.id, name: "Allowed KV" });
   control.createKvNamespace({ id: "kv_blocked", projectId: project.id, name: "Blocked KV" });
+  control.createDurableObjectNamespace({ id: "do_allowed", projectId: project.id, name: "Allowed DO" });
+  control.createDurableObjectNamespace({ id: "do_blocked", projectId: project.id, name: "Blocked DO" });
   control.createSecret({ id: "sec_allowed", projectId: project.id, name: "Allowed secret", value: "ok" });
   control.createSecret({ id: "sec_blocked", projectId: project.id, name: "Blocked secret", value: "no" });
 
@@ -1619,6 +1630,7 @@ test("control plane admission policy gates artifacts and deployment capabilities
     capabilities: {
       outboundHttp: { enabled: true, allow: ["https://api.example.com/v1/users"] },
       kv: [{ binding: "MAIN", namespaceId: "kv_allowed" }],
+      durableObjects: [{ binding: "ROOMS", namespaceId: "do_allowed" }],
       secrets: [{ binding: "API_KEY", secretId: "sec_allowed" }],
     },
   });
@@ -1632,6 +1644,7 @@ test("control plane admission policy gates artifacts and deployment capabilities
         capabilities: {
           outboundHttp: { enabled: true, allow: ["https://api.example.com/v2/users"] },
           kv: [{ binding: "MAIN", namespaceId: "kv_allowed" }],
+          durableObjects: [{ binding: "ROOMS", namespaceId: "do_allowed" }],
           secrets: [{ binding: "API_KEY", secretId: "sec_allowed" }],
         },
       }),
@@ -1645,10 +1658,25 @@ test("control plane admission policy gates artifacts and deployment capabilities
         capabilities: {
           outboundHttp: { enabled: false, allow: [] },
           kv: [{ binding: "MAIN", namespaceId: "kv_blocked" }],
+          durableObjects: [{ binding: "ROOMS", namespaceId: "do_allowed" }],
           secrets: [{ binding: "API_KEY", secretId: "sec_allowed" }],
         },
       }),
     /kv namespace/,
+  );
+  assert.throws(
+    () =>
+      control.createDeployment({
+        ...seedDeployment("dep_blocked_durable", artifact.id),
+        projectId: project.id,
+        capabilities: {
+          outboundHttp: { enabled: false, allow: [] },
+          kv: [{ binding: "MAIN", namespaceId: "kv_allowed" }],
+          durableObjects: [{ binding: "ROOMS", namespaceId: "do_blocked" }],
+          secrets: [{ binding: "API_KEY", secretId: "sec_allowed" }],
+        },
+      }),
+    /durable object namespace/,
   );
   assert.throws(
     () =>
@@ -1658,6 +1686,7 @@ test("control plane admission policy gates artifacts and deployment capabilities
         capabilities: {
           outboundHttp: { enabled: false, allow: [] },
           kv: [{ binding: "MAIN", namespaceId: "kv_allowed" }],
+          durableObjects: [{ binding: "ROOMS", namespaceId: "do_allowed" }],
           secrets: [{ binding: "API_KEY", secretId: "sec_blocked" }],
         },
       }),
@@ -1978,6 +2007,7 @@ test("project quotas reject resources beyond configured limits", () => {
       maxRoutes: 1,
       maxSecrets: 1,
       maxKvNamespaces: 1,
+      maxDurableObjectNamespaces: 1,
     },
   });
   const project = control.createProject({ id: "prj_quota", name: "quota" });
@@ -1996,6 +2026,11 @@ test("project quotas reject resources beyond configured limits", () => {
   });
   control.createKvNamespace({
     id: "kv_one",
+    projectId: project.id,
+    name: "one",
+  });
+  control.createDurableObjectNamespace({
+    id: "do_one",
     projectId: project.id,
     name: "one",
   });
@@ -2042,6 +2077,15 @@ test("project quotas reject resources beyond configured limits", () => {
   );
   assert.throws(
     () =>
+      control.createDurableObjectNamespace({
+        id: "do_two",
+        projectId: project.id,
+        name: "two",
+      }),
+    /durable object namespace quota exceeded/,
+  );
+  assert.throws(
+    () =>
       control.createDeployment({
         ...seedDeployment("dep_two", artifact.id),
         projectId: project.id,
@@ -2081,6 +2125,11 @@ test("control plane exposes project resource usage", () => {
     projectId: "prj_hello",
     name: "usage",
   });
+  control.createDurableObjectNamespace({
+    id: "do_usage",
+    projectId: "prj_hello",
+    name: "usage",
+  });
   const deployment = control.createDeployment(seedDeployment("dep_usage"));
   control.pointRoute({
     projectId: "prj_hello",
@@ -2095,6 +2144,7 @@ test("control plane exposes project resource usage", () => {
     routes: 1,
     secrets: 1,
     kvNamespaces: 1,
+    durableObjectNamespaces: 1,
   });
 });
 
@@ -2164,6 +2214,82 @@ test("deployment KV bindings cannot reference another project", () => {
         capabilities: {
           outboundHttp: { enabled: false, allow: [] },
           kv: [{ binding: "MAIN", namespaceId: "kv_other" }],
+          secrets: [],
+        },
+      }),
+    /same project/,
+  );
+});
+
+test("registers durable object namespaces and validates deployment bindings", () => {
+  const control = createSeededControlPlane();
+  const namespace = control.createDurableObjectNamespace({
+    id: "do_rooms",
+    projectId: "prj_hello",
+    name: "Rooms",
+  });
+
+  assert.deepEqual(namespace, {
+    id: "do_rooms",
+    projectId: "prj_hello",
+    name: "Rooms",
+    createdAt: fixedNow(),
+    updatedAt: fixedNow(),
+  });
+  assert.deepEqual(control.getDurableObjectNamespace({ id: "do_rooms" }), namespace);
+  assert.deepEqual(control.listProjectDurableObjectNamespaces({ projectId: "prj_hello" }), [namespace]);
+
+  const deployment = control.createDeployment({
+    ...seedDeployment("dep_durable", "art_v1"),
+    capabilities: {
+      outboundHttp: { enabled: false, allow: [] },
+      kv: [],
+      durableObjects: [{ binding: "ROOMS", namespaceId: "do_rooms" }],
+      secrets: [],
+    },
+  });
+  control.pointRoute({
+    projectId: "prj_hello",
+    host: "hello.example.dev",
+    pathPrefix: "/",
+    deploymentId: deployment.id,
+  });
+  assert.deepEqual(control.createRouteSnapshot().routes[0]?.capabilities.durableObjects, [
+    { binding: "ROOMS", namespaceId: "do_rooms" },
+  ]);
+
+  assert.throws(
+    () =>
+      control.createDeployment({
+        ...seedDeployment("dep_missing_durable", "art_v1"),
+        capabilities: {
+          outboundHttp: { enabled: false, allow: [] },
+          kv: [],
+          durableObjects: [{ binding: "ROOMS", namespaceId: "do_missing" }],
+          secrets: [],
+        },
+      }),
+    /durable object namespace do_missing/,
+  );
+});
+
+test("deployment durable object bindings cannot reference another project", () => {
+  const control = createSeededControlPlane();
+  const other = control.createProject({ id: "prj_other", name: "other" });
+  control.createDurableObjectNamespace({
+    id: "do_other",
+    projectId: other.id,
+    name: "Other rooms",
+  });
+
+  assert.throws(
+    () =>
+      control.createDeployment({
+        ...seedDeployment("dep_cross_project_durable", "art_v1"),
+        capabilities: {
+          outboundHttp: { enabled: false, allow: [] },
+          kv: [],
+          durableObjects: [{ binding: "ROOMS", namespaceId: "do_other" }],
           secrets: [],
         },
       }),
@@ -2721,6 +2847,10 @@ test("sqlite repository records schema migrations and upgrades existing database
     .prepare("pragma table_info(kv_namespaces)")
     .all()
     .map((row: any) => row.name);
+  const durableObjectNamespaceColumns = db
+    .prepare("pragma table_info(durable_object_namespaces)")
+    .all()
+    .map((row: any) => row.name);
 
   assert.deepEqual(migrationIds, [
     "202606260001_wasip3_alias",
@@ -2729,6 +2859,7 @@ test("sqlite repository records schema migrations and upgrades existing database
     "202606260004_route_snapshot_publications",
     "202606270001_secret_registry",
     "202606270002_kv_namespace_registry",
+    "202606270003_durable_object_namespace_registry",
     "202606300002_route_snapshot_id",
     "202606300003_runtime_node_placement",
     "202606300004_canary_decisions",
@@ -2767,6 +2898,7 @@ test("sqlite repository records schema migrations and upgrades existing database
   assert.ok(runtimeNodeColumns.includes("host_json"));
   assert.ok(secretColumns.includes("value"));
   assert.ok(kvNamespaceColumns.includes("project_id"));
+  assert.ok(durableObjectNamespaceColumns.includes("project_id"));
   const projectColumns = db
     .prepare("pragma table_info(projects)")
     .all()

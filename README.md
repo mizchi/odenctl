@@ -54,7 +54,8 @@ node has an identity key id and the control plane has the matching secret, snaps
 optional bearer token.
 Set `WASMPLANE_QUOTA_MAX_ARTIFACTS`, `WASMPLANE_QUOTA_MAX_DEPLOYMENTS`,
 `WASMPLANE_QUOTA_MAX_ROUTES`, `WASMPLANE_QUOTA_MAX_SECRETS`, and
-`WASMPLANE_QUOTA_MAX_KV_NAMESPACES` to enforce per-project resource quotas before writes are
+`WASMPLANE_QUOTA_MAX_KV_NAMESPACES`, and `WASMPLANE_QUOTA_MAX_DURABLE_OBJECT_NAMESPACES` to
+enforce per-project resource quotas before writes are
 accepted.
 Set `WASMPLANE_ENFORCEMENT_CPU_MS_LIMITS`,
 `WASMPLANE_ENFORCEMENT_MEMORY_MB_MS_LIMITS`, `WASMPLANE_ENFORCEMENT_STORAGE_BYTES_LIMITS`,
@@ -370,6 +371,53 @@ files can be encrypted with AES-256-GCM by setting `WASMPLANE_VOLUME_SQLITE_BACK
 decrypt-only keys in `WASMPLANE_VOLUME_SQLITE_BACKUP_KEYS_BASE64` as comma-separated
 `keyId=base64` entries during rotation. The CLI uses the same environment, so encrypted backups can
 be restored with `volume-sqlite restore` as long as the matching key id is configured.
+
+A Durable Objects-style storage facade can be layered on the same registry when the application
+wants object-local state rather than direct database-file lifecycle management:
+
+```ts
+import {
+  createDurableObjectAlarmDispatcherJob,
+  createDurableObjectStorageNamespace,
+  createVolumeSqliteRegistry,
+} from "@mizchi/wasmplane";
+
+const registry = createVolumeSqliteRegistry({ rootDir: "/data/sqlite" });
+const rooms = createDurableObjectStorageNamespace({
+  namespace: "rooms",
+  ownerId: "prj_chat",
+  registry,
+});
+
+const room = rooms.storageForName("lobby");
+await room.put("title", "Lobby");
+await room.transaction(async (txn) => {
+  const count = (await txn.get<number>("count")) ?? 0;
+  await txn.put("count", count + 1);
+});
+await room.setAlarm(Date.now() + 60_000);
+const dueAlarms = await rooms.listDueAlarms({ now: Date.now() });
+await room.sql.exec("create table if not exists messages (id text primary key, body text not null)");
+
+const alarmJob = createDurableObjectAlarmDispatcherJob({
+  intervalMs: 1000,
+  namespace: rooms,
+  async handler(event) {
+    await event.storage.put("alarm:last", event.scheduledTime.toISOString());
+  },
+});
+```
+
+Each object maps to a private `kind=durable_object` SQLite database, storage methods are serialized
+through the per-database FIFO queue, and `sql.exec()` is object-local. The facade currently stores
+JSON-serializable values, keeps one object-local alarm timestamp for scheduler dispatch through
+`listDueAlarms()`, ships a non-overlapping alarm dispatcher job, and intentionally blocks SQL access
+to its reserved KV/meta tables.
+For the packaged control-plane process, set `WASMPLANE_DURABLE_OBJECT_ALARM_INTERVAL_MS`,
+`WASMPLANE_DURABLE_OBJECT_ALARM_NAMESPACES`, and `WASMPLANE_DURABLE_OBJECT_ALARM_WEBHOOK_URL` to
+poll due alarms from the volume SQLite registry and POST them to an application webhook. Optional
+settings are `WASMPLANE_DURABLE_OBJECT_ALARM_WEBHOOK_TOKEN`,
+`WASMPLANE_DURABLE_OBJECT_ALARM_WEBHOOK_TIMEOUT_MS`, and `WASMPLANE_DURABLE_OBJECT_ALARM_LIMIT`.
 Set `WASMPLANE_VOLUME_SQLITE_BACKUP_INTERVAL_MS` on the control plane to run scheduled backups for
 all cataloged volume SQLite databases. Scheduled backups require encryption by default; set
 `WASMPLANE_VOLUME_SQLITE_BACKUP_REQUIRE_ENCRYPTION=0` only for local development. Enable
@@ -437,8 +485,8 @@ Runtime invocation enforces the route snapshot contract before calling guest cod
 rejects privileged capabilities (`arbitraryFilesystem`, `arbitrarySockets`, `processSpawn`) and
 passes denied-by-default capability policy to the Rust host. The Rust host applies Wasmtime memory
 limits, wall-clock and `cpuMs` interruption through Wasmtime epoch deadlines, request and response
-byte limits, KV namespace allowlists, outbound HTTP allowlists, host API call counters, and
-subrequest counters. `cpuMs` uses epoch-tick compute budgeting rather than kernel CPU-time
+byte limits, KV namespace allowlists, Durable Object namespace allowlists, outbound HTTP
+allowlists, host API call counters, and subrequest counters. `cpuMs` uses epoch-tick compute budgeting rather than kernel CPU-time
 accounting; CPU budget exits are reported as `503 cpu_limit`, while wall-clock exits remain
 `504 timeout`.
 Guest components resolve configured capability bindings through WIT handles: `kv.open-namespace`
@@ -446,6 +494,10 @@ maps a binding name such as `MAIN` to its physical namespace, and `secrets.open-
 secret handle whose `reveal` operation is backed by host-loaded secret values. Secret values are
 redacted from host logs. KV `get`/`put`/`delete` operations are backed by a host-side persistent
 store when `--kv-store-dir`/`WASMPLANE_KV_STORE_DIR` is configured, including TTL expiry.
+`durable.open-object(binding, name)` opens object-local storage under a configured
+`durableObjects` binding. Its `get`/`put`/`delete` operations use the same host-side persistent
+store today, scoped by namespace and object name, so it provides a Durable Objects-style API surface
+for Wasm workers while the SQLite-backed Node facade remains available for control-plane code.
 The control plane stores local secret values through `POST /secrets`, but all public API responses
 return only secret metadata. Set `WASMPLANE_SECRET_KMS_KEY_BASE64` to a 32-byte base64 key to store
 secret values as `wasmplane:v1:aes-256-gcm:*` envelopes before repository persistence. For local
@@ -823,6 +875,10 @@ Available endpoints:
 - `GET /projects/:id/kv-namespaces`
 - `GET /kv-namespaces/:id`
 - `DELETE /kv-namespaces/:id`
+- `POST /durable-object-namespaces`
+- `GET /projects/:id/durable-object-namespaces`
+- `GET /durable-object-namespaces/:id`
+- `DELETE /durable-object-namespaces/:id`
 - `POST /deployments`
 - `PUT /routes`
 - `POST /routes/canary`
@@ -856,7 +912,8 @@ Production admission guardrails can be enabled through environment variables: se
 `WASMPLANE_ADMISSION_MAX_ARTIFACT_SIZE_BYTES`, restrict WIT contracts with
 `WASMPLANE_ADMISSION_ALLOWED_WORLDS` and `WASMPLANE_ADMISSION_ALLOWED_WORLD_VERSIONS`, and restrict
 deployment capabilities with `WASMPLANE_ADMISSION_OUTBOUND_HTTP_PREFIXES`,
-`WASMPLANE_ADMISSION_KV_NAMESPACE_IDS`, and `WASMPLANE_ADMISSION_SECRET_IDS`.
+`WASMPLANE_ADMISSION_KV_NAMESPACE_IDS`, `WASMPLANE_ADMISSION_DURABLE_OBJECT_NAMESPACE_IDS`, and
+`WASMPLANE_ADMISSION_SECRET_IDS`.
 
 Custom domains are registered before routing through `POST /custom-domains`. The response includes
 a DNS TXT challenge under `_wasmplane-challenge.<host>`; submit observed TXT values to
@@ -913,7 +970,8 @@ Deployment KV capability bindings reference the registered namespace id:
 
 ```json
 {
-  "kv": [{ "binding": "MAIN", "namespaceId": "kv_main" }]
+  "kv": [{ "binding": "MAIN", "namespaceId": "kv_main" }],
+  "durableObjects": [{ "binding": "ROOMS", "namespaceId": "do_rooms" }]
 }
 ```
 

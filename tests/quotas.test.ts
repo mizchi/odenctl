@@ -9,16 +9,17 @@ test("project quotas parse control-plane environment limits", () => {
     WASMPLANE_QUOTA_MAX_ROUTES: "30",
     WASMPLANE_QUOTA_MAX_SECRETS: "40",
     WASMPLANE_QUOTA_MAX_KV_NAMESPACES: "50",
+    WASMPLANE_QUOTA_MAX_DURABLE_OBJECT_NAMESPACES: "60",
   }), {
     maxArtifacts: 10,
     maxDeployments: 20,
     maxRoutes: 30,
     maxSecrets: 40,
     maxKvNamespaces: 50,
+    maxDurableObjectNamespaces: 60,
   });
 });
 
 test("project quotas are disabled when no environment limits are configured", () => {
   assert.equal(projectQuotasFromEnv({}), undefined);
 });
-

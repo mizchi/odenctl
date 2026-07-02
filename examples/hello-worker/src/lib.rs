@@ -4,7 +4,7 @@ mod bindings;
 use bindings::Guest;
 use bindings::myedge::runtime::http::{OutgoingBody, Request, Response, new_outgoing_body};
 use bindings::myedge::runtime::types::{Header, ResponseHead};
-use bindings::myedge::runtime::{kv, outbound, secrets};
+use bindings::myedge::runtime::{durable, kv, outbound, secrets};
 
 struct Component;
 
@@ -47,6 +47,18 @@ async fn capability_payload(req: &Request) -> String {
         Some(secret) => secrets::reveal(&secret).await.len(),
         None => 0,
     };
+    let durable_value = match durable::open_object("ROOMS".to_string(), "lobby".to_string()).await {
+        Some(object) => {
+            durable::put(&object, "probe".to_string(), b"checked".to_vec()).await;
+            let deleted = durable::delete(&object, "probe-delete".to_string()).await;
+            durable::get(&object, "probe".to_string())
+                .await
+                .and_then(|value| String::from_utf8(value).ok())
+                .map(|value| format!("{value}/deleted={deleted}"))
+                .unwrap_or_else(|| "missing".to_string())
+        }
+        None => "missing".to_string(),
+    };
     let outbound_value = match header(req, "x-upstream-url") {
         Some(uri) => {
             let response = outbound::fetch(outbound::Request {
@@ -60,7 +72,9 @@ async fn capability_payload(req: &Request) -> String {
         }
         None => "missing".to_string(),
     };
-    format!("capabilities: kv={kv_value} secret-len={secret_len} outbound={outbound_value}")
+    format!(
+        "capabilities: kv={kv_value} durable={durable_value} secret-len={secret_len} outbound={outbound_value}"
+    )
 }
 
 fn header(req: &Request, name: &str) -> Option<String> {

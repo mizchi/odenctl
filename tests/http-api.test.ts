@@ -204,6 +204,11 @@ test("HTTP API exposes project quota usage", async () => {
       projectId: project.id,
       name: "usage",
     });
+    await postJson(baseUrl, "/durable-object-namespaces", {
+      id: "do_usage",
+      projectId: project.id,
+      name: "usage",
+    });
 
     const response = await fetch(`${baseUrl}/projects/${project.id}/quota-usage`);
     assert.equal(response.status, 200);
@@ -213,6 +218,7 @@ test("HTTP API exposes project quota usage", async () => {
       routes: 1,
       secrets: 1,
       kvNamespaces: 1,
+      durableObjectNamespaces: 1,
     });
   } finally {
     await app.close();
@@ -1219,6 +1225,7 @@ test("HTTP API accepts DB-backed scoped API keys", async () => {
       routes: 0,
       secrets: 0,
       kvNamespaces: 0,
+      durableObjectNamespaces: 0,
     });
 
     const write = await fetch(`${baseUrl}/projects`, {
@@ -1482,6 +1489,53 @@ test("HTTP API manages KV namespaces", async () => {
   }
 });
 
+test("HTTP API manages durable object namespaces", async () => {
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+  });
+  const app = createHttpApp({ controlPlane: control });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const project = await postJson(baseUrl, "/projects", { name: "hello" });
+    const namespace = await postJson(baseUrl, "/durable-object-namespaces", {
+      id: "do_rooms",
+      projectId: project.id,
+      name: "Rooms",
+    });
+
+    assert.deepEqual(namespace, {
+      id: "do_rooms",
+      projectId: project.id,
+      name: "Rooms",
+      createdAt: fixedNow(),
+      updatedAt: fixedNow(),
+    });
+
+    const getResponse = await fetch(`${baseUrl}/durable-object-namespaces/do_rooms`);
+    assert.equal(getResponse.status, 200);
+    assert.deepEqual(await getResponse.json(), namespace);
+
+    const listResponse = await fetch(`${baseUrl}/projects/${project.id}/durable-object-namespaces`);
+    assert.equal(listResponse.status, 200);
+    assert.deepEqual(await listResponse.json(), [namespace]);
+
+    const deleteResponse = await fetch(`${baseUrl}/durable-object-namespaces/do_rooms`, { method: "DELETE" });
+    assert.equal(deleteResponse.status, 204);
+
+    const deletedResponse = await fetch(`${baseUrl}/durable-object-namespaces/do_rooms`);
+    assert.equal(deletedResponse.status, 404);
+  } finally {
+    await app.close();
+  }
+});
+
 test("HTTP API rejects deployments that reference unknown KV namespaces", async () => {
   const control = createControlPlane({
     repository: createMemoryRepository(),
@@ -1534,6 +1588,64 @@ test("HTTP API rejects deployments that reference unknown KV namespaces", async 
 
     assert.equal(response.status, 400);
     assert.match(await response.text(), /kv namespace kv_missing/);
+  } finally {
+    await app.close();
+  }
+});
+
+test("HTTP API rejects deployments that reference unknown durable object namespaces", async () => {
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+  });
+  const app = createHttpApp({ controlPlane: control });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const project = await postJson(baseUrl, "/projects", { name: "hello" });
+    const artifact = await postJson(baseUrl, "/artifacts", {
+      projectId: project.id,
+      digest: digest("hello"),
+      location: "oci://registry.example.com/mizchi/hello:v1",
+      sizeBytes: 42,
+    });
+    const response = await fetch(`${baseUrl}/deployments`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        projectId: project.id,
+        artifactId: artifact.id,
+        world: "myedge:runtime/worker@0.1.0",
+        runtime: {
+          backend: "wasmtime",
+          version: "wasmtime-43",
+          wasi: "wasip3",
+        },
+        limits: {
+          cpuMs: 50,
+          memoryMb: 64,
+          wallMs: 1000,
+          requestBytes: 1048576,
+          subrequests: 20,
+          hostCalls: 100,
+          responseBytes: 1048576,
+        },
+        capabilities: {
+          outboundHttp: { enabled: false, allow: [] },
+          kv: [],
+          durableObjects: [{ binding: "ROOMS", namespaceId: "do_missing" }],
+          secrets: [],
+        },
+      }),
+    });
+
+    assert.equal(response.status, 400);
+    assert.match(await response.text(), /durable object namespace do_missing/);
   } finally {
     await app.close();
   }
