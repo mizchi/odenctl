@@ -256,3 +256,11 @@ Production readiness tasks, in implementation order.
 - [x] Add project monthly USD budget enforcement from billing rate cards.
 - [x] Persist immutable organization billing invoice snapshots with rate card versions.
 - [x] Add content digests to billing invoices for audit comparison.
+
+## 33. Billing operations and accounting integration
+
+- [x] List organization billing invoices for audit and accounting workflows.
+- [ ] Add signed invoice export bundles for external accounting systems.
+- [ ] Add billing outbox/webhook delivery with retry and idempotency keys.
+- [ ] Add credit-note and adjustment records without mutating issued invoices.
+- [ ] Add invoice retention and legal hold policy controls.

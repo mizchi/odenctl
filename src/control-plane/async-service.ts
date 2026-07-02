@@ -136,6 +136,7 @@ export interface AsyncControlPlaneRepository {
     organizationId: string,
     periodKey: string,
   ): Promise<OrganizationBillingInvoice | undefined>;
+  listOrganizationBillingInvoices(organizationId: string): Promise<OrganizationBillingInvoice[]>;
   createCustomDomain(domain: CustomDomain): Promise<CustomDomain>;
   getCustomDomain(id: string): Promise<CustomDomain | undefined>;
   getCustomDomainByHost(host: string): Promise<CustomDomain | undefined>;
@@ -295,6 +296,10 @@ export interface IssueOrganizationBillingInvoiceInput {
 
 export interface GetBillingInvoiceInput {
   id: string;
+}
+
+export interface ListOrganizationBillingInvoicesInput {
+  organizationId: string;
 }
 
 export interface CreateCustomDomainInput {
@@ -796,6 +801,13 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
       throw new ControlPlaneError("not_found", `billing invoice ${input.id} was not found`);
     }
     return invoice;
+  }
+
+  async function listOrganizationBillingInvoices(
+    input: ListOrganizationBillingInvoicesInput,
+  ): Promise<OrganizationBillingInvoice[]> {
+    await requireOrganization(repository, input.organizationId);
+    return repository.listOrganizationBillingInvoices(input.organizationId);
   }
 
   async function createCustomDomain(input: CreateCustomDomainInput): Promise<CustomDomain> {
@@ -1323,6 +1335,7 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
     getOrganizationBillingStatement,
     issueOrganizationBillingInvoice,
     getBillingInvoice,
+    listOrganizationBillingInvoices,
     createCustomDomain,
     listProjectCustomDomains,
     verifyCustomDomainOwnership,

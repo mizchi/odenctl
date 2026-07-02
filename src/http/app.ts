@@ -67,6 +67,7 @@ export interface HttpAppOptions {
     getOrganizationBillingStatement(input: any): MaybePromise<unknown>;
     issueOrganizationBillingInvoice(input: any): MaybePromise<unknown>;
     getBillingInvoice(input: any): MaybePromise<unknown>;
+    listOrganizationBillingInvoices(input: any): MaybePromise<unknown>;
     createCustomDomain(input: any): MaybePromise<unknown>;
     listProjectCustomDomains(input: any): MaybePromise<unknown>;
     verifyCustomDomainOwnership(input: any): MaybePromise<unknown>;
@@ -221,6 +222,17 @@ export function createHttpApp(options: HttpAppOptions) {
           await options.controlPlane.getOrganizationBillingStatement({
             organizationId: organizationBillingStatement.organizationId,
             at: url.searchParams.get("at") ?? undefined,
+          }),
+        );
+        return;
+      }
+      const listOrganizationBillingInvoices = listOrganizationBillingInvoicesMatch(method, url.pathname);
+      if (listOrganizationBillingInvoices) {
+        writeJson(
+          response,
+          200,
+          await options.controlPlane.listOrganizationBillingInvoices({
+            organizationId: listOrganizationBillingInvoices.organizationId,
           }),
         );
         return;
@@ -1487,6 +1499,20 @@ function organizationBillingStatementMatch(method: string, pathname: string): { 
 
 function organizationBillingInvoicesMatch(method: string, pathname: string): { organizationId: string } | undefined {
   if (method !== "POST") {
+    return undefined;
+  }
+  const match = /^\/organizations\/([^/]+)\/billing-invoices$/.exec(pathname);
+  if (!match) {
+    return undefined;
+  }
+  return { organizationId: decodeURIComponent(match[1]) };
+}
+
+function listOrganizationBillingInvoicesMatch(
+  method: string,
+  pathname: string,
+): { organizationId: string } | undefined {
+  if (method !== "GET") {
     return undefined;
   }
   const match = /^\/organizations\/([^/]+)\/billing-invoices$/.exec(pathname);

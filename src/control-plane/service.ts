@@ -231,6 +231,10 @@ export interface GetBillingInvoiceInput {
   id: string;
 }
 
+export interface ListOrganizationBillingInvoicesInput {
+  organizationId: string;
+}
+
 export interface CreateCustomDomainInput {
   id?: string;
   projectId: string;
@@ -711,6 +715,13 @@ export function createControlPlane(options: ControlPlaneOptions) {
       throw new ControlPlaneError("not_found", `billing invoice ${input.id} was not found`);
     }
     return invoice;
+  }
+
+  function listOrganizationBillingInvoices(
+    input: ListOrganizationBillingInvoicesInput,
+  ): OrganizationBillingInvoice[] {
+    requireOrganization(repository, input.organizationId);
+    return repository.listOrganizationBillingInvoices(input.organizationId);
   }
 
   function createCustomDomain(input: CreateCustomDomainInput): CustomDomain {
@@ -1225,6 +1236,7 @@ export function createControlPlane(options: ControlPlaneOptions) {
     getOrganizationBillingStatement,
     issueOrganizationBillingInvoice,
     getBillingInvoice,
+    listOrganizationBillingInvoices,
     createCustomDomain,
     listProjectCustomDomains,
     verifyCustomDomainOwnership,

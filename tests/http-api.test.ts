@@ -596,10 +596,11 @@ test("HTTP API exposes organization billing statements", async () => {
 });
 
 test("HTTP API issues and reads organization billing invoices", async () => {
+  let currentNow = fixedNow();
   const control = createControlPlane({
     repository: createMemoryRepository(),
     idGenerator: sequenceIds(),
-    now: fixedNow,
+    now: () => currentNow,
     projectBillingRates: {
       invocationsPerMillionUsd: 1,
     },
@@ -643,6 +644,23 @@ test("HTTP API issues and reads organization billing invoices", async () => {
     const response = await fetch(`${baseUrl}/billing-invoices/${invoice.id}`);
     assert.equal(response.status, 200);
     assert.deepEqual(await response.json(), invoice);
+
+    await postJson(baseUrl, "/usage/events", {
+      id: "use_http_invoice_august_invocation",
+      projectId: project.id,
+      metric: "invocation",
+      quantity: 2_000_000,
+      recordedAt: "2026-08-01T00:00:00.000Z",
+    });
+    currentNow = "2026-08-10T00:00:00.000Z";
+    const august = await postJson(baseUrl, `/organizations/${organization.id}/billing-invoices`, {
+      id: "inv_http_invoice_august",
+      at: "2026-08-15T00:00:00.000Z",
+    });
+
+    const listResponse = await fetch(`${baseUrl}/organizations/${organization.id}/billing-invoices`);
+    assert.equal(listResponse.status, 200);
+    assert.deepEqual(await listResponse.json(), [august, invoice]);
   } finally {
     await app.close();
   }

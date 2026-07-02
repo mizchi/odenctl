@@ -42,6 +42,7 @@ export interface ControlPlaneRepository {
     organizationId: string,
     periodKey: string,
   ): OrganizationBillingInvoice | undefined;
+  listOrganizationBillingInvoices(organizationId: string): OrganizationBillingInvoice[];
   createCustomDomain(domain: CustomDomain): CustomDomain;
   getCustomDomain(id: string): CustomDomain | undefined;
   getCustomDomainByHost(host: string): CustomDomain | undefined;
@@ -350,6 +351,17 @@ class SqliteControlPlaneRepository implements ControlPlaneRepository {
       .prepare("select * from billing_invoices where organization_id = ? and period_key = ?")
       .get(organizationId, periodKey);
     return row ? billingInvoiceFromRow(row) : undefined;
+  }
+
+  listOrganizationBillingInvoices(organizationId: string): OrganizationBillingInvoice[] {
+    return this.db
+      .prepare(
+        `select * from billing_invoices
+         where organization_id = ?
+         order by issued_at desc, id desc`,
+      )
+      .all(organizationId)
+      .map(billingInvoiceFromRow);
   }
 
   createCustomDomain(domain: CustomDomain): CustomDomain {

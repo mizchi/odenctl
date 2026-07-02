@@ -321,6 +321,18 @@ export class PostgresControlPlaneRepository implements AsyncControlPlaneReposito
     return result.rows[0] ? billingInvoiceFromRow(result.rows[0]) : undefined;
   }
 
+  async listOrganizationBillingInvoices(
+    organizationId: string,
+  ): Promise<OrganizationBillingInvoice[]> {
+    const result = await this.pool.query(
+      `select * from billing_invoices
+       where organization_id = $1
+       order by issued_at desc, id desc`,
+      [organizationId],
+    );
+    return result.rows.map(billingInvoiceFromRow);
+  }
+
   async createCustomDomain(domain: CustomDomain): Promise<CustomDomain> {
     try {
       await this.pool.query(

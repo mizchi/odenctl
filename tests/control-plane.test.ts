@@ -634,6 +634,81 @@ test("control plane issues immutable organization billing invoices", () => {
   assert.equal(replayed.statement.totalUsd, 1);
   assert.equal(replayed.contentDigest, invoice.contentDigest);
   assert.deepEqual(changedRateControl.getBillingInvoice({ id: invoice.id }), replayed);
+  assert.deepEqual(
+    changedRateControl.listOrganizationBillingInvoices({ organizationId: organization.id }),
+    [invoice],
+  );
+});
+
+test("control plane lists organization billing invoices newest first", () => {
+  let currentNow = "2026-07-10T00:00:00.000Z";
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: () => currentNow,
+    projectBillingRates: {
+      invocationsPerMillionUsd: 1,
+    },
+  });
+  const organization = control.createOrganization({ id: "org_invoice_list", name: "Invoice List Org" });
+  const other = control.createOrganization({ id: "org_invoice_list_other", name: "Invoice List Other Org" });
+  const project = control.createProject({
+    id: "prj_invoice_list",
+    name: "invoice list",
+    organizationId: organization.id,
+  });
+  const otherProject = control.createProject({
+    id: "prj_invoice_list_other",
+    name: "invoice list other",
+    organizationId: other.id,
+  });
+  control.recordUsageEvent({
+    id: "use_invoice_list_july",
+    projectId: project.id,
+    metric: "invocation",
+    quantity: 1_000_000,
+    recordedAt: "2026-07-01T00:00:00.000Z",
+  });
+  control.recordUsageEvent({
+    id: "use_invoice_list_august",
+    projectId: project.id,
+    metric: "invocation",
+    quantity: 2_000_000,
+    recordedAt: "2026-08-01T00:00:00.000Z",
+  });
+  control.recordUsageEvent({
+    id: "use_invoice_list_other",
+    projectId: otherProject.id,
+    metric: "invocation",
+    quantity: 3_000_000,
+    recordedAt: "2026-08-01T00:00:00.000Z",
+  });
+
+  const july = control.issueOrganizationBillingInvoice({
+    id: "inv_invoice_list_july",
+    organizationId: organization.id,
+    at: "2026-07-15T00:00:00.000Z",
+  });
+  currentNow = "2026-08-10T00:00:00.000Z";
+  const august = control.issueOrganizationBillingInvoice({
+    id: "inv_invoice_list_august",
+    organizationId: organization.id,
+    at: "2026-08-15T00:00:00.000Z",
+  });
+  control.issueOrganizationBillingInvoice({
+    id: "inv_invoice_list_other",
+    organizationId: other.id,
+    at: "2026-08-15T00:00:00.000Z",
+  });
+
+  assert.deepEqual(
+    control.listOrganizationBillingInvoices({ organizationId: organization.id }).map((invoice) => invoice.id),
+    [august.id, july.id],
+  );
+  assert.throws(
+    () => control.listOrganizationBillingInvoices({ organizationId: "org_missing" }),
+    /organization org_missing was not found/,
+  );
 });
 
 test("control plane enforces monthly billing budgets from usage ledgers", () => {
@@ -912,6 +987,62 @@ test("async control plane issues immutable organization billing invoices", async
   assert.equal(invoice.rateCardVersion, "2026-07-v1");
   assert.equal(invoice.statement.totalUsd, 1);
   assert.deepEqual(await control.getBillingInvoice({ id: invoice.id }), invoice);
+  assert.deepEqual(
+    await control.listOrganizationBillingInvoices({ organizationId: organization.id }),
+    [invoice],
+  );
+});
+
+test("async control plane lists organization billing invoices newest first", async () => {
+  let currentNow = "2026-07-10T00:00:00.000Z";
+  const control = createAsyncControlPlane({
+    repository: asyncRepository(createMemoryRepository()),
+    idGenerator: sequenceIds(),
+    now: () => currentNow,
+    projectBillingRates: {
+      invocationsPerMillionUsd: 1,
+    },
+  });
+  const organization = await control.createOrganization({
+    id: "org_async_invoice_list",
+    name: "Async Invoice List Org",
+  });
+  const project = await control.createProject({
+    id: "prj_async_invoice_list",
+    name: "async invoice list",
+    organizationId: organization.id,
+  });
+  await control.recordUsageEvent({
+    id: "use_async_invoice_list_july",
+    projectId: project.id,
+    metric: "invocation",
+    quantity: 1_000_000,
+    recordedAt: "2026-07-01T00:00:00.000Z",
+  });
+  await control.recordUsageEvent({
+    id: "use_async_invoice_list_august",
+    projectId: project.id,
+    metric: "invocation",
+    quantity: 2_000_000,
+    recordedAt: "2026-08-01T00:00:00.000Z",
+  });
+
+  const july = await control.issueOrganizationBillingInvoice({
+    id: "inv_async_invoice_list_july",
+    organizationId: organization.id,
+    at: "2026-07-15T00:00:00.000Z",
+  });
+  currentNow = "2026-08-10T00:00:00.000Z";
+  const august = await control.issueOrganizationBillingInvoice({
+    id: "inv_async_invoice_list_august",
+    organizationId: organization.id,
+    at: "2026-08-15T00:00:00.000Z",
+  });
+
+  assert.deepEqual(
+    (await control.listOrganizationBillingInvoices({ organizationId: organization.id })).map((invoice) => invoice.id),
+    [august.id, july.id],
+  );
 });
 
 test("async control plane enforces monthly billing budgets from usage ledgers", async () => {
