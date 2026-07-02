@@ -706,6 +706,31 @@ The templates copy `wit/myedge-runtime.wit` to `wit/world.wit`, generate small h
 (`src/wasmplane.rs` or `src/wasmplane.ts`), and include build scripts for `wit-bindgen`/`wasm-tools`
 or `jco componentize`.
 
+## Rust and MoonBit WASI p3 interop
+
+`examples/interop/wit/world.wit` defines a small Component Model contract shared by the Rust and
+MoonBit examples:
+
+```wit
+package myedge:interop@0.1.0;
+
+world probe-world {
+  export ping: func(message: string) -> string;
+}
+```
+
+Build both components and verify the Wasmtime call path with:
+
+```sh
+just interop-smoke
+```
+
+The smoke test builds `examples/rust-interop` with `wit-bindgen rust` and
+`examples/moonbit-interop` with `wit-bindgen moonbit`, then invokes both components through
+`wasmtime run --invoke`. This is the current MoonBit-to-Wasmtime ABI round-trip baseline. The full
+`myedge:runtime/worker@0.1.0` world still stays Rust/TypeScript-only until MoonBit bindings handle
+the async resource-heavy worker API cleanly.
+
 For local development, run a control plane and runtime node, then use `dev` to validate the
 component, create a deploy preview, publish the route snapshot directly to the local runtime, and
 print a route-preview curl command:

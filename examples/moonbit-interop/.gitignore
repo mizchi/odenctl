@@ -1,0 +1,6 @@
+/.mooncakes/
+/_build/
+/gen/
+/moon.mod.json
+/target/
+/world/

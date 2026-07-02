@@ -3,6 +3,9 @@ set shell := ["zsh", "-cu"]
 wasi_adapter := env_var_or_default("WASI_PREVIEW1_ADAPTER", "node_modules/@bytecodealliance/jco/lib/wasi_snapshot_preview1.reactor.wasm")
 guest_wasm := "examples/hello-worker/target/wasm32-wasip1/debug/hello_worker.wasm"
 guest_component := "examples/hello-worker/target/wasm32-wasip1/debug/hello_worker.component.wasm"
+rust_interop_wasm := "examples/rust-interop/target/wasm32-wasip1/debug/rust_interop.wasm"
+rust_interop_component := "examples/rust-interop/target/wasm32-wasip1/debug/rust_interop.component.wasm"
+moonbit_interop_component := "examples/moonbit-interop/target/moonbit-interop.component.wasm"
 fly_control_app := env_var_or_default("FLY_CONTROL_APP", "wasmplane-control")
 fly_runtime_app := env_var_or_default("FLY_RUNTIME_APP", "wasmplane-runtime")
 fly_collector_app := env_var_or_default("FLY_COLLECTOR_APP", "wasmplane-otel-collector")
@@ -42,6 +45,23 @@ guest-build: deps guest-bindings
 
 guest-invoke: rust-build guest-build
     target/debug/wasmplane-wasip3-host invoke --component "{{ guest_component }}" --method GET --uri http://hello.example.dev/ --body ''
+
+interop-rust-bindings:
+    wit-bindgen rust examples/interop/wit --world probe-world --out-dir /tmp/wasmplane-rust-interop-wbg
+    cp /tmp/wasmplane-rust-interop-wbg/probe_world.rs examples/rust-interop/src/bindings.rs
+
+interop-rust-build: interop-rust-bindings
+    RUSTC=$(rustup which rustc --toolchain stable) rustup run stable cargo build --manifest-path examples/rust-interop/Cargo.toml --target wasm32-wasip1
+    test -f "{{ wasi_adapter }}"
+    wasm-tools component new "{{ rust_interop_wasm }}" --adapt "{{ wasi_adapter }}" -o "{{ rust_interop_component }}"
+    wasm-tools component wit "{{ rust_interop_component }}" >/dev/null
+
+interop-moonbit-build:
+    just -f examples/moonbit-interop/justfile build
+
+interop-smoke: interop-rust-build interop-moonbit-build
+    wasmtime run --invoke 'ping("hello-rust")' "{{ rust_interop_component }}" | grep '"hello-rust"'
+    wasmtime run --invoke 'ping("hello-moonbit")' "{{ moonbit_interop_component }}" | grep '"hello-moonbit"'
 
 bench: rust-build guest-build
     pnpm bench all --component "{{ guest_component }}" --host-bin target/debug/wasmplane-wasip3-host --iterations 30 --warmup 3 --concurrency 1,2,4

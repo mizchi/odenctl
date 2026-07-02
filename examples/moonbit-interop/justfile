@@ -1,0 +1,19 @@
+set shell := ["zsh", "-cu"]
+
+component := "target/moonbit-interop.component.wasm"
+embedded := "target/moonbit-interop.embedded.wasm"
+core_wasm := "_build/wasm/release/build/gen/gen.wasm"
+
+bindings:
+    wit-bindgen moonbit ../interop/wit --world probe-world --out-dir . --derive-show --derive-eq
+    cp src/probe.mbt gen/world/probeWorld/stub.mbt
+
+build: bindings
+    moon build --target wasm --release
+    mkdir -p target
+    wasm-tools component embed ../interop/wit "{{ core_wasm }}" --encoding utf16 --output "{{ embedded }}"
+    wasm-tools component new "{{ embedded }}" --output "{{ component }}"
+    wasm-tools component wit "{{ component }}" >/dev/null
+
+smoke: build
+    wasmtime run --invoke 'ping("hello-moonbit")' "{{ component }}" | grep '"hello-moonbit"'

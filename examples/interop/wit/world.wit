@@ -1,0 +1,5 @@
+package myedge:interop@0.1.0;
+
+world probe-world {
+  export ping: func(message: string) -> string;
+}

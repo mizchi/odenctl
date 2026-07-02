@@ -38,3 +38,28 @@ test("project tooling keeps Wasm E2E portable", async () => {
   assert.match(flyRuntime, /RUNTIME_ROUTE_SNAPSHOT_FILE = "\/data\/route-snapshot\.json"/);
   assert.match(flyRuntime, /path = "\/__runtime\/healthz"/);
 });
+
+test("Rust and MoonBit interop examples share a WASI p3 component contract", async () => {
+  const justfile = await readFile("justfile", "utf8");
+  const cargoToml = await readFile("Cargo.toml", "utf8");
+  const readme = await readFile("README.md", "utf8");
+  const wit = await readFile("examples/interop/wit/world.wit", "utf8");
+  const rustLib = await readFile("examples/rust-interop/src/lib.rs", "utf8");
+  const rustCargo = await readFile("examples/rust-interop/Cargo.toml", "utf8");
+  const moonbitStub = await readFile("examples/moonbit-interop/src/probe.mbt", "utf8");
+  const moonbitJustfile = await readFile("examples/moonbit-interop/justfile", "utf8");
+
+  assert.match(wit, /package myedge:interop@0\.1\.0/);
+  assert.match(wit, /world probe-world/);
+  assert.match(wit, /export ping: func\(message: string\) -> string/);
+  assert.match(rustCargo, /name = "rust-interop"/);
+  assert.match(rustLib, /impl Guest for Component/);
+  assert.match(rustLib, /fn ping\(message: String\) -> String/);
+  assert.match(moonbitStub, /pub fn ping\(message : String\) -> String/);
+  assert.match(moonbitJustfile, /wit-bindgen moonbit \.\.\/interop\/wit --world probe-world/);
+  assert.match(justfile, /^interop-smoke:/m);
+  assert.match(justfile, /wasmtime run --invoke 'ping\("hello-rust"\)'/);
+  assert.match(justfile, /wasmtime run --invoke 'ping\("hello-moonbit"\)'/);
+  assert.match(cargoToml, /examples\/rust-interop/);
+  assert.match(readme, /## Rust and MoonBit WASI p3 interop/);
+});
