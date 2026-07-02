@@ -669,6 +669,46 @@ test("HTTP API issues and reads organization billing invoices", async () => {
     assert.equal(exportBundle.invoice.id, invoice.id);
     assert.equal(exportBundle.signature.keyId, "billing");
     assert.match(exportBundle.contentDigest, /^sha256:[a-f0-9]{64}$/);
+
+    const policy = await putJson(baseUrl, `/billing-invoices/${invoice.id}/retention-policy`, {
+      retainUntil: "2026-09-01T00:00:00.000Z",
+      legalHold: true,
+      legalHoldReason: "tax audit",
+    });
+    assert.equal(policy.invoiceId, invoice.id);
+    assert.equal(policy.organizationId, organization.id);
+    assert.equal(policy.legalHold, true);
+    assert.equal(policy.legalHoldReason, "tax audit");
+
+    const policyResponse = await fetch(`${baseUrl}/billing-invoices/${invoice.id}/retention-policy`);
+    assert.equal(policyResponse.status, 200);
+    assert.deepEqual(await policyResponse.json(), policy);
+
+    await putJson(baseUrl, `/billing-invoices/${august.id}/retention-policy`, {
+      retainUntil: "2026-12-01T00:00:00.000Z",
+    });
+
+    const heldPrune = await postJsonOk(baseUrl, "/billing-invoices/retention/prune", {
+      organizationId: organization.id,
+      at: "2026-09-15T00:00:00.000Z",
+    });
+    assert.deepEqual(heldPrune.deleted, []);
+    assert.deepEqual(heldPrune.retained.map((item: any) => [item.invoiceId, item.reason]), [
+      [invoice.id, "legal_hold"],
+      [august.id, "retention_active"],
+    ]);
+
+    await putJson(baseUrl, `/billing-invoices/${invoice.id}/retention-policy`, {
+      retainUntil: "2026-09-01T00:00:00.000Z",
+      legalHold: false,
+    });
+    const pruned = await postJsonOk(baseUrl, "/billing-invoices/retention/prune", {
+      organizationId: organization.id,
+      at: "2026-09-15T00:00:00.000Z",
+    });
+    assert.deepEqual(pruned.deleted.map((deleted: any) => deleted.id), [invoice.id]);
+    const missing = await fetch(`${baseUrl}/billing-invoices/${invoice.id}`);
+    assert.equal(missing.status, 404);
   } finally {
     await app.close();
   }

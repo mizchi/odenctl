@@ -263,4 +263,4 @@ Production readiness tasks, in implementation order.
 - [x] Add signed invoice export bundles for external accounting systems.
 - [x] Add billing outbox/webhook delivery with retry and idempotency keys.
 - [x] Add credit-note and adjustment records without mutating issued invoices.
-- [ ] Add invoice retention and legal hold policy controls.
+- [x] Add invoice retention and legal hold policy controls.

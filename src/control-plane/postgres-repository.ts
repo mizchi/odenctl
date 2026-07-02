@@ -22,10 +22,11 @@ import type {
   UsageEvent,
   User,
 } from "./contracts.ts";
-import { ControlPlaneError } from "./errors.ts";
+import { ControlPlaneError, isControlPlaneError } from "./errors.ts";
 import { invoiceContentDigest, type OrganizationBillingInvoice } from "./billing-invoice.ts";
 import type { BillingWebhookDelivery, BillingWebhookDeliveryStatus } from "./billing-webhook.ts";
 import type { BillingInvoiceAdjustment } from "./billing-adjustment.ts";
+import type { BillingInvoiceRetentionPolicy } from "./billing-retention.ts";
 
 const { Pool } = pg;
 const initMigrationId = "202606300001_postgres_init";
@@ -335,6 +336,37 @@ export class PostgresControlPlaneRepository implements AsyncControlPlaneReposito
     return result.rows.map(billingInvoiceFromRow);
   }
 
+  async deleteBillingInvoice(id: string): Promise<OrganizationBillingInvoice> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("begin");
+      const result = await client.query("select * from billing_invoices where id = $1", [id]);
+      if (!result.rows[0]) {
+        throw new ControlPlaneError("not_found", `billing invoice ${id} was not found`);
+      }
+      const invoice = billingInvoiceFromRow(result.rows[0]);
+      await client.query("delete from billing_invoice_adjustments where invoice_id = $1", [id]);
+      await client.query("delete from billing_invoice_retention_policies where invoice_id = $1", [id]);
+      await client.query(
+        `delete from billing_webhook_deliveries
+         where event_type = 'billing.invoice.issued'
+           and payload_json -> 'invoice' ->> 'id' = $1`,
+        [id],
+      );
+      await client.query("delete from billing_invoices where id = $1", [id]);
+      await client.query("commit");
+      return invoice;
+    } catch (error) {
+      await client.query("rollback");
+      if (isControlPlaneError(error)) {
+        throw error;
+      }
+      throw writeError("billing invoice", id, error);
+    } finally {
+      client.release();
+    }
+  }
+
   async createBillingWebhookDelivery(
     delivery: BillingWebhookDelivery,
   ): Promise<BillingWebhookDelivery> {
@@ -480,6 +512,47 @@ export class PostgresControlPlaneRepository implements AsyncControlPlaneReposito
       [invoiceId],
     );
     return result.rows.map(billingInvoiceAdjustmentFromRow);
+  }
+
+  async upsertBillingInvoiceRetentionPolicy(
+    policy: BillingInvoiceRetentionPolicy,
+  ): Promise<BillingInvoiceRetentionPolicy> {
+    try {
+      await this.pool.query(
+        `insert into billing_invoice_retention_policies (
+          invoice_id,
+          organization_id,
+          retain_until,
+          legal_hold,
+          legal_hold_reason,
+          updated_at
+        ) values ($1, $2, $3, $4, $5, $6)
+        on conflict (invoice_id) do update set
+          organization_id = excluded.organization_id,
+          retain_until = excluded.retain_until,
+          legal_hold = excluded.legal_hold,
+          legal_hold_reason = excluded.legal_hold_reason,
+          updated_at = excluded.updated_at`,
+        [
+          policy.invoiceId,
+          policy.organizationId,
+          policy.retainUntil,
+          policy.legalHold,
+          policy.legalHoldReason ?? null,
+          policy.updatedAt,
+        ],
+      );
+      return policy;
+    } catch (error) {
+      throw writeError("billing invoice retention policy", policy.invoiceId, error);
+    }
+  }
+
+  async getBillingInvoiceRetentionPolicy(invoiceId: string): Promise<BillingInvoiceRetentionPolicy | undefined> {
+    const result = await this.pool.query("select * from billing_invoice_retention_policies where invoice_id = $1", [
+      invoiceId,
+    ]);
+    return result.rows[0] ? billingInvoiceRetentionPolicyFromRow(result.rows[0]) : undefined;
   }
 
   async createCustomDomain(domain: CustomDomain): Promise<CustomDomain> {
@@ -1395,6 +1468,17 @@ function billingInvoiceAdjustmentFromRow(row: any): BillingInvoiceAdjustment {
     amountUsd: Number(row.amount_usd),
     reason: row.reason,
     createdAt: row.created_at,
+  };
+}
+
+function billingInvoiceRetentionPolicyFromRow(row: any): BillingInvoiceRetentionPolicy {
+  return {
+    invoiceId: row.invoice_id,
+    organizationId: row.organization_id,
+    retainUntil: row.retain_until,
+    legalHold: Boolean(row.legal_hold),
+    ...(row.legal_hold_reason ? { legalHoldReason: row.legal_hold_reason } : {}),
+    updatedAt: row.updated_at,
   };
 }
 

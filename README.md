@@ -93,6 +93,11 @@ run the delivery loop in-process; tune retry behavior with `WASMPLANE_BILLING_WE
 and `WASMPLANE_BILLING_WEBHOOK_RETRY_DELAY_MS`.
 Credit notes and debit adjustments are stored as separate immutable records linked to an issued
 invoice; they do not mutate the saved invoice payload, rate card, or `contentDigest`.
+Retention and legal hold controls are stored as separate invoice policy records. Use
+`PUT /billing-invoices/:id/retention-policy` to set `retainUntil` and optional legal hold metadata,
+`GET /billing-invoices/:id/retention-policy` to audit it, and
+`POST /billing-invoices/retention/prune` to delete only expired, non-held invoices for an
+organization.
 Set `WASMPLANE_SNAPSHOT_PUBLISH_INTERVAL_MS` to run a background publish job that periodically
 generates the current route snapshot and publishes it to configured/registered active runtime
 nodes. Each generated route snapshot includes a content-derived `snap_<hash>` id, and publish
@@ -747,6 +752,9 @@ Available endpoints:
 - `POST /organizations/:id/billing-invoices`
 - `GET /billing-invoices/:id`
 - `GET /billing-invoices/:id/export`
+- `GET /billing-invoices/:id/retention-policy`
+- `PUT /billing-invoices/:id/retention-policy`
+- `POST /billing-invoices/retention/prune`
 - `POST /users`
 - `POST /projects`
 - `POST /projects/:id/memberships`

@@ -23,6 +23,7 @@ import { ControlPlaneError } from "./errors.ts";
 import { invoiceContentDigest, type OrganizationBillingInvoice } from "./billing-invoice.ts";
 import type { BillingWebhookDelivery, BillingWebhookDeliveryStatus } from "./billing-webhook.ts";
 import type { BillingInvoiceAdjustment } from "./billing-adjustment.ts";
+import type { BillingInvoiceRetentionPolicy } from "./billing-retention.ts";
 
 export interface ControlPlaneRepository {
   createOrganization(organization: Organization): Organization;
@@ -45,12 +46,15 @@ export interface ControlPlaneRepository {
     periodKey: string,
   ): OrganizationBillingInvoice | undefined;
   listOrganizationBillingInvoices(organizationId: string): OrganizationBillingInvoice[];
+  deleteBillingInvoice(id: string): OrganizationBillingInvoice;
   createBillingWebhookDelivery(delivery: BillingWebhookDelivery): BillingWebhookDelivery;
   getBillingWebhookDeliveryByIdempotencyKey(idempotencyKey: string): BillingWebhookDelivery | undefined;
   listBillingWebhookDeliveries(status?: BillingWebhookDeliveryStatus): BillingWebhookDelivery[];
   updateBillingWebhookDelivery(delivery: BillingWebhookDelivery): BillingWebhookDelivery;
   createBillingInvoiceAdjustment(adjustment: BillingInvoiceAdjustment): BillingInvoiceAdjustment;
   listBillingInvoiceAdjustments(invoiceId: string): BillingInvoiceAdjustment[];
+  upsertBillingInvoiceRetentionPolicy(policy: BillingInvoiceRetentionPolicy): BillingInvoiceRetentionPolicy;
+  getBillingInvoiceRetentionPolicy(invoiceId: string): BillingInvoiceRetentionPolicy | undefined;
   createCustomDomain(domain: CustomDomain): CustomDomain;
   getCustomDomain(id: string): CustomDomain | undefined;
   getCustomDomainByHost(host: string): CustomDomain | undefined;
@@ -372,6 +376,31 @@ class SqliteControlPlaneRepository implements ControlPlaneRepository {
       .map(billingInvoiceFromRow);
   }
 
+  deleteBillingInvoice(id: string): OrganizationBillingInvoice {
+    const invoice = this.getBillingInvoice(id);
+    if (!invoice) {
+      throw new ControlPlaneError("not_found", `billing invoice ${id} was not found`);
+    }
+    this.db.exec("begin");
+    try {
+      this.db.prepare("delete from billing_invoice_adjustments where invoice_id = ?").run(id);
+      this.db.prepare("delete from billing_invoice_retention_policies where invoice_id = ?").run(id);
+      this.db
+        .prepare(
+          `delete from billing_webhook_deliveries
+           where event_type = 'billing.invoice.issued'
+             and json_extract(payload_json, '$.invoice.id') = ?`,
+        )
+        .run(id);
+      this.db.prepare("delete from billing_invoices where id = ?").run(id);
+      this.db.exec("commit");
+    } catch (error) {
+      this.db.exec("rollback");
+      throw writeError("billing invoice", id, error);
+    }
+    return invoice;
+  }
+
   createBillingWebhookDelivery(delivery: BillingWebhookDelivery): BillingWebhookDelivery {
     try {
       this.db
@@ -513,6 +542,44 @@ class SqliteControlPlaneRepository implements ControlPlaneRepository {
       )
       .all(invoiceId)
       .map(billingInvoiceAdjustmentFromRow);
+  }
+
+  upsertBillingInvoiceRetentionPolicy(policy: BillingInvoiceRetentionPolicy): BillingInvoiceRetentionPolicy {
+    try {
+      this.db
+        .prepare(
+          `insert into billing_invoice_retention_policies (
+            invoice_id,
+            organization_id,
+            retain_until,
+            legal_hold,
+            legal_hold_reason,
+            updated_at
+          ) values (?, ?, ?, ?, ?, ?)
+          on conflict(invoice_id) do update set
+            organization_id = excluded.organization_id,
+            retain_until = excluded.retain_until,
+            legal_hold = excluded.legal_hold,
+            legal_hold_reason = excluded.legal_hold_reason,
+            updated_at = excluded.updated_at`,
+        )
+        .run(
+          policy.invoiceId,
+          policy.organizationId,
+          policy.retainUntil,
+          policy.legalHold ? 1 : 0,
+          policy.legalHoldReason ?? null,
+          policy.updatedAt,
+        );
+      return policy;
+    } catch (error) {
+      throw writeError("billing invoice retention policy", policy.invoiceId, error);
+    }
+  }
+
+  getBillingInvoiceRetentionPolicy(invoiceId: string): BillingInvoiceRetentionPolicy | undefined {
+    const row = this.db.prepare("select * from billing_invoice_retention_policies where invoice_id = ?").get(invoiceId);
+    return row ? billingInvoiceRetentionPolicyFromRow(row) : undefined;
   }
 
   createCustomDomain(domain: CustomDomain): CustomDomain {
@@ -1464,6 +1531,17 @@ function billingInvoiceAdjustmentFromRow(row: any): BillingInvoiceAdjustment {
   };
 }
 
+function billingInvoiceRetentionPolicyFromRow(row: any): BillingInvoiceRetentionPolicy {
+  return {
+    invoiceId: row.invoice_id,
+    organizationId: row.organization_id,
+    retainUntil: row.retain_until,
+    legalHold: Boolean(row.legal_hold),
+    ...(row.legal_hold_reason ? { legalHoldReason: row.legal_hold_reason } : {}),
+    updatedAt: row.updated_at,
+  };
+}
+
 function writeError(kind: string, id: string, error: unknown): ControlPlaneError {
   const message = error instanceof Error ? error.message : String(error);
   if (message.includes("UNIQUE constraint failed")) {
@@ -1600,6 +1678,20 @@ create table if not exists billing_invoice_adjustments (
 
 create index if not exists billing_invoice_adjustments_invoice_idx
   on billing_invoice_adjustments (invoice_id, created_at asc, id asc);
+
+create table if not exists billing_invoice_retention_policies (
+  invoice_id text primary key,
+  organization_id text not null,
+  retain_until text not null,
+  legal_hold integer not null,
+  legal_hold_reason text,
+  updated_at text not null,
+  foreign key (invoice_id) references billing_invoices(id),
+  foreign key (organization_id) references organizations(id)
+);
+
+create index if not exists billing_invoice_retention_policies_org_idx
+  on billing_invoice_retention_policies (organization_id, retain_until, invoice_id);
 
 create table if not exists custom_domains (
   id text primary key,
@@ -2107,6 +2199,26 @@ const migrations: SchemaMigration[] = [
 
         create index if not exists billing_invoice_adjustments_invoice_idx
           on billing_invoice_adjustments (invoice_id, created_at asc, id asc);
+      `);
+    },
+  },
+  {
+    id: "202607020005_billing_invoice_retention_policies",
+    apply(db) {
+      db.exec(`
+        create table if not exists billing_invoice_retention_policies (
+          invoice_id text primary key,
+          organization_id text not null,
+          retain_until text not null,
+          legal_hold integer not null,
+          legal_hold_reason text,
+          updated_at text not null,
+          foreign key (invoice_id) references billing_invoices(id),
+          foreign key (organization_id) references organizations(id)
+        );
+
+        create index if not exists billing_invoice_retention_policies_org_idx
+          on billing_invoice_retention_policies (organization_id, retain_until, invoice_id);
       `);
     },
   },

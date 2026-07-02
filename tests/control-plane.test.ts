@@ -732,6 +732,106 @@ test("control plane lists organization billing invoices newest first", () => {
   );
 });
 
+test("control plane prunes billing invoices only after retention and legal hold release", () => {
+  let currentNow = "2026-07-10T00:00:00.000Z";
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: () => currentNow,
+    projectBillingRates: {
+      invocationsPerMillionUsd: 1,
+    },
+  });
+  const organization = control.createOrganization({ id: "org_invoice_retention", name: "Invoice Retention Org" });
+  const project = control.createProject({
+    id: "prj_invoice_retention",
+    name: "invoice retention",
+    organizationId: organization.id,
+  });
+  control.recordUsageEvent({
+    id: "use_invoice_retention_july",
+    projectId: project.id,
+    metric: "invocation",
+    quantity: 1_000_000,
+    recordedAt: "2026-07-01T00:00:00.000Z",
+  });
+  control.recordUsageEvent({
+    id: "use_invoice_retention_august",
+    projectId: project.id,
+    metric: "invocation",
+    quantity: 2_000_000,
+    recordedAt: "2026-08-01T00:00:00.000Z",
+  });
+
+  const july = control.issueOrganizationBillingInvoice({
+    id: "inv_invoice_retention_july",
+    organizationId: organization.id,
+    at: "2026-07-15T00:00:00.000Z",
+  });
+  currentNow = "2026-08-10T00:00:00.000Z";
+  const august = control.issueOrganizationBillingInvoice({
+    id: "inv_invoice_retention_august",
+    organizationId: organization.id,
+    at: "2026-08-15T00:00:00.000Z",
+  });
+  control.createBillingInvoiceAdjustment({
+    id: "adj_invoice_retention_july",
+    invoiceId: july.id,
+    type: "credit_note",
+    amountUsd: 0.5,
+    reason: "billing correction",
+  });
+
+  const beforePolicy = control.getBillingInvoice({ id: july.id });
+  const policy = control.setBillingInvoiceRetentionPolicy({
+    invoiceId: july.id,
+    retainUntil: "2026-09-01T00:00:00.000Z",
+    legalHold: true,
+    legalHoldReason: "tax audit",
+  });
+  assert.equal(policy.organizationId, organization.id);
+  assert.equal(policy.legalHold, true);
+  assert.equal(policy.legalHoldReason, "tax audit");
+  assert.deepEqual(control.getBillingInvoice({ id: july.id }), beforePolicy);
+  assert.deepEqual(control.getBillingInvoiceRetentionPolicy({ invoiceId: july.id }), policy);
+  control.setBillingInvoiceRetentionPolicy({
+    invoiceId: august.id,
+    retainUntil: "2026-12-01T00:00:00.000Z",
+  });
+
+  currentNow = "2026-09-15T00:00:00.000Z";
+  const held = control.pruneBillingInvoices({ organizationId: organization.id });
+  assert.deepEqual(held.deleted, []);
+  assert.deepEqual(held.retained.map((item) => [item.invoiceId, item.reason]), [
+    [july.id, "legal_hold"],
+    [august.id, "retention_active"],
+  ]);
+  assert.deepEqual(control.listOrganizationBillingInvoices({ organizationId: organization.id }).map((invoice) => invoice.id), [
+    august.id,
+    july.id,
+  ]);
+
+  const released = control.setBillingInvoiceRetentionPolicy({
+    invoiceId: july.id,
+    retainUntil: "2026-09-01T00:00:00.000Z",
+    legalHold: false,
+  });
+  assert.equal(released.legalHold, false);
+  assert.equal(released.legalHoldReason, undefined);
+
+  const pruned = control.pruneBillingInvoices({ organizationId: organization.id });
+  assert.deepEqual(pruned.deleted.map((invoice) => invoice.id), [july.id]);
+  assert.deepEqual(pruned.retained.map((item) => [item.invoiceId, item.reason]), [
+    [august.id, "retention_active"],
+  ]);
+  assert.throws(() => control.getBillingInvoice({ id: july.id }), /billing invoice inv_invoice_retention_july was not found/);
+  assert.throws(
+    () => control.listBillingInvoiceAdjustments({ invoiceId: july.id }),
+    /billing invoice inv_invoice_retention_july was not found/,
+  );
+  assert.deepEqual(control.listOrganizationBillingInvoices({ organizationId: organization.id }), [august]);
+});
+
 test("control plane enqueues and retries billing webhook deliveries", async () => {
   let currentNow = "2026-08-01T00:00:00.000Z";
   const control = createControlPlane({
@@ -1143,6 +1243,78 @@ test("async control plane lists organization billing invoices newest first", asy
   assert.deepEqual(
     (await control.listOrganizationBillingInvoices({ organizationId: organization.id })).map((invoice) => invoice.id),
     [august.id, july.id],
+  );
+});
+
+test("async control plane prunes billing invoices only after retention and legal hold release", async () => {
+  let currentNow = "2026-07-10T00:00:00.000Z";
+  const control = createAsyncControlPlane({
+    repository: asyncRepository(createMemoryRepository()),
+    idGenerator: sequenceIds(),
+    now: () => currentNow,
+    projectBillingRates: {
+      invocationsPerMillionUsd: 1,
+    },
+  });
+  const organization = await control.createOrganization({
+    id: "org_async_invoice_retention",
+    name: "Async Invoice Retention Org",
+  });
+  const project = await control.createProject({
+    id: "prj_async_invoice_retention",
+    name: "async invoice retention",
+    organizationId: organization.id,
+  });
+  await control.recordUsageEvent({
+    id: "use_async_invoice_retention_july",
+    projectId: project.id,
+    metric: "invocation",
+    quantity: 1_000_000,
+    recordedAt: "2026-07-01T00:00:00.000Z",
+  });
+  await control.recordUsageEvent({
+    id: "use_async_invoice_retention_august",
+    projectId: project.id,
+    metric: "invocation",
+    quantity: 2_000_000,
+    recordedAt: "2026-08-01T00:00:00.000Z",
+  });
+
+  const july = await control.issueOrganizationBillingInvoice({
+    id: "inv_async_invoice_retention_july",
+    organizationId: organization.id,
+    at: "2026-07-15T00:00:00.000Z",
+  });
+  currentNow = "2026-08-10T00:00:00.000Z";
+  const august = await control.issueOrganizationBillingInvoice({
+    id: "inv_async_invoice_retention_august",
+    organizationId: organization.id,
+    at: "2026-08-15T00:00:00.000Z",
+  });
+  await control.setBillingInvoiceRetentionPolicy({
+    invoiceId: july.id,
+    retainUntil: "2026-09-01T00:00:00.000Z",
+    legalHold: true,
+    legalHoldReason: "audit",
+  });
+  await control.setBillingInvoiceRetentionPolicy({
+    invoiceId: august.id,
+    retainUntil: "2026-12-01T00:00:00.000Z",
+  });
+
+  currentNow = "2026-09-15T00:00:00.000Z";
+  assert.deepEqual((await control.pruneBillingInvoices({ organizationId: organization.id })).deleted, []);
+  await control.setBillingInvoiceRetentionPolicy({
+    invoiceId: july.id,
+    retainUntil: "2026-09-01T00:00:00.000Z",
+    legalHold: false,
+  });
+
+  const pruned = await control.pruneBillingInvoices({ organizationId: organization.id });
+  assert.deepEqual(pruned.deleted.map((invoice) => invoice.id), [july.id]);
+  assert.deepEqual(
+    (await control.listOrganizationBillingInvoices({ organizationId: organization.id })).map((invoice) => invoice.id),
+    [august.id],
   );
 });
 
@@ -2573,6 +2745,7 @@ test("sqlite repository records schema migrations and upgrades existing database
     "202607020002_billing_invoice_digest",
     "202607020003_billing_webhook_deliveries",
     "202607020004_billing_invoice_adjustments",
+    "202607020005_billing_invoice_retention_policies",
   ]);
   assert.ok(routeColumns.includes("targets_json"));
   const artifactColumns = db
@@ -2609,6 +2782,7 @@ test("sqlite repository records schema migrations and upgrades existing database
   assert.equal(db.prepare("select count(*) as count from billing_invoices").get().count, 0);
   assert.equal(db.prepare("select count(*) as count from billing_webhook_deliveries").get().count, 0);
   assert.equal(db.prepare("select count(*) as count from billing_invoice_adjustments").get().count, 0);
+  assert.equal(db.prepare("select count(*) as count from billing_invoice_retention_policies").get().count, 0);
   const billingInvoiceColumns = db
     .prepare("pragma table_info(billing_invoices)")
     .all()
@@ -2626,6 +2800,12 @@ test("sqlite repository records schema migrations and upgrades existing database
     .map((row: any) => row.name);
   assert.ok(billingAdjustmentColumns.includes("invoice_id"));
   assert.ok(billingAdjustmentColumns.includes("amount_usd"));
+  const billingRetentionColumns = db
+    .prepare("pragma table_info(billing_invoice_retention_policies)")
+    .all()
+    .map((row: any) => row.name);
+  assert.ok(billingRetentionColumns.includes("retain_until"));
+  assert.ok(billingRetentionColumns.includes("legal_hold"));
   assert.equal(db.prepare("select count(*) as count from route_snapshot_publications").get().count, 1);
   const publicationColumns = db
     .prepare("pragma table_info(route_snapshot_publications)")

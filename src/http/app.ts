@@ -69,6 +69,9 @@ export interface HttpAppOptions {
     getBillingInvoice(input: any): MaybePromise<unknown>;
     exportBillingInvoice(input: any): MaybePromise<unknown>;
     listOrganizationBillingInvoices(input: any): MaybePromise<unknown>;
+    setBillingInvoiceRetentionPolicy(input: any): MaybePromise<unknown>;
+    getBillingInvoiceRetentionPolicy(input: any): MaybePromise<unknown>;
+    pruneBillingInvoices(input: any): MaybePromise<unknown>;
     createCustomDomain(input: any): MaybePromise<unknown>;
     listProjectCustomDomains(input: any): MaybePromise<unknown>;
     verifyCustomDomainOwnership(input: any): MaybePromise<unknown>;
@@ -481,6 +484,32 @@ export function createHttpApp(options: HttpAppOptions) {
       }
       if (method === "POST" && url.pathname === "/artifacts") {
         writeJson(response, 201, await options.controlPlane.createArtifact(await readJson(request)));
+        return;
+      }
+      const billingInvoiceRetentionPolicy = billingInvoiceRetentionPolicyMatch(method, url.pathname);
+      if (billingInvoiceRetentionPolicy && method === "GET") {
+        writeJson(
+          response,
+          200,
+          await options.controlPlane.getBillingInvoiceRetentionPolicy({
+            invoiceId: billingInvoiceRetentionPolicy.id,
+          }),
+        );
+        return;
+      }
+      if (billingInvoiceRetentionPolicy && method === "PUT") {
+        writeJson(
+          response,
+          200,
+          await options.controlPlane.setBillingInvoiceRetentionPolicy({
+            ...(await readJson(request)),
+            invoiceId: billingInvoiceRetentionPolicy.id,
+          }),
+        );
+        return;
+      }
+      if (method === "POST" && url.pathname === "/billing-invoices/retention/prune") {
+        writeJson(response, 200, await options.controlPlane.pruneBillingInvoices(await readJson(request)));
         return;
       }
       const billingInvoice = billingInvoiceMatch(method, url.pathname);
@@ -1533,6 +1562,17 @@ function billingInvoiceMatch(method: string, pathname: string): { id: string } |
     return undefined;
   }
   const match = /^\/billing-invoices\/([^/]+)$/.exec(pathname);
+  if (!match) {
+    return undefined;
+  }
+  return { id: decodeURIComponent(match[1]) };
+}
+
+function billingInvoiceRetentionPolicyMatch(method: string, pathname: string): { id: string } | undefined {
+  if (method !== "GET" && method !== "PUT") {
+    return undefined;
+  }
+  const match = /^\/billing-invoices\/([^/]+)\/retention-policy$/.exec(pathname);
   if (!match) {
     return undefined;
   }

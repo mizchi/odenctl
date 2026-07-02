@@ -133,6 +133,11 @@ import {
   type BillingInvoiceAdjustment,
   type BillingInvoiceAdjustmentType,
 } from "./billing-adjustment.ts";
+import {
+  createBillingInvoiceRetentionPolicyRecord,
+  type BillingInvoiceRetentionPolicy,
+  type BillingInvoiceRetentionRetained,
+} from "./billing-retention.ts";
 
 export interface ControlPlaneOptions {
   repository: ControlPlaneRepository;
@@ -284,6 +289,28 @@ export interface CreateBillingInvoiceAdjustmentInput {
 
 export interface ListBillingInvoiceAdjustmentsInput {
   invoiceId: string;
+}
+
+export interface SetBillingInvoiceRetentionPolicyInput {
+  invoiceId: string;
+  retainUntil: string;
+  legalHold?: boolean;
+  legalHoldReason?: string;
+}
+
+export interface GetBillingInvoiceRetentionPolicyInput {
+  invoiceId: string;
+}
+
+export interface PruneBillingInvoicesInput {
+  organizationId: string;
+  at?: string;
+}
+
+export interface PruneBillingInvoicesReport {
+  scanned: number;
+  deleted: OrganizationBillingInvoice[];
+  retained: BillingInvoiceRetentionRetained[];
 }
 
 export interface CreateCustomDomainInput {
@@ -870,6 +897,82 @@ export function createControlPlane(options: ControlPlaneOptions) {
     return repository.listBillingInvoiceAdjustments(input.invoiceId);
   }
 
+  function setBillingInvoiceRetentionPolicy(
+    input: SetBillingInvoiceRetentionPolicyInput,
+  ): BillingInvoiceRetentionPolicy {
+    const invoice = getBillingInvoice({ id: input.invoiceId });
+    return repository.upsertBillingInvoiceRetentionPolicy(
+      createBillingInvoiceRetentionPolicyRecord({
+        invoiceId: invoice.id,
+        organizationId: invoice.organizationId,
+        retainUntil: input.retainUntil,
+        legalHold: input.legalHold,
+        legalHoldReason: input.legalHoldReason,
+        updatedAt: now(),
+      }),
+    );
+  }
+
+  function getBillingInvoiceRetentionPolicy(
+    input: GetBillingInvoiceRetentionPolicyInput,
+  ): BillingInvoiceRetentionPolicy {
+    getBillingInvoice({ id: input.invoiceId });
+    const policy = repository.getBillingInvoiceRetentionPolicy(input.invoiceId);
+    if (!policy) {
+      throw new ControlPlaneError(
+        "not_found",
+        `billing invoice retention policy for ${input.invoiceId} was not found`,
+      );
+    }
+    return policy;
+  }
+
+  function pruneBillingInvoices(input: PruneBillingInvoicesInput): PruneBillingInvoicesReport {
+    requireOrganization(repository, input.organizationId);
+    const at = normalizeUsageTimestamp(input.at, "billing invoice retention prune at") ?? now();
+    const invoices = repository
+      .listOrganizationBillingInvoices(input.organizationId)
+      .toSorted((a, b) => a.issuedAt.localeCompare(b.issuedAt) || a.id.localeCompare(b.id));
+    const deleted: OrganizationBillingInvoice[] = [];
+    const retained: BillingInvoiceRetentionRetained[] = [];
+    for (const invoice of invoices) {
+      const policy = repository.getBillingInvoiceRetentionPolicy(invoice.id);
+      if (!policy) {
+        retained.push({
+          invoiceId: invoice.id,
+          organizationId: invoice.organizationId,
+          reason: "no_policy",
+        });
+        continue;
+      }
+      if (policy.legalHold) {
+        retained.push({
+          invoiceId: invoice.id,
+          organizationId: invoice.organizationId,
+          reason: "legal_hold",
+          retainUntil: policy.retainUntil,
+          ...(policy.legalHoldReason ? { legalHoldReason: policy.legalHoldReason } : {}),
+        });
+        continue;
+      }
+      if (policy.retainUntil > at) {
+        retained.push({
+          invoiceId: invoice.id,
+          organizationId: invoice.organizationId,
+          reason: "retention_active",
+          retainUntil: policy.retainUntil,
+        });
+        continue;
+      }
+      deleted.push(repository.deleteBillingInvoice(invoice.id));
+    }
+    return {
+      scanned: invoices.length,
+      deleted,
+      retained,
+    };
+  }
+
   function createCustomDomain(input: CreateCustomDomainInput): CustomDomain {
     requireProject(repository, input.projectId);
     const host = normalizeHost(input.host);
@@ -1388,6 +1491,9 @@ export function createControlPlane(options: ControlPlaneOptions) {
     deliverPendingBillingWebhooks,
     createBillingInvoiceAdjustment,
     listBillingInvoiceAdjustments,
+    setBillingInvoiceRetentionPolicy,
+    getBillingInvoiceRetentionPolicy,
+    pruneBillingInvoices,
     createCustomDomain,
     listProjectCustomDomains,
     verifyCustomDomainOwnership,

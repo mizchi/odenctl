@@ -104,6 +104,15 @@ create table if not exists billing_invoice_adjustments (
   created_at text not null
 );
 
+create table if not exists billing_invoice_retention_policies (
+  invoice_id text primary key references billing_invoices(id),
+  organization_id text not null references organizations(id),
+  retain_until text not null,
+  legal_hold boolean not null,
+  legal_hold_reason text,
+  updated_at text not null
+);
+
 create table if not exists custom_domains (
   id text primary key,
   project_id text not null references projects(id),
@@ -293,6 +302,9 @@ create index if not exists billing_webhook_deliveries_status_next_idx
 
 create index if not exists billing_invoice_adjustments_invoice_idx
   on billing_invoice_adjustments (invoice_id, created_at asc, id asc);
+
+create index if not exists billing_invoice_retention_policies_org_idx
+  on billing_invoice_retention_policies (organization_id, retain_until, invoice_id);
 
 create index if not exists custom_domains_project_idx
   on custom_domains (project_id, host);

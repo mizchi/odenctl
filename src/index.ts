@@ -142,6 +142,14 @@ export {
   type BillingInvoiceAdjustmentType,
 } from "./control-plane/billing-adjustment.ts";
 export {
+  createBillingInvoiceRetentionPolicyRecord,
+  normalizeBillingInvoiceRetentionPolicyInput,
+  type BillingInvoiceRetentionPolicy,
+  type BillingInvoiceRetentionPolicyInput,
+  type BillingInvoiceRetentionRetained,
+  type BillingInvoiceRetentionRetainedReason,
+} from "./control-plane/billing-retention.ts";
+export {
   enforceProjectQuota,
   projectQuotasFromEnv,
 } from "./control-plane/quotas.ts";
