@@ -63,6 +63,7 @@ test("Postgres schema covers control-plane tables without SQLite-only syntax", a
     "usage_events",
     "custom_domains",
     "deploy_previews",
+    "billing_invoices",
   ]) {
     assert.match(sql, new RegExp(`create table if not exists ${table}`));
   }
@@ -82,6 +83,8 @@ test("Postgres schema covers control-plane tables without SQLite-only syntax", a
   assert.match(sql, /create index if not exists usage_events_project_time_idx/);
   assert.match(sql, /create index if not exists custom_domains_project_idx/);
   assert.match(sql, /create index if not exists deploy_previews_project_idx/);
+  assert.match(sql, /statement_json jsonb not null/);
+  assert.match(sql, /unique \(organization_id, period_key\)/);
   assert.doesNotMatch(sql, /pragma/i);
   assert.doesNotMatch(sql, /\binteger primary key\b/i);
 });

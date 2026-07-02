@@ -78,6 +78,10 @@ organization rollups from `GET /organizations/:id/billing-statement`.
 Set `WASMPLANE_BILLING_MONTHLY_USD_LIMITS` to comma-separated `project=usd` entries to reject
 usage events that would exceed a project's calendar-month spend budget. Current budget status is
 available from `GET /projects/:id/billing-budget`.
+Set `WASMPLANE_BILLING_RATE_CARD_VERSION` before issuing invoices so saved billing invoice
+snapshots record the exact rate card version used for that period. Issue immutable organization
+invoices with `POST /organizations/:id/billing-invoices`; the same organization/month returns the
+existing saved invoice even if rates later change.
 Set `WASMPLANE_SNAPSHOT_PUBLISH_INTERVAL_MS` to run a background publish job that periodically
 generates the current route snapshot and publishes it to configured/registered active runtime
 nodes. Each generated route snapshot includes a content-derived `snap_<hash>` id, and publish
@@ -728,6 +732,8 @@ Available endpoints:
 - `POST /admin/routes/rollback`
 - `POST /organizations`
 - `GET /organizations/:id/billing-statement`
+- `POST /organizations/:id/billing-invoices`
+- `GET /billing-invoices/:id`
 - `POST /users`
 - `POST /projects`
 - `POST /projects/:id/memberships`

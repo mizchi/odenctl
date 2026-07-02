@@ -23,6 +23,7 @@ import type {
   User,
 } from "./contracts.ts";
 import { ControlPlaneError } from "./errors.ts";
+import type { OrganizationBillingInvoice } from "./billing-invoice.ts";
 
 const { Pool } = pg;
 const initMigrationId = "202606300001_postgres_init";
@@ -264,6 +265,58 @@ export class PostgresControlPlaneRepository implements AsyncControlPlaneReposito
     );
     const project = await this.getProject(projectId);
     return usageSummaryFromRow(projectId, project?.organizationId, from, to, result.rows[0]);
+  }
+
+  async createBillingInvoice(
+    invoice: OrganizationBillingInvoice,
+  ): Promise<OrganizationBillingInvoice> {
+    try {
+      await this.pool.query(
+        `insert into billing_invoices (
+          id,
+          organization_id,
+          period_key,
+          period_json,
+          currency,
+          total_usd,
+          rates_json,
+          rate_card_version,
+          statement_json,
+          issued_at
+        ) values ($1, $2, $3, $4::jsonb, $5, $6, $7::jsonb, $8, $9::jsonb, $10)`,
+        [
+          invoice.id,
+          invoice.organizationId,
+          invoice.periodKey,
+          JSON.stringify(invoice.period),
+          invoice.currency,
+          invoice.totalUsd,
+          JSON.stringify(invoice.rates),
+          invoice.rateCardVersion,
+          JSON.stringify(invoice.statement),
+          invoice.issuedAt,
+        ],
+      );
+      return invoice;
+    } catch (error) {
+      throw writeError("billing invoice", invoice.id, error);
+    }
+  }
+
+  async getBillingInvoice(id: string): Promise<OrganizationBillingInvoice | undefined> {
+    const result = await this.pool.query("select * from billing_invoices where id = $1", [id]);
+    return result.rows[0] ? billingInvoiceFromRow(result.rows[0]) : undefined;
+  }
+
+  async getOrganizationBillingInvoiceByPeriod(
+    organizationId: string,
+    periodKey: string,
+  ): Promise<OrganizationBillingInvoice | undefined> {
+    const result = await this.pool.query(
+      "select * from billing_invoices where organization_id = $1 and period_key = $2",
+      [organizationId, periodKey],
+    );
+    return result.rows[0] ? billingInvoiceFromRow(result.rows[0]) : undefined;
   }
 
   async createCustomDomain(domain: CustomDomain): Promise<CustomDomain> {
@@ -1128,6 +1181,21 @@ function usageSummaryFromRow(
       storageBytes: Number(row?.storage_bytes ?? 0),
       sqliteUnits: Number(row?.sqlite_units ?? 0),
     },
+  };
+}
+
+function billingInvoiceFromRow(row: any): OrganizationBillingInvoice {
+  return {
+    id: row.id,
+    organizationId: row.organization_id,
+    periodKey: row.period_key,
+    period: jsonValue(row.period_json),
+    currency: row.currency,
+    totalUsd: Number(row.total_usd),
+    rates: jsonValue(row.rates_json),
+    rateCardVersion: row.rate_card_version,
+    statement: jsonValue(row.statement_json),
+    issuedAt: row.issued_at,
   };
 }
 

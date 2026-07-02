@@ -595,6 +595,59 @@ test("HTTP API exposes organization billing statements", async () => {
   }
 });
 
+test("HTTP API issues and reads organization billing invoices", async () => {
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+    projectBillingRates: {
+      invocationsPerMillionUsd: 1,
+    },
+    billingRateCardVersion: "2026-07-v1",
+  });
+  const app = createHttpApp({ controlPlane: control });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const organization = await postJson(baseUrl, "/organizations", {
+      id: "org_http_invoice",
+      name: "HTTP Invoice Org",
+    });
+    const project = await postJson(baseUrl, "/projects", {
+      id: "prj_http_invoice",
+      organizationId: organization.id,
+      name: "http invoice",
+    });
+    await postJson(baseUrl, "/usage/events", {
+      id: "use_http_invoice_invocation",
+      projectId: project.id,
+      metric: "invocation",
+      quantity: 1_000_000,
+      recordedAt: "2026-07-01T00:00:00.000Z",
+    });
+
+    const invoice = await postJson(baseUrl, `/organizations/${organization.id}/billing-invoices`, {
+      id: "inv_http_invoice_july",
+      at: "2026-07-15T00:00:00.000Z",
+    });
+    assert.equal(invoice.id, "inv_http_invoice_july");
+    assert.equal(invoice.organizationId, organization.id);
+    assert.equal(invoice.periodKey, "2026-07");
+    assert.equal(invoice.rateCardVersion, "2026-07-v1");
+    assert.equal(invoice.totalUsd, 1);
+
+    const response = await fetch(`${baseUrl}/billing-invoices/${invoice.id}`);
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), invoice);
+  } finally {
+    await app.close();
+  }
+});
+
 test("HTTP API enforces and reports monthly billing budgets", async () => {
   const control = createControlPlane({
     repository: createMemoryRepository(),

@@ -111,6 +111,10 @@ export {
   type ProjectBillingBudgetReport,
 } from "./control-plane/billing-budget.ts";
 export {
+  createOrganizationBillingInvoice,
+  type OrganizationBillingInvoice,
+} from "./control-plane/billing-invoice.ts";
+export {
   enforceProjectQuota,
   projectQuotasFromEnv,
 } from "./control-plane/quotas.ts";

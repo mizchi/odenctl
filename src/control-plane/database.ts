@@ -56,6 +56,7 @@ export async function createConfiguredControlPlane(
   const projectUsageQuotas = projectUsageQuotasFromEnv(env);
   const projectBillingRates = projectBillingRatesFromEnv(env);
   const projectBillingBudgets = projectBillingBudgetsFromEnv(env);
+  const billingRateCardVersion = firstNonEmpty(env.WASMPLANE_BILLING_RATE_CARD_VERSION);
   const admissionPolicy = admissionPolicyFromEnv(env);
   if (config.kind === "postgres") {
     const [{ createAsyncControlPlane }, { createPostgresRepository }] = await Promise.all([
@@ -76,6 +77,7 @@ export async function createConfiguredControlPlane(
       projectUsageQuotas,
       projectBillingRates,
       projectBillingBudgets,
+      billingRateCardVersion,
       admissionPolicy,
     });
     assertMigrationStatus(await checkControlPlaneMigrations(config));
@@ -90,6 +92,7 @@ export async function createConfiguredControlPlane(
     projectUsageQuotas,
     projectBillingRates,
     projectBillingBudgets,
+    billingRateCardVersion,
     admissionPolicy,
   });
   assertMigrationStatus(await checkControlPlaneMigrations(config));

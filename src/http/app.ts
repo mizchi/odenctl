@@ -65,6 +65,8 @@ export interface HttpAppOptions {
     getProjectBillingStatement(input: any): MaybePromise<unknown>;
     getProjectBillingBudgetReport(input: any): MaybePromise<unknown>;
     getOrganizationBillingStatement(input: any): MaybePromise<unknown>;
+    issueOrganizationBillingInvoice(input: any): MaybePromise<unknown>;
+    getBillingInvoice(input: any): MaybePromise<unknown>;
     createCustomDomain(input: any): MaybePromise<unknown>;
     listProjectCustomDomains(input: any): MaybePromise<unknown>;
     verifyCustomDomainOwnership(input: any): MaybePromise<unknown>;
@@ -219,6 +221,18 @@ export function createHttpApp(options: HttpAppOptions) {
           await options.controlPlane.getOrganizationBillingStatement({
             organizationId: organizationBillingStatement.organizationId,
             at: url.searchParams.get("at") ?? undefined,
+          }),
+        );
+        return;
+      }
+      const organizationBillingInvoices = organizationBillingInvoicesMatch(method, url.pathname);
+      if (organizationBillingInvoices) {
+        writeJson(
+          response,
+          201,
+          await options.controlPlane.issueOrganizationBillingInvoice({
+            ...(await readJson(request)),
+            organizationId: organizationBillingInvoices.organizationId,
           }),
         );
         return;
@@ -454,6 +468,11 @@ export function createHttpApp(options: HttpAppOptions) {
       }
       if (method === "POST" && url.pathname === "/artifacts") {
         writeJson(response, 201, await options.controlPlane.createArtifact(await readJson(request)));
+        return;
+      }
+      const billingInvoice = billingInvoiceMatch(method, url.pathname);
+      if (billingInvoice) {
+        writeJson(response, 200, await options.controlPlane.getBillingInvoice({ id: billingInvoice.id }));
         return;
       }
       if (method === "POST" && url.pathname === "/artifacts/local") {
@@ -1464,6 +1483,28 @@ function organizationBillingStatementMatch(method: string, pathname: string): { 
     return undefined;
   }
   return { organizationId: decodeURIComponent(match[1]) };
+}
+
+function organizationBillingInvoicesMatch(method: string, pathname: string): { organizationId: string } | undefined {
+  if (method !== "POST") {
+    return undefined;
+  }
+  const match = /^\/organizations\/([^/]+)\/billing-invoices$/.exec(pathname);
+  if (!match) {
+    return undefined;
+  }
+  return { organizationId: decodeURIComponent(match[1]) };
+}
+
+function billingInvoiceMatch(method: string, pathname: string): { id: string } | undefined {
+  if (method !== "GET") {
+    return undefined;
+  }
+  const match = /^\/billing-invoices\/([^/]+)$/.exec(pathname);
+  if (!match) {
+    return undefined;
+  }
+  return { id: decodeURIComponent(match[1]) };
 }
 
 function projectCustomDomainsMatch(method: string, pathname: string): { projectId: string } | undefined {

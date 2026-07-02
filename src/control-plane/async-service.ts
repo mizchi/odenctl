@@ -111,6 +111,10 @@ import {
   type ProjectBillingBudgetPolicies,
   type ProjectBillingBudgetReport,
 } from "./billing-budget.ts";
+import {
+  createOrganizationBillingInvoice,
+  type OrganizationBillingInvoice,
+} from "./billing-invoice.ts";
 
 export interface AsyncControlPlaneRepository {
   createOrganization(organization: Organization): Promise<Organization>;
@@ -126,6 +130,12 @@ export interface AsyncControlPlaneRepository {
   createUsageEvent(event: UsageEvent): Promise<UsageEvent>;
   getUsageEvent(id: string): Promise<UsageEvent | undefined>;
   getProjectUsageSummary(projectId: string, from?: string, to?: string): Promise<ProjectUsageSummary>;
+  createBillingInvoice(invoice: OrganizationBillingInvoice): Promise<OrganizationBillingInvoice>;
+  getBillingInvoice(id: string): Promise<OrganizationBillingInvoice | undefined>;
+  getOrganizationBillingInvoiceByPeriod(
+    organizationId: string,
+    periodKey: string,
+  ): Promise<OrganizationBillingInvoice | undefined>;
   createCustomDomain(domain: CustomDomain): Promise<CustomDomain>;
   getCustomDomain(id: string): Promise<CustomDomain | undefined>;
   getCustomDomainByHost(host: string): Promise<CustomDomain | undefined>;
@@ -183,6 +193,7 @@ export interface AsyncControlPlaneOptions {
   projectUsageQuotas?: ProjectUsageQuotaPolicies;
   projectBillingRates?: ProjectBillingRates;
   projectBillingBudgets?: ProjectBillingBudgetPolicies;
+  billingRateCardVersion?: string;
   artifactSignatureVerifier?: ArtifactSignatureVerifier;
   admissionPolicy?: ControlPlaneAdmissionPolicy;
 }
@@ -274,6 +285,16 @@ export interface GetProjectBillingBudgetReportInput {
 export interface GetOrganizationBillingStatementInput {
   organizationId: string;
   at?: string;
+}
+
+export interface IssueOrganizationBillingInvoiceInput {
+  id?: string;
+  organizationId: string;
+  at?: string;
+}
+
+export interface GetBillingInvoiceInput {
+  id: string;
 }
 
 export interface CreateCustomDomainInput {
@@ -485,6 +506,7 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
   const projectUsageQuotas = options.projectUsageQuotas;
   const projectBillingRates = options.projectBillingRates;
   const projectBillingBudgets = options.projectBillingBudgets;
+  const billingRateCardVersion = normalizeBillingRateCardVersion(options.billingRateCardVersion);
   const artifactSignatureVerifier = options.artifactSignatureVerifier;
   const admissionPolicy = options.admissionPolicy;
 
@@ -723,6 +745,57 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
       rates: projectBillingRates,
       generatedAt: now(),
     });
+  }
+
+  async function issueOrganizationBillingInvoice(
+    input: IssueOrganizationBillingInvoiceInput,
+  ): Promise<OrganizationBillingInvoice> {
+    await requireOrganization(repository, input.organizationId);
+    const at = normalizeUsageTimestamp(input.at, "billing invoice at") ?? now();
+    const period = usageQuotaPeriodFor(at, undefined);
+    const existing = await repository.getOrganizationBillingInvoiceByPeriod(input.organizationId, period.key);
+    if (existing) {
+      return existing;
+    }
+    const projects = await repository.listOrganizationProjects(input.organizationId);
+    const summaries = await Promise.all(
+      projects.map((project) => repository.getProjectUsageSummary(project.id, period.from, period.to)),
+    );
+    const statement = createOrganizationBillingStatement({
+      organizationId: input.organizationId,
+      summaries,
+      period,
+      rates: projectBillingRates,
+      generatedAt: now(),
+    });
+    const invoice = createOrganizationBillingInvoice({
+      id: optionalId(input.id, "billing invoice id") ?? idGenerator("inv"),
+      organizationId: input.organizationId,
+      period,
+      statement,
+      rates: projectBillingRates,
+      rateCardVersion: billingRateCardVersion,
+      issuedAt: now(),
+    });
+    try {
+      return await repository.createBillingInvoice(invoice);
+    } catch (error) {
+      if (isConflictError(error)) {
+        const raced = await repository.getOrganizationBillingInvoiceByPeriod(input.organizationId, period.key);
+        if (raced) {
+          return raced;
+        }
+      }
+      throw error;
+    }
+  }
+
+  async function getBillingInvoice(input: GetBillingInvoiceInput): Promise<OrganizationBillingInvoice> {
+    const invoice = await repository.getBillingInvoice(input.id);
+    if (!invoice) {
+      throw new ControlPlaneError("not_found", `billing invoice ${input.id} was not found`);
+    }
+    return invoice;
   }
 
   async function createCustomDomain(input: CreateCustomDomainInput): Promise<CustomDomain> {
@@ -1248,6 +1321,8 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
     getProjectBillingStatement,
     getProjectBillingBudgetReport,
     getOrganizationBillingStatement,
+    issueOrganizationBillingInvoice,
+    getBillingInvoice,
     createCustomDomain,
     listProjectCustomDomains,
     verifyCustomDomainOwnership,
@@ -1374,6 +1449,17 @@ function sameUsageEvent(left: UsageEvent, right: UsageEvent): boolean {
 
 function isConflictError(error: unknown): boolean {
   return error instanceof ControlPlaneError && error.code === "conflict";
+}
+
+function normalizeBillingRateCardVersion(value: string | undefined): string {
+  const normalized = value?.trim();
+  if (!normalized) {
+    return "default";
+  }
+  if (normalized.length > 128) {
+    throw new ControlPlaneError("validation", "billing rate card version must be 128 characters or fewer");
+  }
+  return normalized;
 }
 
 function isActiveRuntimeNode(

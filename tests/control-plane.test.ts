@@ -572,6 +572,68 @@ test("control plane reports organization billing statements across projects", ()
   assert.equal(statement.totalUsd, 5.4);
 });
 
+test("control plane issues immutable organization billing invoices", () => {
+  const repository = createMemoryRepository();
+  const control = createControlPlane({
+    repository,
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+    projectBillingRates: {
+      invocationsPerMillionUsd: 1,
+    },
+    billingRateCardVersion: "2026-07-v1",
+  });
+  const organization = control.createOrganization({ id: "org_invoice", name: "Invoice Org" });
+  const project = control.createProject({
+    id: "prj_invoice",
+    name: "invoice",
+    organizationId: organization.id,
+  });
+  control.recordUsageEvent({
+    id: "use_invoice_invocation",
+    projectId: project.id,
+    metric: "invocation",
+    quantity: 1_000_000,
+    recordedAt: "2026-07-01T00:00:00.000Z",
+  });
+
+  const invoice = control.issueOrganizationBillingInvoice({
+    id: "inv_invoice_july",
+    organizationId: organization.id,
+    at: "2026-07-15T00:00:00.000Z",
+  });
+
+  assert.equal(invoice.id, "inv_invoice_july");
+  assert.equal(invoice.organizationId, organization.id);
+  assert.equal(invoice.periodKey, "2026-07");
+  assert.equal(invoice.rateCardVersion, "2026-07-v1");
+  assert.deepEqual(invoice.rates, { invocationsPerMillionUsd: 1 });
+  assert.equal(invoice.statement.totalUsd, 1);
+  assert.equal(invoice.totalUsd, 1);
+  assert.equal(invoice.issuedAt, fixedNow());
+
+  const changedRateControl = createControlPlane({
+    repository,
+    idGenerator: sequenceIds(),
+    now: () => "2026-08-01T00:00:00.000Z",
+    projectBillingRates: {
+      invocationsPerMillionUsd: 99,
+    },
+    billingRateCardVersion: "2026-07-v2",
+  });
+  const replayed = changedRateControl.issueOrganizationBillingInvoice({
+    id: "inv_invoice_july_v2",
+    organizationId: organization.id,
+    at: "2026-07-20T00:00:00.000Z",
+  });
+
+  assert.equal(replayed.id, invoice.id);
+  assert.equal(replayed.rateCardVersion, "2026-07-v1");
+  assert.deepEqual(replayed.rates, { invocationsPerMillionUsd: 1 });
+  assert.equal(replayed.statement.totalUsd, 1);
+  assert.deepEqual(changedRateControl.getBillingInvoice({ id: invoice.id }), replayed);
+});
+
 test("control plane enforces monthly billing budgets from usage ledgers", () => {
   const control = createControlPlane({
     repository: createMemoryRepository(),
@@ -808,6 +870,46 @@ test("async control plane reports organization billing statements across project
   ]);
   assert.equal(statement.usage.invocations, 3_000_000);
   assert.equal(statement.totalUsd, 1.2);
+});
+
+test("async control plane issues immutable organization billing invoices", async () => {
+  const repository = asyncRepository(createMemoryRepository());
+  const control = createAsyncControlPlane({
+    repository,
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+    projectBillingRates: {
+      invocationsPerMillionUsd: 1,
+    },
+    billingRateCardVersion: "2026-07-v1",
+  });
+  const organization = await control.createOrganization({
+    id: "org_async_invoice",
+    name: "Async Invoice Org",
+  });
+  const project = await control.createProject({
+    id: "prj_async_invoice",
+    name: "async invoice",
+    organizationId: organization.id,
+  });
+  await control.recordUsageEvent({
+    id: "use_async_invoice_invocation",
+    projectId: project.id,
+    metric: "invocation",
+    quantity: 1_000_000,
+    recordedAt: "2026-07-01T00:00:00.000Z",
+  });
+
+  const invoice = await control.issueOrganizationBillingInvoice({
+    id: "inv_async_invoice_july",
+    organizationId: organization.id,
+    at: "2026-07-15T00:00:00.000Z",
+  });
+
+  assert.equal(invoice.id, "inv_async_invoice_july");
+  assert.equal(invoice.rateCardVersion, "2026-07-v1");
+  assert.equal(invoice.statement.totalUsd, 1);
+  assert.deepEqual(await control.getBillingInvoice({ id: invoice.id }), invoice);
 });
 
 test("async control plane enforces monthly billing budgets from usage ledgers", async () => {
@@ -2233,6 +2335,7 @@ test("sqlite repository records schema migrations and upgrades existing database
     "202607010005_usage_metering",
     "202607010006_custom_domains",
     "202607010007_deploy_previews",
+    "202607020001_billing_invoices",
   ]);
   assert.ok(routeColumns.includes("targets_json"));
   const artifactColumns = db
@@ -2266,6 +2369,7 @@ test("sqlite repository records schema migrations and upgrades existing database
   assert.equal(db.prepare("select count(*) as count from usage_events").get().count, 0);
   assert.equal(db.prepare("select count(*) as count from custom_domains").get().count, 0);
   assert.equal(db.prepare("select count(*) as count from deploy_previews").get().count, 0);
+  assert.equal(db.prepare("select count(*) as count from billing_invoices").get().count, 0);
   assert.equal(db.prepare("select count(*) as count from route_snapshot_publications").get().count, 1);
   const publicationColumns = db
     .prepare("pragma table_info(route_snapshot_publications)")

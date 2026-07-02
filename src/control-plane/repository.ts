@@ -20,6 +20,7 @@ import type {
   User,
 } from "./contracts.ts";
 import { ControlPlaneError } from "./errors.ts";
+import type { OrganizationBillingInvoice } from "./billing-invoice.ts";
 
 export interface ControlPlaneRepository {
   createOrganization(organization: Organization): Organization;
@@ -35,6 +36,12 @@ export interface ControlPlaneRepository {
   createUsageEvent(event: UsageEvent): UsageEvent;
   getUsageEvent(id: string): UsageEvent | undefined;
   getProjectUsageSummary(projectId: string, from?: string, to?: string): ProjectUsageSummary;
+  createBillingInvoice(invoice: OrganizationBillingInvoice): OrganizationBillingInvoice;
+  getBillingInvoice(id: string): OrganizationBillingInvoice | undefined;
+  getOrganizationBillingInvoiceByPeriod(
+    organizationId: string,
+    periodKey: string,
+  ): OrganizationBillingInvoice | undefined;
   createCustomDomain(domain: CustomDomain): CustomDomain;
   getCustomDomain(id: string): CustomDomain | undefined;
   getCustomDomainByHost(host: string): CustomDomain | undefined;
@@ -291,6 +298,56 @@ class SqliteControlPlaneRepository implements ControlPlaneRepository {
       .get(...params);
     const project = this.getProject(projectId);
     return usageSummaryFromRow(projectId, project?.organizationId, from, to, row);
+  }
+
+  createBillingInvoice(invoice: OrganizationBillingInvoice): OrganizationBillingInvoice {
+    try {
+      this.db
+        .prepare(
+          `insert into billing_invoices (
+            id,
+            organization_id,
+            period_key,
+            period_json,
+            currency,
+            total_usd,
+            rates_json,
+            rate_card_version,
+            statement_json,
+            issued_at
+          ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          invoice.id,
+          invoice.organizationId,
+          invoice.periodKey,
+          JSON.stringify(invoice.period),
+          invoice.currency,
+          invoice.totalUsd,
+          JSON.stringify(invoice.rates),
+          invoice.rateCardVersion,
+          JSON.stringify(invoice.statement),
+          invoice.issuedAt,
+        );
+      return invoice;
+    } catch (error) {
+      throw writeError("billing invoice", invoice.id, error);
+    }
+  }
+
+  getBillingInvoice(id: string): OrganizationBillingInvoice | undefined {
+    const row = this.db.prepare("select * from billing_invoices where id = ?").get(id);
+    return row ? billingInvoiceFromRow(row) : undefined;
+  }
+
+  getOrganizationBillingInvoiceByPeriod(
+    organizationId: string,
+    periodKey: string,
+  ): OrganizationBillingInvoice | undefined {
+    const row = this.db
+      .prepare("select * from billing_invoices where organization_id = ? and period_key = ?")
+      .get(organizationId, periodKey);
+    return row ? billingInvoiceFromRow(row) : undefined;
   }
 
   createCustomDomain(domain: CustomDomain): CustomDomain {
@@ -1191,6 +1248,21 @@ function usageSummaryFromRow(
   };
 }
 
+function billingInvoiceFromRow(row: any): OrganizationBillingInvoice {
+  return {
+    id: row.id,
+    organizationId: row.organization_id,
+    periodKey: row.period_key,
+    period: JSON.parse(row.period_json),
+    currency: row.currency,
+    totalUsd: Number(row.total_usd),
+    rates: JSON.parse(row.rates_json),
+    rateCardVersion: row.rate_card_version,
+    statement: JSON.parse(row.statement_json),
+    issuedAt: row.issued_at,
+  };
+}
+
 function writeError(kind: string, id: string, error: unknown): ControlPlaneError {
   const message = error instanceof Error ? error.message : String(error);
   if (message.includes("UNIQUE constraint failed")) {
@@ -1272,6 +1344,24 @@ create index if not exists usage_events_project_time_idx
 
 create index if not exists usage_events_org_time_idx
   on usage_events (organization_id, recorded_at);
+
+create table if not exists billing_invoices (
+  id text primary key,
+  organization_id text not null,
+  period_key text not null,
+  period_json text not null,
+  currency text not null,
+  total_usd real not null,
+  rates_json text not null,
+  rate_card_version text not null,
+  statement_json text not null,
+  issued_at text not null,
+  unique (organization_id, period_key),
+  foreign key (organization_id) references organizations(id)
+);
+
+create index if not exists billing_invoices_org_issued_idx
+  on billing_invoices (organization_id, issued_at desc, id desc);
 
 create table if not exists custom_domains (
   id text primary key,
@@ -1700,6 +1790,30 @@ const migrations: SchemaMigration[] = [
 
         create index if not exists deploy_previews_project_idx
           on deploy_previews (project_id, created_at desc, id desc);
+      `);
+    },
+  },
+  {
+    id: "202607020001_billing_invoices",
+    apply(db) {
+      db.exec(`
+        create table if not exists billing_invoices (
+          id text primary key,
+          organization_id text not null,
+          period_key text not null,
+          period_json text not null,
+          currency text not null,
+          total_usd real not null,
+          rates_json text not null,
+          rate_card_version text not null,
+          statement_json text not null,
+          issued_at text not null,
+          unique (organization_id, period_key),
+          foreign key (organization_id) references organizations(id)
+        );
+
+        create index if not exists billing_invoices_org_issued_idx
+          on billing_invoices (organization_id, issued_at desc, id desc);
       `);
     },
   },

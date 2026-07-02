@@ -111,6 +111,10 @@ import {
   type ProjectBillingBudgetPolicies,
   type ProjectBillingBudgetReport,
 } from "./billing-budget.ts";
+import {
+  createOrganizationBillingInvoice,
+  type OrganizationBillingInvoice,
+} from "./billing-invoice.ts";
 
 export interface ControlPlaneOptions {
   repository: ControlPlaneRepository;
@@ -123,6 +127,7 @@ export interface ControlPlaneOptions {
   projectUsageQuotas?: ProjectUsageQuotaPolicies;
   projectBillingRates?: ProjectBillingRates;
   projectBillingBudgets?: ProjectBillingBudgetPolicies;
+  billingRateCardVersion?: string;
   artifactSignatureVerifier?: ArtifactSignatureVerifier;
   admissionPolicy?: ControlPlaneAdmissionPolicy;
 }
@@ -214,6 +219,16 @@ export interface GetProjectBillingBudgetReportInput {
 export interface GetOrganizationBillingStatementInput {
   organizationId: string;
   at?: string;
+}
+
+export interface IssueOrganizationBillingInvoiceInput {
+  id?: string;
+  organizationId: string;
+  at?: string;
+}
+
+export interface GetBillingInvoiceInput {
+  id: string;
 }
 
 export interface CreateCustomDomainInput {
@@ -425,6 +440,7 @@ export function createControlPlane(options: ControlPlaneOptions) {
   const projectUsageQuotas = options.projectUsageQuotas;
   const projectBillingRates = options.projectBillingRates;
   const projectBillingBudgets = options.projectBillingBudgets;
+  const billingRateCardVersion = normalizeBillingRateCardVersion(options.billingRateCardVersion);
   const artifactSignatureVerifier = options.artifactSignatureVerifier;
   const admissionPolicy = options.admissionPolicy;
 
@@ -645,6 +661,56 @@ export function createControlPlane(options: ControlPlaneOptions) {
       rates: projectBillingRates,
       generatedAt: now(),
     });
+  }
+
+  function issueOrganizationBillingInvoice(
+    input: IssueOrganizationBillingInvoiceInput,
+  ): OrganizationBillingInvoice {
+    requireOrganization(repository, input.organizationId);
+    const at = normalizeUsageTimestamp(input.at, "billing invoice at") ?? now();
+    const period = usageQuotaPeriodFor(at, undefined);
+    const existing = repository.getOrganizationBillingInvoiceByPeriod(input.organizationId, period.key);
+    if (existing) {
+      return existing;
+    }
+    const summaries = repository
+      .listOrganizationProjects(input.organizationId)
+      .map((project) => repository.getProjectUsageSummary(project.id, period.from, period.to));
+    const statement = createOrganizationBillingStatement({
+      organizationId: input.organizationId,
+      summaries,
+      period,
+      rates: projectBillingRates,
+      generatedAt: now(),
+    });
+    const invoice = createOrganizationBillingInvoice({
+      id: optionalId(input.id, "billing invoice id") ?? idGenerator("inv"),
+      organizationId: input.organizationId,
+      period,
+      statement,
+      rates: projectBillingRates,
+      rateCardVersion: billingRateCardVersion,
+      issuedAt: now(),
+    });
+    try {
+      return repository.createBillingInvoice(invoice);
+    } catch (error) {
+      if (isConflictError(error)) {
+        const raced = repository.getOrganizationBillingInvoiceByPeriod(input.organizationId, period.key);
+        if (raced) {
+          return raced;
+        }
+      }
+      throw error;
+    }
+  }
+
+  function getBillingInvoice(input: GetBillingInvoiceInput): OrganizationBillingInvoice {
+    const invoice = repository.getBillingInvoice(input.id);
+    if (!invoice) {
+      throw new ControlPlaneError("not_found", `billing invoice ${input.id} was not found`);
+    }
+    return invoice;
   }
 
   function createCustomDomain(input: CreateCustomDomainInput): CustomDomain {
@@ -1157,6 +1223,8 @@ export function createControlPlane(options: ControlPlaneOptions) {
     getProjectBillingStatement,
     getProjectBillingBudgetReport,
     getOrganizationBillingStatement,
+    issueOrganizationBillingInvoice,
+    getBillingInvoice,
     createCustomDomain,
     listProjectCustomDomains,
     verifyCustomDomainOwnership,
@@ -1283,6 +1351,17 @@ function sameUsageEvent(left: UsageEvent, right: UsageEvent): boolean {
 
 function isConflictError(error: unknown): boolean {
   return error instanceof ControlPlaneError && error.code === "conflict";
+}
+
+function normalizeBillingRateCardVersion(value: string | undefined): string {
+  const normalized = value?.trim();
+  if (!normalized) {
+    return "default";
+  }
+  if (normalized.length > 128) {
+    throw new ControlPlaneError("validation", "billing rate card version must be 128 characters or fewer");
+  }
+  return normalized;
 }
 
 function isActiveRuntimeNode(

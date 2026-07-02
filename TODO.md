@@ -254,3 +254,4 @@ Production readiness tasks, in implementation order.
 - [x] Add billing-ready quota enforcement tied to usage ledgers.
 - [x] Add invoice-ready project and organization billing statements from usage ledgers.
 - [x] Add project monthly USD budget enforcement from billing rate cards.
+- [x] Persist immutable organization billing invoice snapshots with rate card versions.

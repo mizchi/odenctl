@@ -61,6 +61,20 @@ create table if not exists usage_events (
   recorded_at text not null
 );
 
+create table if not exists billing_invoices (
+  id text primary key,
+  organization_id text not null references organizations(id),
+  period_key text not null,
+  period_json jsonb not null,
+  currency text not null,
+  total_usd double precision not null,
+  rates_json jsonb not null,
+  rate_card_version text not null,
+  statement_json jsonb not null,
+  issued_at text not null,
+  unique (organization_id, period_key)
+);
+
 create table if not exists custom_domains (
   id text primary key,
   project_id text not null references projects(id),
@@ -238,6 +252,9 @@ create index if not exists usage_events_project_time_idx
 
 create index if not exists usage_events_org_time_idx
   on usage_events (organization_id, recorded_at);
+
+create index if not exists billing_invoices_org_issued_idx
+  on billing_invoices (organization_id, issued_at desc, id desc);
 
 create index if not exists custom_domains_project_idx
   on custom_domains (project_id, host);
