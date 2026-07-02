@@ -610,6 +610,7 @@ test("control plane issues immutable organization billing invoices", () => {
   assert.deepEqual(invoice.rates, { invocationsPerMillionUsd: 1 });
   assert.equal(invoice.statement.totalUsd, 1);
   assert.equal(invoice.totalUsd, 1);
+  assert.match(invoice.contentDigest, /^sha256:[a-f0-9]{64}$/);
   assert.equal(invoice.issuedAt, fixedNow());
 
   const changedRateControl = createControlPlane({
@@ -631,6 +632,7 @@ test("control plane issues immutable organization billing invoices", () => {
   assert.equal(replayed.rateCardVersion, "2026-07-v1");
   assert.deepEqual(replayed.rates, { invocationsPerMillionUsd: 1 });
   assert.equal(replayed.statement.totalUsd, 1);
+  assert.equal(replayed.contentDigest, invoice.contentDigest);
   assert.deepEqual(changedRateControl.getBillingInvoice({ id: invoice.id }), replayed);
 });
 
@@ -2336,6 +2338,7 @@ test("sqlite repository records schema migrations and upgrades existing database
     "202607010006_custom_domains",
     "202607010007_deploy_previews",
     "202607020001_billing_invoices",
+    "202607020002_billing_invoice_digest",
   ]);
   assert.ok(routeColumns.includes("targets_json"));
   const artifactColumns = db
@@ -2370,6 +2373,11 @@ test("sqlite repository records schema migrations and upgrades existing database
   assert.equal(db.prepare("select count(*) as count from custom_domains").get().count, 0);
   assert.equal(db.prepare("select count(*) as count from deploy_previews").get().count, 0);
   assert.equal(db.prepare("select count(*) as count from billing_invoices").get().count, 0);
+  const billingInvoiceColumns = db
+    .prepare("pragma table_info(billing_invoices)")
+    .all()
+    .map((row: any) => row.name);
+  assert.ok(billingInvoiceColumns.includes("content_digest"));
   assert.equal(db.prepare("select count(*) as count from route_snapshot_publications").get().count, 1);
   const publicationColumns = db
     .prepare("pragma table_info(route_snapshot_publications)")

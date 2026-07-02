@@ -20,7 +20,7 @@ import type {
   User,
 } from "./contracts.ts";
 import { ControlPlaneError } from "./errors.ts";
-import type { OrganizationBillingInvoice } from "./billing-invoice.ts";
+import { invoiceContentDigest, type OrganizationBillingInvoice } from "./billing-invoice.ts";
 
 export interface ControlPlaneRepository {
   createOrganization(organization: Organization): Organization;
@@ -313,9 +313,10 @@ class SqliteControlPlaneRepository implements ControlPlaneRepository {
             total_usd,
             rates_json,
             rate_card_version,
+            content_digest,
             statement_json,
             issued_at
-          ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           invoice.id,
@@ -326,6 +327,7 @@ class SqliteControlPlaneRepository implements ControlPlaneRepository {
           invoice.totalUsd,
           JSON.stringify(invoice.rates),
           invoice.rateCardVersion,
+          invoice.contentDigest,
           JSON.stringify(invoice.statement),
           invoice.issuedAt,
         );
@@ -1249,7 +1251,7 @@ function usageSummaryFromRow(
 }
 
 function billingInvoiceFromRow(row: any): OrganizationBillingInvoice {
-  return {
+  const invoice: Omit<OrganizationBillingInvoice, "contentDigest"> = {
     id: row.id,
     organizationId: row.organization_id,
     periodKey: row.period_key,
@@ -1260,6 +1262,10 @@ function billingInvoiceFromRow(row: any): OrganizationBillingInvoice {
     rateCardVersion: row.rate_card_version,
     statement: JSON.parse(row.statement_json),
     issuedAt: row.issued_at,
+  };
+  return {
+    ...invoice,
+    contentDigest: row.content_digest || invoiceContentDigest(invoice),
   };
 }
 
@@ -1354,6 +1360,7 @@ create table if not exists billing_invoices (
   total_usd real not null,
   rates_json text not null,
   rate_card_version text not null,
+  content_digest text not null,
   statement_json text not null,
   issued_at text not null,
   unique (organization_id, period_key),
@@ -1806,6 +1813,7 @@ const migrations: SchemaMigration[] = [
           total_usd real not null,
           rates_json text not null,
           rate_card_version text not null,
+          content_digest text not null,
           statement_json text not null,
           issued_at text not null,
           unique (organization_id, period_key),
@@ -1815,6 +1823,12 @@ const migrations: SchemaMigration[] = [
         create index if not exists billing_invoices_org_issued_idx
           on billing_invoices (organization_id, issued_at desc, id desc);
       `);
+    },
+  },
+  {
+    id: "202607020002_billing_invoice_digest",
+    apply(db) {
+      ensureColumn(db, "billing_invoices", "content_digest", "text not null default ''");
     },
   },
 ];

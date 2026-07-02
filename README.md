@@ -81,7 +81,8 @@ available from `GET /projects/:id/billing-budget`.
 Set `WASMPLANE_BILLING_RATE_CARD_VERSION` before issuing invoices so saved billing invoice
 snapshots record the exact rate card version used for that period. Issue immutable organization
 invoices with `POST /organizations/:id/billing-invoices`; the same organization/month returns the
-existing saved invoice even if rates later change.
+existing saved invoice even if rates later change. Each saved invoice includes a `contentDigest`
+over the invoice payload for audit comparisons.
 Set `WASMPLANE_SNAPSHOT_PUBLISH_INTERVAL_MS` to run a background publish job that periodically
 generates the current route snapshot and publishes it to configured/registered active runtime
 nodes. Each generated route snapshot includes a content-derived `snap_<hash>` id, and publish

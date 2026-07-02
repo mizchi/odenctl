@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createOrganizationBillingInvoice } from "../src/control-plane/billing-invoice.ts";
+import {
+  createOrganizationBillingInvoice,
+  invoiceContentDigest,
+} from "../src/control-plane/billing-invoice.ts";
 
 test("organization billing invoice snapshots statement and rate card", () => {
   const invoice = createOrganizationBillingInvoice({
@@ -41,6 +44,8 @@ test("organization billing invoice snapshots statement and rate card", () => {
     issuedAt: "2026-08-01T00:00:00.000Z",
   });
 
+  assert.match(invoice.contentDigest, /^sha256:[a-f0-9]{64}$/);
+  assert.equal(invoice.contentDigest, invoiceContentDigest(invoice));
   assert.deepEqual(invoice, {
     id: "inv_july",
     organizationId: "org_bill",
@@ -57,6 +62,7 @@ test("organization billing invoice snapshots statement and rate card", () => {
       invocationsPerMillionUsd: 0.4,
     },
     rateCardVersion: "2026-07-v1",
+    contentDigest: invoice.contentDigest,
     statement: {
       organizationId: "org_bill",
       generatedAt: "2026-07-31T00:00:00.000Z",

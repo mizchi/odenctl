@@ -112,6 +112,7 @@ export {
 } from "./control-plane/billing-budget.ts";
 export {
   createOrganizationBillingInvoice,
+  invoiceContentDigest,
   type OrganizationBillingInvoice,
 } from "./control-plane/billing-invoice.ts";
 export {

@@ -23,7 +23,7 @@ import type {
   User,
 } from "./contracts.ts";
 import { ControlPlaneError } from "./errors.ts";
-import type { OrganizationBillingInvoice } from "./billing-invoice.ts";
+import { invoiceContentDigest, type OrganizationBillingInvoice } from "./billing-invoice.ts";
 
 const { Pool } = pg;
 const initMigrationId = "202606300001_postgres_init";
@@ -281,9 +281,10 @@ export class PostgresControlPlaneRepository implements AsyncControlPlaneReposito
           total_usd,
           rates_json,
           rate_card_version,
+          content_digest,
           statement_json,
           issued_at
-        ) values ($1, $2, $3, $4::jsonb, $5, $6, $7::jsonb, $8, $9::jsonb, $10)`,
+        ) values ($1, $2, $3, $4::jsonb, $5, $6, $7::jsonb, $8, $9, $10::jsonb, $11)`,
         [
           invoice.id,
           invoice.organizationId,
@@ -293,6 +294,7 @@ export class PostgresControlPlaneRepository implements AsyncControlPlaneReposito
           invoice.totalUsd,
           JSON.stringify(invoice.rates),
           invoice.rateCardVersion,
+          invoice.contentDigest,
           JSON.stringify(invoice.statement),
           invoice.issuedAt,
         ],
@@ -1185,7 +1187,7 @@ function usageSummaryFromRow(
 }
 
 function billingInvoiceFromRow(row: any): OrganizationBillingInvoice {
-  return {
+  const invoice: Omit<OrganizationBillingInvoice, "contentDigest"> = {
     id: row.id,
     organizationId: row.organization_id,
     periodKey: row.period_key,
@@ -1196,6 +1198,10 @@ function billingInvoiceFromRow(row: any): OrganizationBillingInvoice {
     rateCardVersion: row.rate_card_version,
     statement: jsonValue(row.statement_json),
     issuedAt: row.issued_at,
+  };
+  return {
+    ...invoice,
+    contentDigest: row.content_digest || invoiceContentDigest(invoice),
   };
 }
 

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type {
   OrganizationBillingStatement,
   ProjectBillingRates,
@@ -13,6 +14,7 @@ export interface OrganizationBillingInvoice {
   totalUsd: number;
   rates: ProjectBillingRates;
   rateCardVersion: string;
+  contentDigest: string;
   statement: OrganizationBillingStatement;
   issuedAt: string;
 }
@@ -26,7 +28,7 @@ export function createOrganizationBillingInvoice(input: {
   rateCardVersion: string;
   issuedAt: string;
 }): OrganizationBillingInvoice {
-  return {
+  const invoice = {
     id: input.id,
     organizationId: input.organizationId,
     periodKey: input.period.key,
@@ -38,4 +40,15 @@ export function createOrganizationBillingInvoice(input: {
     statement: input.statement,
     issuedAt: input.issuedAt,
   };
+  return {
+    ...invoice,
+    contentDigest: invoiceContentDigest(invoice),
+  };
+}
+
+export function invoiceContentDigest(
+  invoice: Omit<OrganizationBillingInvoice, "contentDigest"> | OrganizationBillingInvoice,
+): string {
+  const { contentDigest: _contentDigest, ...content } = invoice as OrganizationBillingInvoice;
+  return `sha256:${createHash("sha256").update(JSON.stringify(content)).digest("hex")}`;
 }

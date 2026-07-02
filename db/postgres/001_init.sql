@@ -70,6 +70,7 @@ create table if not exists billing_invoices (
   total_usd double precision not null,
   rates_json jsonb not null,
   rate_card_version text not null,
+  content_digest text not null,
   statement_json jsonb not null,
   issued_at text not null,
   unique (organization_id, period_key)
@@ -237,6 +238,9 @@ alter table if exists runtime_nodes
   add column if not exists load_json jsonb,
   add column if not exists identity_json jsonb,
   add column if not exists host_json jsonb;
+
+alter table if exists billing_invoices
+  add column if not exists content_digest text not null default '';
 
 create index if not exists artifacts_project_digest_idx
   on artifacts (project_id, digest);
