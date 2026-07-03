@@ -1,0 +1,13 @@
+name: wasmplane
+version: 1.0.0
+description: APM project for wasmplane
+author: mizchi
+targets:
+  - codex
+
+dependencies:
+  apm:
+    - mizchi/skills/formal-methods/reconciler
+  mcp: []
+includes: auto
+scripts: {}

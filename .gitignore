@@ -6,3 +6,11 @@ perf-results/
 *.sqlite-shm
 *.sqlite-wal
 .DS_Store
+.terraform/
+*.tfstate
+*.tfstate.*
+.wrangler/
+
+
+# APM dependencies
+apm_modules/

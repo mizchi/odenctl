@@ -1441,6 +1441,7 @@ function assertCapabilities(value: unknown, field: string) {
   assertKvBindings(capabilities.kv, `${field}.kv`);
   assertDurableObjectBindings(capabilities.durableObjects, `${field}.durableObjects`);
   assertSecretBindings(capabilities.secrets, `${field}.secrets`);
+  assertServiceBindings(capabilities.services, `${field}.services`);
   falseValue(capabilities.arbitraryFilesystem, `${field}.arbitraryFilesystem`);
   falseValue(capabilities.arbitrarySockets, `${field}.arbitrarySockets`);
   falseValue(capabilities.processSpawn, `${field}.processSpawn`);
@@ -1490,6 +1491,21 @@ function assertSecretBindings(value: unknown, field: string) {
     const binding = objectRecord(item, `${field}[${index}]`);
     bindingName(binding.binding, `${field}[${index}].binding`);
     nonEmptyString(binding.secretId, `${field}[${index}].secretId`);
+  });
+}
+
+function assertServiceBindings(value: unknown, field: string) {
+  if (value === undefined) {
+    return;
+  }
+  if (!Array.isArray(value)) {
+    throw new RuntimeError("validation", `${field} must be an array`);
+  }
+  value.forEach((item, index) => {
+    const binding = objectRecord(item, `${field}[${index}]`);
+    bindingName(binding.binding, `${field}[${index}].binding`);
+    nonEmptyString(binding.targetProjectId, `${field}[${index}].targetProjectId`);
+    httpUrl(binding.url, `${field}[${index}].url`);
   });
 }
 
@@ -1548,6 +1564,26 @@ function bindingName(value: unknown, field: string): string {
     throw new RuntimeError("validation", `${field} must be an uppercase binding name`);
   }
   return name;
+}
+
+function httpUrl(value: unknown, field: string): string {
+  const text = nonEmptyString(value, field);
+  let url: URL;
+  try {
+    url = new URL(text);
+  } catch {
+    throw new RuntimeError("validation", `${field} must be an absolute http(s) URL`);
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new RuntimeError("validation", `${field} must be an absolute http(s) URL`);
+  }
+  if (url.hash) {
+    throw new RuntimeError("validation", `${field} must not include a fragment`);
+  }
+  if (url.search) {
+    throw new RuntimeError("validation", `${field} must not include a query`);
+  }
+  return url.toString();
 }
 
 function dnsHost(value: unknown, field: string): string {

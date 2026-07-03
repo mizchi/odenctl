@@ -1570,9 +1570,13 @@ test("control plane admission policy gates artifacts and deployment capabilities
       allowedKvNamespaceIds: ["kv_allowed"],
       allowedDurableObjectNamespaceIds: ["do_allowed"],
       allowedSecretIds: ["sec_allowed"],
+      allowedServiceProjectIds: ["prj_auth"],
+      allowedServiceUrlPrefixes: ["https://auth.internal"],
     },
   });
   const project = control.createProject({ id: "prj_admission", name: "admission" });
+  control.createProject({ id: "prj_auth", name: "auth" });
+  control.createProject({ id: "prj_billing", name: "billing" });
   control.createKvNamespace({ id: "kv_allowed", projectId: project.id, name: "Allowed KV" });
   control.createKvNamespace({ id: "kv_blocked", projectId: project.id, name: "Blocked KV" });
   control.createDurableObjectNamespace({ id: "do_allowed", projectId: project.id, name: "Allowed DO" });
@@ -1632,9 +1636,13 @@ test("control plane admission policy gates artifacts and deployment capabilities
       kv: [{ binding: "MAIN", namespaceId: "kv_allowed" }],
       durableObjects: [{ binding: "ROOMS", namespaceId: "do_allowed" }],
       secrets: [{ binding: "API_KEY", secretId: "sec_allowed" }],
+      services: [{ binding: "AUTH", targetProjectId: "prj_auth", url: "https://auth.internal" }],
     },
   });
   assert.equal(deployment.id, "dep_admission");
+  assert.deepEqual(deployment.capabilities.services, [
+    { binding: "AUTH", targetProjectId: "prj_auth", url: "https://auth.internal/" },
+  ]);
 
   assert.throws(
     () =>
@@ -1691,6 +1699,36 @@ test("control plane admission policy gates artifacts and deployment capabilities
         },
       }),
     /secret/,
+  );
+  assert.throws(
+    () =>
+      control.createDeployment({
+        ...seedDeployment("dep_blocked_service_project", artifact.id),
+        projectId: project.id,
+        capabilities: {
+          outboundHttp: { enabled: false, allow: [] },
+          kv: [{ binding: "MAIN", namespaceId: "kv_allowed" }],
+          durableObjects: [{ binding: "ROOMS", namespaceId: "do_allowed" }],
+          secrets: [{ binding: "API_KEY", secretId: "sec_allowed" }],
+          services: [{ binding: "BILLING", targetProjectId: "prj_billing", url: "https://billing.internal" }],
+        },
+      }),
+    /service project/,
+  );
+  assert.throws(
+    () =>
+      control.createDeployment({
+        ...seedDeployment("dep_blocked_service_url", artifact.id),
+        projectId: project.id,
+        capabilities: {
+          outboundHttp: { enabled: false, allow: [] },
+          kv: [{ binding: "MAIN", namespaceId: "kv_allowed" }],
+          durableObjects: [{ binding: "ROOMS", namespaceId: "do_allowed" }],
+          secrets: [{ binding: "API_KEY", secretId: "sec_allowed" }],
+          services: [{ binding: "AUTH", targetProjectId: "prj_auth", url: "https://auth.internal.evil" }],
+        },
+      }),
+    /service url/,
   );
 });
 
@@ -2297,6 +2335,64 @@ test("deployment durable object bindings cannot reference another project", () =
   );
 });
 
+test("deployment service bindings explicitly grant cross-project worker calls", () => {
+  const control = createSeededControlPlane();
+  control.createProject({ id: "prj_auth", name: "auth" });
+
+  const deployment = control.createDeployment({
+    ...seedDeployment("dep_service_binding", "art_v1"),
+    capabilities: {
+      outboundHttp: { enabled: false, allow: [] },
+      kv: [],
+      durableObjects: [],
+      secrets: [],
+      services: [{ binding: "AUTH", targetProjectId: "prj_auth", url: "https://auth.internal" }],
+    },
+  });
+  control.pointRoute({
+    projectId: "prj_hello",
+    host: "hello.example.dev",
+    pathPrefix: "/",
+    deploymentId: deployment.id,
+  });
+
+  assert.deepEqual(deployment.capabilities.services, [
+    { binding: "AUTH", targetProjectId: "prj_auth", url: "https://auth.internal/" },
+  ]);
+  assert.deepEqual(control.createRouteSnapshot().routes[0]?.capabilities.services, [
+    { binding: "AUTH", targetProjectId: "prj_auth", url: "https://auth.internal/" },
+  ]);
+
+  assert.throws(
+    () =>
+      control.createDeployment({
+        ...seedDeployment("dep_missing_service_target", "art_v1"),
+        capabilities: {
+          outboundHttp: { enabled: false, allow: [] },
+          kv: [],
+          durableObjects: [],
+          secrets: [],
+          services: [{ binding: "AUTH", targetProjectId: "prj_missing", url: "https://auth.internal" }],
+        },
+      }),
+    /service target project prj_missing/,
+  );
+  assert.throws(
+    () =>
+      control.createDeployment({
+        ...seedDeployment("dep_invalid_service_url", "art_v1"),
+        capabilities: {
+          outboundHttp: { enabled: false, allow: [] },
+          kv: [],
+          durableObjects: [],
+          secrets: [],
+          services: [{ binding: "AUTH", targetProjectId: "prj_auth", url: "file:///tmp/socket" }],
+        },
+      }),
+    /capabilities.services\[0\].url/,
+  );
+});
+
 test("route pointers can roll forward and back without mutating deployments", () => {
   const control = createSeededControlPlane();
 
@@ -2662,6 +2758,32 @@ test("excludes runtime nodes with stale heartbeat timestamps", () => {
   );
 });
 
+test("runtime node active TTL requires a heartbeat before publish eligibility", () => {
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    runtimeNodeActiveTtlMs: 60_000,
+    now: fixedNow,
+  });
+
+  control.registerRuntimeNode({ id: "rt_registered", url: "http://127.0.0.1:8788" });
+
+  assert.deepEqual(control.listActiveRuntimeNodes(), []);
+});
+
+test("async runtime node active TTL requires a heartbeat before publish eligibility", async () => {
+  const control = createAsyncControlPlane({
+    repository: asyncRepository(createMemoryRepository()),
+    idGenerator: sequenceIds(),
+    runtimeNodeActiveTtlMs: 60_000,
+    now: fixedNow,
+  });
+
+  await control.registerRuntimeNode({ id: "rt_registered", url: "http://127.0.0.1:8788" });
+
+  assert.deepEqual(await control.listActiveRuntimeNodes(), []);
+});
+
 test("records route snapshot publication history", () => {
   const control = createControlPlane({
     repository: createMemoryRepository(),
@@ -2877,6 +2999,7 @@ test("sqlite repository records schema migrations and upgrades existing database
     "202607020003_billing_webhook_deliveries",
     "202607020004_billing_invoice_adjustments",
     "202607020005_billing_invoice_retention_policies",
+    "202607030001_edge_worker_releases",
   ]);
   assert.ok(routeColumns.includes("targets_json"));
   const artifactColumns = db
@@ -2911,6 +3034,7 @@ test("sqlite repository records schema migrations and upgrades existing database
   assert.equal(db.prepare("select count(*) as count from usage_events").get().count, 0);
   assert.equal(db.prepare("select count(*) as count from custom_domains").get().count, 0);
   assert.equal(db.prepare("select count(*) as count from deploy_previews").get().count, 0);
+  assert.equal(db.prepare("select count(*) as count from edge_worker_releases").get().count, 0);
   assert.equal(db.prepare("select count(*) as count from billing_invoices").get().count, 0);
   assert.equal(db.prepare("select count(*) as count from billing_webhook_deliveries").get().count, 0);
   assert.equal(db.prepare("select count(*) as count from billing_invoice_adjustments").get().count, 0);

@@ -231,6 +231,7 @@ pub struct HostPolicy {
     kv_bindings: Vec<KvBindingPolicy>,
     secret_bindings: Vec<SecretBindingPolicy>,
     durable_object_bindings: Vec<DurableObjectBindingPolicy>,
+    service_bindings: Vec<ServiceBindingPolicy>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -256,6 +257,13 @@ pub struct SecretBindingPolicy {
 pub struct DurableObjectBindingPolicy {
     binding: String,
     namespace_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServiceBindingPolicy {
+    binding: String,
+    target_project_id: String,
+    url: String,
 }
 
 impl HostPolicy {
@@ -285,11 +293,28 @@ impl HostPolicy {
         secret_bindings: Vec<SecretBindingPolicy>,
         durable_object_bindings: Vec<DurableObjectBindingPolicy>,
     ) -> Self {
+        Self::with_service_bindings(
+            outbound_http,
+            kv_bindings,
+            secret_bindings,
+            durable_object_bindings,
+            Vec::new(),
+        )
+    }
+
+    pub fn with_service_bindings(
+        outbound_http: OutboundHttpPolicy,
+        kv_bindings: Vec<KvBindingPolicy>,
+        secret_bindings: Vec<SecretBindingPolicy>,
+        durable_object_bindings: Vec<DurableObjectBindingPolicy>,
+        service_bindings: Vec<ServiceBindingPolicy>,
+    ) -> Self {
         Self {
             outbound_http,
             kv_bindings,
             secret_bindings,
             durable_object_bindings,
+            service_bindings,
         }
     }
 
@@ -327,6 +352,20 @@ impl HostPolicy {
         self.durable_object_bindings
             .iter()
             .any(|item| item.namespace_id == namespace)
+    }
+
+    pub fn service_project_for_binding(&self, binding: &str) -> Option<&str> {
+        self.service_bindings
+            .iter()
+            .find(|item| item.binding == binding)
+            .map(|item| item.target_project_id.as_str())
+    }
+
+    pub fn service_url_for_binding(&self, binding: &str) -> Option<&str> {
+        self.service_bindings
+            .iter()
+            .find(|item| item.binding == binding)
+            .map(|item| item.url.as_str())
     }
 
     fn secret_values(&self) -> impl Iterator<Item = &str> {
@@ -400,6 +439,33 @@ impl DurableObjectBindingPolicy {
             binding: binding.into(),
             namespace_id: namespace_id.into(),
         }
+    }
+}
+
+impl ServiceBindingPolicy {
+    pub fn try_new(
+        binding: impl Into<String>,
+        target_project_id: impl Into<String>,
+        url: impl Into<String>,
+    ) -> Result<Self> {
+        let binding = binding.into();
+        let target_project_id = target_project_id.into();
+        if binding.trim().is_empty() {
+            bail!("service binding must not be empty");
+        }
+        if target_project_id.trim().is_empty() {
+            bail!("service targetProjectId must not be empty");
+        }
+        let url = canonical_fetch_url(&url.into())?;
+        let parsed = parse_fetch_url(&url)?;
+        if parsed.target.contains('?') {
+            bail!("service url must not include a query");
+        }
+        Ok(Self {
+            binding,
+            target_project_id,
+            url,
+        })
     }
 }
 
@@ -913,6 +979,45 @@ impl WorkerHost {
             )),
         }
     }
+
+    fn fetch_service(
+        &mut self,
+        binding: String,
+        mut req: myedge::runtime::outbound::Request,
+    ) -> wasmtime::Result<myedge::runtime::outbound::Response> {
+        self.check_host_call_allowed()?;
+        if !self.next_subrequest_allowed() {
+            return Ok(outbound_text_response(429, "subrequests limit exceeded"));
+        }
+        let Some(base_url) = self
+            .policy
+            .service_url_for_binding(&binding)
+            .map(str::to_string)
+        else {
+            return Ok(outbound_text_response(
+                403,
+                &format!("service binding {binding} is not allowed"),
+            ));
+        };
+        let target_uri = match service_request_uri(&base_url, &req.uri) {
+            Ok(uri) => uri,
+            Err(error) => {
+                return Ok(outbound_text_response(
+                    400,
+                    &format!("service fetch URI is invalid: {error}"),
+                ));
+            }
+        };
+        req.uri = target_uri;
+        let service_policy = HostPolicy::new(OutboundHttpPolicy::enabled(vec![base_url]), Vec::new());
+        match perform_http_fetch(req, &service_policy) {
+            Ok(response) => Ok(response),
+            Err(error) => Ok(outbound_text_response(
+                502,
+                &format!("service fetch failed: {error}"),
+            )),
+        }
+    }
 }
 
 impl Default for WorkerHost {
@@ -1131,6 +1236,18 @@ impl myedge::runtime::outbound::HostWithStore for WorkerHost {
         accessor.with(|mut access| access.get().fetch_outbound(req))
     }
 }
+
+impl myedge::runtime::service::HostWithStore for WorkerHost {
+    async fn fetch<T: Send>(
+        accessor: &wasmtime::component::Accessor<T, Self>,
+        binding: String,
+        req: myedge::runtime::outbound::Request,
+    ) -> wasmtime::Result<myedge::runtime::outbound::Response> {
+        accessor.with(|mut access| access.get().fetch_service(binding, req))
+    }
+}
+
+impl myedge::runtime::service::Host for WorkerHost {}
 
 impl myedge::runtime::log::Host for WorkerHost {
     async fn info(&mut self, message: String) -> wasmtime::Result<()> {
@@ -1358,6 +1475,64 @@ fn parse_fetch_url(uri: &str) -> Result<HttpUrlParts> {
         bail!("only http:// and https:// outbound fetch are supported");
     }
     Ok(url)
+}
+
+fn canonical_fetch_url(uri: &str) -> Result<String> {
+    let url = parse_fetch_url(uri)?;
+    Ok(format!(
+        "{}://{}{}",
+        url.scheme,
+        canonical_authority(&url),
+        url.target
+    ))
+}
+
+fn service_request_uri(base_url: &str, request_uri: &str) -> Result<String> {
+    let base = parse_fetch_url(base_url)?;
+    let request_uri = request_uri.trim();
+    if request_uri.contains('#')
+        || request_uri.starts_with("http://")
+        || request_uri.starts_with("https://")
+        || request_uri.starts_with("//")
+    {
+        bail!("service fetch URI must be an origin-form path or query");
+    }
+    let request_uri = if request_uri.is_empty() {
+        "/"
+    } else {
+        request_uri
+    };
+    let target = if request_uri.starts_with('?') {
+        format!("{}{}", base.path, request_uri)
+    } else {
+        let relative = request_uri.strip_prefix('/').unwrap_or(request_uri);
+        let base_prefix = if base.path == "/" {
+            "/".to_string()
+        } else if base.path.ends_with('/') {
+            base.path.clone()
+        } else {
+            format!("{}/", base.path)
+        };
+        if base_prefix == "/" {
+            format!("/{relative}")
+        } else {
+            format!("{base_prefix}{relative}")
+        }
+    };
+    Ok(format!(
+        "{}://{}{}",
+        base.scheme,
+        canonical_authority(&base),
+        target
+    ))
+}
+
+fn canonical_authority(url: &HttpUrlParts) -> String {
+    if url.port == default_port_for_scheme(&url.scheme) {
+        url.host.clone()
+    } else {
+        format!("{}:{}", url.host, url.port)
+    }
 }
 
 type HttpUrlParts = OutboundUrlParts;
@@ -2725,6 +2900,36 @@ mod tests {
                 .expect("unknown binding")
                 .is_none()
         );
+    }
+
+    #[test]
+    fn host_policy_resolves_only_configured_service_bindings() {
+        let policy = HostPolicy::with_service_bindings(
+            OutboundHttpPolicy::disabled(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec![ServiceBindingPolicy::try_new("AUTH", "prj_auth", "http://127.0.0.1:8788").unwrap()],
+        );
+
+        assert_eq!(policy.service_project_for_binding("AUTH"), Some("prj_auth"));
+        assert_eq!(
+            policy.service_url_for_binding("AUTH"),
+            Some("http://127.0.0.1:8788/")
+        );
+        assert_eq!(policy.service_url_for_binding("BILLING"), None);
+    }
+
+    #[test]
+    fn service_request_uri_stays_under_binding_base() {
+        assert_eq!(
+            service_request_uri("http://127.0.0.1:8788/base/", "/v1/login?next=%2F")
+                .expect("service uri"),
+            "http://127.0.0.1:8788/base/v1/login?next=%2F"
+        );
+
+        assert!(service_request_uri("http://127.0.0.1:8788/", "https://evil.example/").is_err());
+        assert!(service_request_uri("http://127.0.0.1:8788/", "//evil.example/").is_err());
     }
 
     #[test]

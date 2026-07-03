@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { RouteSnapshot, RuntimeNode } from "./contracts.ts";
+import { ControlPlaneError } from "./errors.ts";
 
 export interface RuntimePlacementRule {
   regions?: string[];
@@ -114,6 +115,17 @@ export function defaultRouteSnapshotForTenantDrain(
   return snapshotWithRoutes(snapshot, routes);
 }
 
+export function staticRouteSnapshotForPlacement(
+  snapshot: RouteSnapshot,
+  policy?: RuntimePlacementPolicy,
+): RouteSnapshot {
+  if (!policy) {
+    return snapshot;
+  }
+  const routes = snapshot.routes.filter((route) => routeVisibleToStaticTarget(route.projectId, policy));
+  return snapshotWithRoutes(snapshot, routes);
+}
+
 export function snapshotRequiresTenantDrainPublish(
   snapshot: RouteSnapshot,
   policy?: RuntimePlacementPolicy,
@@ -159,6 +171,7 @@ function selectByRule(nodes: RuntimeNode[], rule: RuntimePlacementRule): Runtime
 }
 
 function selectByTier(nodes: RuntimeNode[], rule: RuntimePlacementFailoverRule): RuntimeNode[] {
+  const maxTargets = validateMaxTargets(rule.maxTargets);
   const regions = new Set((rule.regions ?? []).map((region) => region.toLowerCase()));
   const labels = rule.labels ?? {};
   const filtered = nodes.filter((node) => {
@@ -173,7 +186,7 @@ function selectByTier(nodes: RuntimeNode[], rule: RuntimePlacementFailoverRule):
     return true;
   });
   const sorted = sortByLoad(filtered);
-  return rule.maxTargets === undefined ? sorted : sorted.slice(0, Math.max(0, rule.maxTargets));
+  return maxTargets === undefined ? sorted : sorted.slice(0, maxTargets);
 }
 
 function sortByLoad(nodes: RuntimeNode[]): RuntimeNode[] {
@@ -214,8 +227,31 @@ function routeVisibleToNode(
   return nodeMatchesRule(nodes, node, rule);
 }
 
+function routeVisibleToStaticTarget(projectId: string, policy: RuntimePlacementPolicy): boolean {
+  if (policy.isolation?.drainedProjects?.includes(projectId)) {
+    return false;
+  }
+  if (policy.isolation?.projects?.[projectId]) {
+    return false;
+  }
+  if (policy.projects?.[projectId]) {
+    return false;
+  }
+  return !policy.default;
+}
+
 function nodeMatchesRule(nodes: RuntimeNode[], node: RuntimeNode, rule: RuntimePlacementRule): boolean {
   return selectByRule(nodes, rule).some((selected) => selected.id === node.id);
+}
+
+function validateMaxTargets(value: number | undefined): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new ControlPlaneError("validation", "placement maxTargets must be a positive integer");
+  }
+  return value;
 }
 
 function selectedIsolationNodeIds(nodes: RuntimeNode[], policy: RuntimePlacementPolicy): Set<string> {

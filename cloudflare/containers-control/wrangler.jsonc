@@ -1,0 +1,31 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "wasmplane-control-container-poc",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-03",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true
+  },
+  "containers": [
+    {
+      "class_name": "WasmplaneControlContainer",
+      "image": "../../Dockerfile",
+      "max_instances": 1
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "CONTROL_CONTAINER",
+        "class_name": "WasmplaneControlContainer"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["WasmplaneControlContainer"]
+    }
+  ]
+}

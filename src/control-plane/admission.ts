@@ -15,6 +15,8 @@ export interface ControlPlaneAdmissionPolicy {
   allowedKvNamespaceIds?: string[];
   allowedDurableObjectNamespaceIds?: string[];
   allowedSecretIds?: string[];
+  allowedServiceProjectIds?: string[];
+  allowedServiceUrlPrefixes?: string[];
 }
 
 export interface DeploymentAdmissionInput {
@@ -63,6 +65,14 @@ export function admissionPolicyFromEnv(
   const secretIds = csv(env.WASMPLANE_ADMISSION_SECRET_IDS);
   if (secretIds.length > 0) {
     policy.allowedSecretIds = secretIds;
+  }
+  const serviceProjectIds = csv(env.WASMPLANE_ADMISSION_SERVICE_PROJECT_IDS);
+  if (serviceProjectIds.length > 0) {
+    policy.allowedServiceProjectIds = serviceProjectIds;
+  }
+  const serviceUrlPrefixes = csv(env.WASMPLANE_ADMISSION_SERVICE_URL_PREFIXES);
+  if (serviceUrlPrefixes.length > 0) {
+    policy.allowedServiceUrlPrefixes = serviceUrlPrefixes;
   }
   return Object.keys(policy).length > 0 ? policy : undefined;
 }
@@ -115,6 +125,7 @@ export function enforceDeploymentAdmissionPolicy(
   enforceKvPolicy(policy, input.capabilities);
   enforceDurableObjectPolicy(policy, input.capabilities);
   enforceSecretPolicy(policy, input.capabilities);
+  enforceServicePolicy(policy, input.capabilities);
 }
 
 function enforceOutboundHttpPolicy(
@@ -167,6 +178,28 @@ function enforceSecretPolicy(policy: ControlPlaneAdmissionPolicy, capabilities: 
   for (const binding of capabilities.secrets) {
     if (!allowed.includes(binding.secretId)) {
       throw new ControlPlaneError("validation", `secret ${binding.secretId} is not allowed`);
+    }
+  }
+}
+
+function enforceServicePolicy(policy: ControlPlaneAdmissionPolicy, capabilities: CapabilityPolicy) {
+  const allowedProjects = policy.allowedServiceProjectIds;
+  const allowedUrlPrefixes = policy.allowedServiceUrlPrefixes;
+  if (allowedProjects === undefined && allowedUrlPrefixes === undefined) {
+    return;
+  }
+  for (const binding of capabilities.services) {
+    if (allowedProjects !== undefined && !allowedProjects.includes(binding.targetProjectId)) {
+      throw new ControlPlaneError(
+        "validation",
+        `service project ${binding.targetProjectId} is not allowed`,
+      );
+    }
+    if (
+      allowedUrlPrefixes !== undefined
+      && !allowedUrlPrefixes.some((prefix) => urlPrefixAllows(prefix, binding.url))
+    ) {
+      throw new ControlPlaneError("validation", `service url ${binding.url} is not allowed`);
     }
   }
 }

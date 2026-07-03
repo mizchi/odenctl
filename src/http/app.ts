@@ -30,9 +30,8 @@ import {
   type RouteSnapshotReplicaStore,
 } from "../control-plane/snapshot-replication.ts";
 import {
-  defaultRouteSnapshotForTenantDrain,
   planRuntimeSnapshotPlacements,
-  snapshotRequiresTenantDrainPublish,
+  staticRouteSnapshotForPlacement,
   type RuntimePlacementPolicy,
 } from "../control-plane/placement.ts";
 import { runtimeSaturationSignals } from "../control-plane/autoscaling.ts";
@@ -104,6 +103,8 @@ export interface HttpAppOptions {
     listProjectDurableObjectNamespaces(input: any): MaybePromise<unknown>;
     deleteDurableObjectNamespace(input: any): MaybePromise<void>;
     createDeployment(input: any): MaybePromise<unknown>;
+    createEdgeWorkerRelease(input: any): MaybePromise<unknown>;
+    listProjectEdgeWorkerReleases(input: any): MaybePromise<unknown>;
     pointRoute(input: any): MaybePromise<unknown>;
     startRouteCanary(input: any): MaybePromise<unknown>;
     analyzeRouteCanary(input: any): MaybePromise<unknown>;
@@ -188,7 +189,13 @@ export function createHttpApp(options: HttpAppOptions) {
         await writeLocalArtifact(response, store, localArtifact.digestHex);
         return;
       }
-      const requiredScope = requiredScopeFor(method, url.pathname);
+      let cachedJson: unknown;
+      let hasCachedJson = false;
+      if (method === "POST" && url.pathname === "/edge-workers/releases") {
+        cachedJson = await readJson(request);
+        hasCachedJson = true;
+      }
+      const requiredScope = requiredScopeFor(method, url.pathname, cachedJson);
       const authorization = await authorizeRequest(options, request.headers, requiredScope);
       if (!authorization.ok) {
         writeJson(
@@ -307,6 +314,14 @@ export function createHttpApp(options: HttpAppOptions) {
         writeJson(response, 201, await options.controlPlane.createDeployPreview(await readJson(request)));
         return;
       }
+      if (method === "POST" && url.pathname === "/edge-workers/releases") {
+        writeJson(
+          response,
+          201,
+          await options.controlPlane.createEdgeWorkerRelease(hasCachedJson ? cachedJson : await readJson(request)),
+        );
+        return;
+      }
       if (method === "POST" && url.pathname === "/projects") {
         writeJson(response, 201, await options.controlPlane.createProject(await readJson(request)));
         return;
@@ -330,6 +345,17 @@ export function createHttpApp(options: HttpAppOptions) {
               projectId: projectDeployPreviews.projectId,
             }),
           },
+        );
+        return;
+      }
+      const projectEdgeWorkerReleases = projectEdgeWorkerReleasesMatch(method, url.pathname);
+      if (projectEdgeWorkerReleases) {
+        writeJson(
+          response,
+          200,
+          await options.controlPlane.listProjectEdgeWorkerReleases({
+            projectId: projectEdgeWorkerReleases.projectId,
+          }),
         );
         return;
       }
@@ -1012,7 +1038,10 @@ function defaultOperationalConfig(options: HttpAppOptions): OperationalConfig {
   };
 }
 
-function requiredScopeFor(method: string, pathname: string): ApiScope {
+function requiredScopeFor(method: string, pathname: string, body?: unknown): ApiScope {
+  if (method === "POST" && pathname === "/edge-workers/releases" && bodyHasMode(body, "api")) {
+    return "publish";
+  }
   if (
     (method === "POST" && pathname === "/snapshots/routes/publish") ||
     (method === "PUT" && pathname === "/replication/snapshots/routes")
@@ -1023,6 +1052,10 @@ function requiredScopeFor(method: string, pathname: string): ApiScope {
     return "read";
   }
   return "write";
+}
+
+function bodyHasMode(body: unknown, mode: string): boolean {
+  return typeof body === "object" && body !== null && "mode" in body && (body as any).mode === mode;
 }
 
 function installAuditHook(
@@ -1054,19 +1087,16 @@ function firstHeader(value: string | string[] | undefined): string | undefined {
 
 async function publishTargets(options: HttpAppOptions, snapshot: RouteSnapshot): Promise<RuntimeNodeTarget[]> {
   const activeNodes = await options.controlPlane.listActiveRuntimeNodes();
-  const requiresTenantDrain = snapshotRequiresTenantDrainPublish(snapshot, options.runtimePlacement);
   const placedNodes = options.runtimePlacement
     ? planRuntimeSnapshotPlacements(activeNodes, snapshot, options.runtimePlacement).map((plan) => ({
       ...plan.node,
       snapshot: plan.snapshot,
     }))
     : activeNodes;
-  const staticSnapshot = requiresTenantDrain
-    ? defaultRouteSnapshotForTenantDrain(snapshot, options.runtimePlacement)
-    : undefined;
+  const staticSnapshot = staticRouteSnapshotForPlacement(snapshot, options.runtimePlacement);
   const targets = [
-    ...(options.runtimeNodes ?? []).map((target) => staticSnapshot ? { ...target, snapshot: staticSnapshot } : target),
     ...placedNodes,
+    ...(options.runtimeNodes ?? []).map((target) => ({ ...target, snapshot: staticSnapshot })),
   ];
   const seen = new Set<string>();
   return targets.filter((target) => {
@@ -1719,6 +1749,17 @@ function projectDeployPreviewsMatch(method: string, pathname: string): { project
     return undefined;
   }
   const match = /^\/projects\/([^/]+)\/deploy-previews$/.exec(pathname);
+  if (!match) {
+    return undefined;
+  }
+  return { projectId: decodeURIComponent(match[1]) };
+}
+
+function projectEdgeWorkerReleasesMatch(method: string, pathname: string): { projectId: string } | undefined {
+  if (method !== "GET") {
+    return undefined;
+  }
+  const match = /^\/projects\/([^/]+)\/edge-worker-releases$/.exec(pathname);
   if (!match) {
     return undefined;
   }

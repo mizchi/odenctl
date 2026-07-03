@@ -17,7 +17,7 @@ use serde_json::Value;
 use tokio::net::TcpListener;
 use wasmplane_wasip3_host::{
     DurableObjectBindingPolicy, HostPolicy, HttpRequestInput, InstanceReuseContract,
-    InvocationLimits, KvBindingPolicy, OutboundHttpPolicy, SecretBindingPolicy,
+    InvocationLimits, KvBindingPolicy, OutboundHttpPolicy, SecretBindingPolicy, ServiceBindingPolicy,
     Wasip3PoolingConfig, Wasip3Runtime, Wasip3RuntimeOptions,
     invoke_component_handle_with_limits_and_policy, invoke_component_handle_with_persistent_kv,
     invoke_precompiled_component_handle_with_limits_and_policy,
@@ -1380,12 +1380,14 @@ fn parse_host_policy(value: &str) -> Result<HostPolicy> {
     let kv_bindings = parse_kv_bindings(json.get("kv"))?;
     let secret_bindings = parse_secret_bindings(json.get("secrets"))?;
     let durable_object_bindings = parse_durable_object_bindings(json.get("durableObjects"))?;
+    let service_bindings = parse_service_bindings(json.get("services"))?;
 
-    Ok(HostPolicy::with_durable_bindings(
+    Ok(HostPolicy::with_service_bindings(
         outbound_http,
         kv_bindings,
         secret_bindings,
         durable_object_bindings,
+        service_bindings,
     ))
 }
 
@@ -1495,6 +1497,34 @@ fn parse_durable_object_bindings(value: Option<&Value>) -> Result<Vec<DurableObj
                 .and_then(Value::as_str)
                 .context("capabilities.durableObjects entries must include namespaceId")?;
             Ok(DurableObjectBindingPolicy::new(binding, namespace_id))
+        })
+        .collect()
+}
+
+fn parse_service_bindings(value: Option<&Value>) -> Result<Vec<ServiceBindingPolicy>> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+    let Value::Array(items) = value else {
+        bail!("capabilities.services must be an array");
+    };
+    items
+        .iter()
+        .map(|item| {
+            let binding = item
+                .get("binding")
+                .and_then(Value::as_str)
+                .context("capabilities.services entries must include binding")?;
+            let target_project_id = item
+                .get("targetProjectId")
+                .and_then(Value::as_str)
+                .context("capabilities.services entries must include targetProjectId")?;
+            let url = item
+                .get("url")
+                .and_then(Value::as_str)
+                .context("capabilities.services entries must include url")?;
+            ServiceBindingPolicy::try_new(binding, target_project_id, url)
+                .context("capabilities.services entries must include valid http(s) url")
         })
         .collect()
 }
@@ -1629,6 +1659,7 @@ mod tests {
             "kv": [{ "binding": "KV", "namespaceId": "kv_main" }],
             "durableObjects": [{ "binding": "ROOMS", "namespaceId": "rooms" }],
             "secrets": [{ "binding": "API_KEY", "secretId": "sec_api_key", "value": "super-secret" }],
+            "services": [{ "binding": "AUTH", "targetProjectId": "prj_auth", "url": "http://127.0.0.1:8788" }],
             "arbitraryFilesystem": false,
             "arbitrarySockets": false,
             "processSpawn": false
@@ -1702,6 +1733,10 @@ mod tests {
         assert_eq!(
             parsed.policy.durable_object_namespace_for_binding("ROOMS"),
             Some("rooms")
+        );
+        assert_eq!(
+            parsed.policy.service_url_for_binding("AUTH"),
+            Some("http://127.0.0.1:8788/")
         );
         assert!(parsed.policy.secret_for_binding("API_KEY").is_some());
         assert_eq!(parsed.kv_store_dir, Some(kv_store_dir));
@@ -1897,6 +1932,7 @@ mod tests {
                 "kv": [{ "binding": "KV", "namespaceId": "kv_main" }],
                 "durableObjects": [{ "binding": "ROOMS", "namespaceId": "rooms" }],
                 "secrets": [],
+                "services": [{ "binding": "AUTH", "targetProjectId": "prj_auth", "url": "http://127.0.0.1:8788" }],
                 "arbitraryFilesystem": false,
                 "arbitrarySockets": false,
                 "processSpawn": false
@@ -1931,6 +1967,10 @@ mod tests {
         assert_eq!(
             parsed.policy.kv_namespace_for_binding("KV"),
             Some("kv_main")
+        );
+        assert_eq!(
+            parsed.policy.service_url_for_binding("AUTH"),
+            Some("http://127.0.0.1:8788/")
         );
     }
 

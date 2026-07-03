@@ -21,6 +21,12 @@ test:
     pnpm test
     cargo test --workspace
 
+formal-check:
+    pnpm formal:route-placement
+    node --experimental-strip-types --test tests/formal-route-snapshot-placement.test.ts
+    pnpm formal:capability-isolation
+    node --experimental-strip-types --test tests/formal-capability-isolation.test.ts
+
 coverage: node-coverage rust-coverage
 
 node-coverage:
@@ -150,6 +156,20 @@ fly-scale-eval:
 
 fly-scale-eval-execute:
     pnpm fly-scale-eval -- --execute
+
+aws-terraform-plan:
+    terraform -chdir=infra/terraform/aws init
+    terraform -chdir=infra/terraform/aws plan
+
+gcp-terraform-plan:
+    terraform -chdir=infra/terraform/gcp init
+    terraform -chdir=infra/terraform/gcp plan
+
+cloudflare-control-dev:
+    cd cloudflare/containers-control && pnpm dev
+
+cloudflare-control-deploy:
+    cd cloudflare/containers-control && pnpm deploy
 
 dev:
     pnpm start

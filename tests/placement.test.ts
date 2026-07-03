@@ -71,6 +71,27 @@ test("placement policy fails over to fallback regions when primary has no target
   );
 });
 
+test("placement policy rejects non-positive maxTargets instead of falling through to failover", () => {
+  const nodes = [
+    runtimeNode("rt_nrt", "nrt", { pool: "default" }, 0),
+    runtimeNode("rt_iad", "iad", { pool: "default" }, 0),
+  ];
+
+  assert.throws(
+    () =>
+      selectRuntimeNodesForSnapshot(nodes, snapshot(["prj_a"]), {
+        projects: {
+          prj_a: {
+            regions: ["nrt"],
+            maxTargets: 0,
+            failover: [{ regions: ["iad"] }],
+          },
+        },
+      }),
+    /maxTargets/,
+  );
+});
+
 test("placement policy keeps primary targets before using failover", () => {
   const nodes = [
     runtimeNode("rt_nrt", "nrt", { pool: "default" }, 50),

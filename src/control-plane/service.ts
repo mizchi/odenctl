@@ -11,6 +11,7 @@ import type {
   DeployPreviewPreviousRoute,
   Deployment,
   DurableObjectNamespace,
+  EdgeWorkerRelease,
   KvNamespace,
   Organization,
   Project,
@@ -41,6 +42,9 @@ import {
   normalizeArtifactSignature,
   normalizeDigest,
   normalizeDurableObjectNamespaceName,
+  normalizeEdgeWorkerProvider,
+  normalizeEdgeWorkerReleaseMode,
+  normalizeEdgeWorkerScriptName,
   normalizeHost,
   normalizeKvNamespaceName,
   normalizeLimits,
@@ -141,6 +145,11 @@ import {
   type BillingInvoiceRetentionPolicy,
   type BillingInvoiceRetentionRetained,
 } from "./billing-retention.ts";
+import {
+  createMockCloudflareWorkerDeployer,
+  renderCloudflareWasmWorkerModule,
+  type EdgeWorkerDeployer,
+} from "./edge-worker-deployer.ts";
 
 export interface ControlPlaneOptions {
   repository: ControlPlaneRepository;
@@ -160,6 +169,7 @@ export interface ControlPlaneOptions {
   billingWebhookRetryDelayMs?: number;
   artifactSignatureVerifier?: ArtifactSignatureVerifier;
   admissionPolicy?: ControlPlaneAdmissionPolicy;
+  edgeWorkerDeployer?: EdgeWorkerDeployer;
 }
 
 export interface CreateOrganizationInput {
@@ -451,6 +461,19 @@ export interface CreateDeploymentInput {
   capabilities: Partial<CapabilityPolicy>;
 }
 
+export interface CreateEdgeWorkerReleaseInput {
+  id?: string;
+  projectId: string;
+  deploymentId: string;
+  provider?: unknown;
+  mode?: unknown;
+  scriptName?: unknown;
+}
+
+export interface ListProjectEdgeWorkerReleasesInput {
+  projectId: string;
+}
+
 export interface PointRouteInput {
   id?: string;
   projectId: string;
@@ -550,6 +573,7 @@ export function createControlPlane(options: ControlPlaneOptions) {
   const billingWebhookRetryDelayMs = options.billingWebhookRetryDelayMs;
   const artifactSignatureVerifier = options.artifactSignatureVerifier;
   const admissionPolicy = options.admissionPolicy;
+  const edgeWorkerDeployer = options.edgeWorkerDeployer ?? createMockCloudflareWorkerDeployer();
 
   function createOrganization(input: CreateOrganizationInput): Organization {
     const organization: Organization = {
@@ -1260,6 +1284,7 @@ export function createControlPlane(options: ControlPlaneOptions) {
     requireDeploymentKvNamespaces(repository, input.projectId, capabilities);
     requireDeploymentDurableObjectNamespaces(repository, input.projectId, capabilities);
     requireDeploymentSecrets(repository, input.projectId, capabilities);
+    requireDeploymentServiceBindings(repository, capabilities);
 
     const deployment: Deployment = {
       id: optionalId(input.id, "deployment id") ?? idGenerator("dep"),
@@ -1273,6 +1298,81 @@ export function createControlPlane(options: ControlPlaneOptions) {
       createdAt: now(),
     };
     return repository.createDeployment(deployment);
+  }
+
+  async function createEdgeWorkerRelease(input: CreateEdgeWorkerReleaseInput): Promise<EdgeWorkerRelease> {
+    const project = requireProject(repository, input.projectId);
+    const deployment = requireDeployment(repository, input.deploymentId);
+    if (deployment.projectId !== project.id) {
+      throw new ControlPlaneError(
+        "validation",
+        "edge worker release deployment must belong to the same project",
+      );
+    }
+    const artifact = requireArtifact(repository, deployment.artifactId);
+    const provider = normalizeEdgeWorkerProvider(input.provider);
+    const mode = normalizeEdgeWorkerReleaseMode(input.mode);
+    const releaseId = optionalId(input.id, "edge worker release id") ?? idGenerator("ewr");
+    const scriptName = normalizeEdgeWorkerScriptName(input.scriptName)
+      ?? defaultEdgeWorkerScriptName(project.id, deployment.id);
+    const createdAt = now();
+    const artifactRef = {
+      id: artifact.id,
+      digest: artifact.digest,
+      location: artifact.location,
+    };
+    const scriptModule = renderCloudflareWasmWorkerModule({
+      releaseId,
+      scriptName,
+      projectId: project.id,
+      deploymentId: deployment.id,
+      artifact: artifactRef,
+      createdAt,
+    });
+    const result = await edgeWorkerDeployer.deploy({
+      releaseId,
+      scriptName,
+      projectId: project.id,
+      deploymentId: deployment.id,
+      artifact: artifactRef,
+      createdAt,
+      scriptModule,
+    });
+    if (result.provider !== provider) {
+      throw new ControlPlaneError(
+        "validation",
+        `edge worker deployer returned provider ${result.provider}, expected ${provider}`,
+      );
+    }
+    if (mode && result.mode !== mode) {
+      throw new ControlPlaneError(
+        "validation",
+        `edge worker deployer returned mode ${result.mode}, expected ${mode}`,
+      );
+    }
+    const release: EdgeWorkerRelease = {
+      id: releaseId,
+      projectId: project.id,
+      deploymentId: deployment.id,
+      provider,
+      mode: result.mode,
+      scriptName,
+      scriptDigest: result.scriptDigest,
+      scriptModule: result.scriptModule,
+      artifact: artifactRef,
+      createdAt,
+      ...(result.versionId ? { versionId: result.versionId } : {}),
+      ...(result.externalDeploymentId ? { externalDeploymentId: result.externalDeploymentId } : {}),
+      ...(result.url ? { url: result.url } : {}),
+    };
+    return repository.createEdgeWorkerRelease(release);
+  }
+
+  function listProjectEdgeWorkerReleases(
+    input: ListProjectEdgeWorkerReleasesInput,
+  ): EdgeWorkerRelease[] {
+    requireProject(repository, input.projectId);
+    return repository.listProjectEdgeWorkerReleases(input.projectId);
   }
 
   function pointRoute(input: PointRouteInput): RoutePointer {
@@ -1548,6 +1648,8 @@ export function createControlPlane(options: ControlPlaneOptions) {
     listProjectDurableObjectNamespaces,
     deleteDurableObjectNamespace,
     createDeployment,
+    createEdgeWorkerRelease,
+    listProjectEdgeWorkerReleases,
     pointRoute,
     startRouteCanary,
     analyzeRouteCanary,
@@ -1674,8 +1776,11 @@ function isActiveRuntimeNode(
   if (node.status !== "active") {
     return false;
   }
-  if (activeTtlMs === undefined || !node.lastSeenAt) {
+  if (activeTtlMs === undefined) {
     return !isSaturatedRuntimeNode(node);
+  }
+  if (!node.lastSeenAt) {
+    return false;
   }
   return Date.parse(nowValue) - Date.parse(node.lastSeenAt) <= activeTtlMs && !isSaturatedRuntimeNode(node);
 }
@@ -1861,6 +1966,20 @@ function requireDeploymentSecrets(
   }
 }
 
+function requireDeploymentServiceBindings(
+  repository: ControlPlaneRepository,
+  capabilities: CapabilityPolicy,
+) {
+  for (const binding of capabilities.services) {
+    if (!repository.getProject(binding.targetProjectId)) {
+      throw new ControlPlaneError(
+        "validation",
+        `service target project ${binding.targetProjectId} was not found`,
+      );
+    }
+  }
+}
+
 function requireDeployment(repository: ControlPlaneRepository, id: string): Deployment {
   const deployment = repository.getDeployment(id);
   if (!deployment) {
@@ -1958,6 +2077,15 @@ function deployPreviewUrl(host: string, pathPrefix: string): string {
 
 function defaultDeployPreviewHost(projectId: string, deploymentId: string): string {
   return `${dnsLabel(deploymentId)}.${dnsLabel(projectId)}.preview.wasmplane.local`;
+}
+
+function defaultEdgeWorkerScriptName(projectId: string, deploymentId: string): string {
+  const label = `wasmplane-${dnsLabel(projectId)}-${dnsLabel(deploymentId)}`;
+  if (label.length <= 63) {
+    return label;
+  }
+  const digest = createHash("sha256").update(`${projectId}:${deploymentId}`).digest("hex").slice(0, 8);
+  return `${label.slice(0, 54).replace(/-+$/g, "")}-${digest}`;
 }
 
 function dnsLabel(value: string): string {

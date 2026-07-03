@@ -1501,6 +1501,92 @@ test("HTTP API writes audit events for authenticated mutations", async () => {
   }
 });
 
+test("HTTP API gates live edge worker deploys behind publish scope and audits them", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "wasmplane-edge-audit-"));
+  const auditPath = join(dir, "audit.jsonl");
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+    edgeWorkerDeployer: {
+      deploy(input: any) {
+        return {
+          provider: "cloudflare-workers",
+          mode: "api",
+          scriptName: input.scriptName,
+          scriptDigest: digest(input.scriptModule),
+          scriptModule: input.scriptModule,
+          versionId: "version_live",
+          externalDeploymentId: "deployment_live",
+          url: `https://${input.scriptName}.example.workers.dev`,
+        };
+      },
+    },
+  });
+  const { project, deployment } = await createHelloRouteInControlPlane(control);
+  const app = createHttpApp({
+    controlPlane: control,
+    apiTokens: [
+      { token: "write-token", scopes: ["write"], principal: "writer" },
+      { token: "publish-token", scopes: ["publish"], principal: "publisher" },
+    ],
+    auditSink: createJsonlAuditSink({ path: auditPath }),
+    now: fixedNow,
+  });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+  const body = {
+    projectId: project.id,
+    deploymentId: deployment.id,
+    scriptName: "wasmplane-live-edge",
+    mode: "api",
+  };
+
+  try {
+    const denied = await fetch(`${baseUrl}/edge-workers/releases`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer write-token",
+      },
+      body: JSON.stringify(body),
+    });
+    assert.equal(denied.status, 403);
+
+    const created = await fetch(`${baseUrl}/edge-workers/releases`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer publish-token",
+      },
+      body: JSON.stringify(body),
+    });
+    const createdText = await created.text();
+    assert.equal(created.status, 201, createdText);
+    const release = JSON.parse(createdText);
+    assert.equal(release.mode, "api");
+    assert.equal(release.versionId, "version_live");
+
+    await eventually(async () => {
+      const lines = (await readFile(auditPath, "utf8")).trim().split("\n");
+      assert.equal(lines.length, 1);
+      assert.deepEqual(JSON.parse(lines[0]), {
+        timestamp: fixedNow(),
+        principal: "publisher",
+        scope: "publish",
+        method: "POST",
+        path: "/edge-workers/releases",
+        status: 201,
+      });
+    });
+  } finally {
+    await app.close();
+  }
+});
+
 test("HTTP API manages secrets without exposing values", async () => {
   const control = createControlPlane({
     repository: createMemoryRepository(),
@@ -2951,6 +3037,105 @@ test("HTTP API publishes isolated tenant snapshots only to isolation pool nodes"
   }
 });
 
+test("route snapshot publish keeps registered node snapshot when static target shares its URL", async () => {
+  const sent: Array<{ url: string; routes: string[] }> = [];
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+  });
+  control.registerRuntimeNode({
+    id: "rt_isolated",
+    url: "http://runtime.local",
+    labels: { pool: "isolation" },
+  });
+  control.recordRuntimeNodeHeartbeat({ id: "rt_isolated" });
+  await createProjectRouteInControlPlane(control, {
+    projectId: "prj_noisy",
+    projectName: "noisy",
+    host: "noisy.example.dev",
+  });
+
+  const report = await publishCurrentRouteSnapshot({
+    controlPlane: control,
+    runtimeNodes: [{ id: "static-runtime", url: "http://runtime.local" }],
+    runtimePlacement: {
+      default: { labels: { pool: "default" } },
+      isolation: {
+        projects: {
+          prj_noisy: { labels: { pool: "isolation" } },
+        },
+      },
+    },
+    fetch: async (url, init) => {
+      const snapshot = JSON.parse(init.body) as RouteSnapshot;
+      sent.push({ url, routes: snapshot.routes.map((route) => route.projectId) });
+      return snapshotPublishOk(snapshot);
+    },
+  });
+
+  assert.deepEqual(report.targets.map((target) => ({ id: target.id, routes: target.routes })), [
+    { id: "rt_isolated", routes: 1 },
+  ]);
+  assert.deepEqual(sent, [
+    {
+      url: "http://runtime.local/__runtime/snapshots/routes",
+      routes: ["prj_noisy"],
+    },
+  ]);
+});
+
+test("route snapshot publish filters static targets through placement policy", async () => {
+  const sent: Array<{ url: string; routes: string[] }> = [];
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+  });
+  control.registerRuntimeNode({
+    id: "rt_nrt",
+    url: "http://nrt.runtime.local",
+    region: "nrt",
+    labels: { pool: "default" },
+  });
+  control.recordRuntimeNodeHeartbeat({ id: "rt_nrt" });
+  await createProjectRouteInControlPlane(control, {
+    projectId: "prj_place",
+    projectName: "placed",
+    host: "placed.example.dev",
+  });
+
+  const report = await publishCurrentRouteSnapshot({
+    controlPlane: control,
+    runtimeNodes: [{ id: "static-iad", url: "http://iad.runtime.local" }],
+    runtimePlacement: {
+      projects: {
+        prj_place: { regions: ["nrt"], labels: { pool: "default" } },
+      },
+    },
+    fetch: async (url, init) => {
+      const snapshot = JSON.parse(init.body) as RouteSnapshot;
+      sent.push({ url, routes: snapshot.routes.map((route) => route.projectId) });
+      return snapshotPublishOk(snapshot);
+    },
+  });
+
+  assert.deepEqual(report.targets.map((target) => ({ id: target.id, routes: target.routes })), [
+    { id: "rt_nrt", routes: 1 },
+    { id: "static-iad", routes: 0 },
+  ]);
+  assert.deepEqual(sent, [
+    {
+      url: "http://nrt.runtime.local/__runtime/snapshots/routes",
+      routes: ["prj_place"],
+    },
+    {
+      url: "http://iad.runtime.local/__runtime/snapshots/routes",
+      routes: [],
+    },
+  ]);
+});
+
 test("HTTP API records runtime node heartbeat and skips inactive nodes when publishing", async () => {
   const activeSnapshots: RouteSnapshot[] = [];
   const offlineSnapshots: RouteSnapshot[] = [];
@@ -3531,6 +3716,50 @@ async function createHelloRouteInControlPlane(control: any) {
   return { project, artifact, deployment };
 }
 
+async function createProjectRouteInControlPlane(
+  control: any,
+  input: { projectId: string; projectName: string; host: string },
+) {
+  const project = await control.createProject({ id: input.projectId, name: input.projectName });
+  const artifact = await control.createArtifact({
+    projectId: project.id,
+    digest: digest(`route-${project.id}`),
+    location: `oci://registry.example.com/mizchi/${project.id}:v1`,
+    sizeBytes: 42,
+  });
+  const deployment = await control.createDeployment({
+    projectId: project.id,
+    artifactId: artifact.id,
+    world: "myedge:runtime/worker@0.1.0",
+    runtime: {
+      backend: "wasmtime",
+      version: "wasmtime-43",
+      wasi: "wasip3",
+    },
+    limits: {
+      cpuMs: 50,
+      memoryMb: 64,
+      wallMs: 1000,
+      requestBytes: 1048576,
+      subrequests: 20,
+      hostCalls: 100,
+      responseBytes: 1048576,
+    },
+    capabilities: {
+      outboundHttp: { enabled: false, allow: [] },
+      kv: [],
+      secrets: [],
+    },
+  });
+  await control.pointRoute({
+    projectId: project.id,
+    host: input.host,
+    pathPrefix: "/",
+    deploymentId: deployment.id,
+  });
+  return { project, artifact, deployment };
+}
+
 function sequenceIds() {
   let next = 1;
   return (prefix: string) => `${prefix}_${next++}`;
@@ -3580,6 +3809,23 @@ async function listenRuntimeSnapshotSink(receivedSnapshots: RouteSnapshot[]) {
           resolve();
         });
       });
+    },
+  };
+}
+
+function snapshotPublishOk(snapshot: RouteSnapshot) {
+  return {
+    ok: true,
+    status: 200,
+    async json() {
+      return {
+        routes: snapshot.routes.length,
+        generatedAt: snapshot.generatedAt,
+        snapshotId: snapshot.id,
+      };
+    },
+    async text() {
+      return "ok";
     },
   };
 }

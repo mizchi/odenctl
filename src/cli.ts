@@ -52,6 +52,7 @@ export interface DeployComponentInput {
   outboundAllow?: string[];
   kv?: Array<{ binding: string; namespaceId: string }>;
   secrets?: Array<{ binding: string; secretId: string }>;
+  services?: Array<{ binding: string; targetProjectId: string; url: string }>;
   token?: string;
   publish?: boolean;
   diff?: boolean;
@@ -81,6 +82,7 @@ export interface DevCommandInput {
   outboundAllow?: string[];
   kv?: Array<{ binding: string; namespaceId: string }>;
   secrets?: Array<{ binding: string; secretId: string }>;
+  services?: Array<{ binding: string; targetProjectId: string; url: string }>;
   environment?: Record<string, string>;
   token?: string;
   runtimeToken?: string;
@@ -168,6 +170,7 @@ export async function deployComponent(input: DeployComponentInput): Promise<Depl
     },
     kv: input.kv ?? [],
     secrets: input.secrets ?? [],
+    services: input.services ?? [],
     arbitraryFilesystem: false,
     arbitrarySockets: false,
     processSpawn: false,
@@ -250,6 +253,7 @@ export async function runDevCommand(input: DevCommandInput): Promise<DevCommandR
     },
     kv: input.kv ?? [],
     secrets: input.secrets ?? [],
+    services: input.services ?? [],
     arbitraryFilesystem: false,
     arbitrarySockets: false,
     processSpawn: false,
@@ -319,6 +323,7 @@ export function parseDeployArgs(args: string[], env: Record<string, string | und
     outboundAllow: [],
     kv: [],
     secrets: [],
+    services: [],
     publish: true,
     diff: false,
   };
@@ -378,6 +383,10 @@ export function parseDeployArgs(args: string[], env: Record<string, string | und
         input.secrets?.push(parseBinding(requiredValue(flag, value), "secretId"));
         index += 1;
         break;
+      case "--service":
+        input.services?.push(parseServiceBinding(requiredValue(flag, value)));
+        index += 1;
+        break;
       case "--limit":
         input.limits = { ...(input.limits ?? {}), ...parseLimit(requiredValue(flag, value)) };
         index += 1;
@@ -425,6 +434,7 @@ export function parseDevArgs(
     outboundAllow: [],
     kv: [],
     secrets: [],
+    services: [],
     environment: {},
     validate: true,
     tailLogs: true,
@@ -495,6 +505,10 @@ export function parseDevArgs(
         break;
       case "--secret":
         input.secrets?.push(parseBinding(requiredValue(flag, value), "secretId"));
+        index += 1;
+        break;
+      case "--service":
+        input.services?.push(parseServiceBinding(requiredValue(flag, value)));
         index += 1;
         break;
       case "--limit":
@@ -878,6 +892,19 @@ function parseBinding(value: string, targetKey: "namespaceId" | "secretId") {
     throw new Error("bindings must use BINDING=id syntax");
   }
   return { binding, [targetKey]: target } as any;
+}
+
+function parseServiceBinding(value: string) {
+  const separator = value.indexOf("=");
+  const binding = separator >= 0 ? value.slice(0, separator) : "";
+  const target = separator >= 0 ? value.slice(separator + 1) : "";
+  const serviceSeparator = target.indexOf("@");
+  const targetProjectId = serviceSeparator >= 0 ? target.slice(0, serviceSeparator) : "";
+  const url = serviceSeparator >= 0 ? target.slice(serviceSeparator + 1) : "";
+  if (!binding || !targetProjectId || !url) {
+    throw new Error("service bindings must use BINDING=projectId@url syntax");
+  }
+  return { binding, targetProjectId, url };
 }
 
 function parseLimit(value: string): Partial<RuntimeLimits> {

@@ -197,11 +197,18 @@ export interface DurableObjectBinding {
   namespaceId: string;
 }
 
+export interface ServiceBinding {
+  binding: string;
+  targetProjectId: string;
+  url: string;
+}
+
 export interface CapabilityPolicy {
   outboundHttp: OutboundHttpCapability;
   kv: KvBinding[];
   durableObjects: DurableObjectBinding[];
   secrets: SecretBinding[];
+  services: ServiceBinding[];
   arbitraryFilesystem: false;
   arbitrarySockets: false;
   processSpawn: false;
@@ -217,6 +224,29 @@ export interface Deployment {
   limits: RuntimeLimits;
   capabilities: CapabilityPolicy;
   createdAt: string;
+}
+
+export type EdgeWorkerProvider = "cloudflare-workers";
+export type EdgeWorkerReleaseMode = "mock" | "api";
+
+export interface EdgeWorkerRelease {
+  id: string;
+  projectId: string;
+  deploymentId: string;
+  provider: EdgeWorkerProvider;
+  mode: EdgeWorkerReleaseMode;
+  scriptName: string;
+  scriptDigest: string;
+  scriptModule: string;
+  artifact: {
+    id: string;
+    digest: string;
+    location: string;
+  };
+  createdAt: string;
+  versionId?: string;
+  externalDeploymentId?: string;
+  url?: string;
 }
 
 export interface RoutePointer {
@@ -686,10 +716,42 @@ export function normalizeCapabilities(value: unknown): CapabilityPolicy {
     kv: normalizeKvBindings(record.kv),
     durableObjects: normalizeDurableObjectBindings(record.durableObjects),
     secrets: normalizeSecretBindings(record.secrets),
+    services: normalizeServiceBindings(record.services),
     arbitraryFilesystem: false,
     arbitrarySockets: false,
     processSpawn: false,
   };
+}
+
+export function normalizeEdgeWorkerProvider(value: unknown): EdgeWorkerProvider {
+  if (value === undefined || value === "cloudflare-workers") {
+    return "cloudflare-workers";
+  }
+  throw new ControlPlaneError("validation", "edge worker provider must be cloudflare-workers");
+}
+
+export function normalizeEdgeWorkerReleaseMode(value: unknown): EdgeWorkerReleaseMode | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === "mock" || value === "api") {
+    return value;
+  }
+  throw new ControlPlaneError("validation", "edge worker release mode must be mock or api");
+}
+
+export function normalizeEdgeWorkerScriptName(value: unknown): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const name = nonEmptyString(value, "edge worker scriptName").toLowerCase();
+  if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(name)) {
+    throw new ControlPlaneError(
+      "validation",
+      "edge worker scriptName must be a DNS-safe name of 1-63 lowercase letters, digits, or hyphens",
+    );
+  }
+  return name;
 }
 
 export function normalizeHost(value: unknown): string {
@@ -964,6 +1026,26 @@ function normalizeSecretBindings(value: unknown): SecretBinding[] {
   });
 }
 
+function normalizeServiceBindings(value: unknown): ServiceBinding[] {
+  if (value === undefined) {
+    return [];
+  }
+  if (!Array.isArray(value)) {
+    throw new ControlPlaneError("validation", "capabilities.services must be an array");
+  }
+  return value.map((item, index) => {
+    const record = objectRecord(item, `capabilities.services[${index}]`);
+    return {
+      binding: bindingName(record.binding, `capabilities.services[${index}].binding`),
+      targetProjectId: nonEmptyString(
+        record.targetProjectId,
+        `capabilities.services[${index}].targetProjectId`,
+      ),
+      url: serviceUrl(record.url, `capabilities.services[${index}].url`),
+    };
+  });
+}
+
 function rejectPrivilegedCapability(record: Record<string, unknown>, key: string) {
   if (record[key] === true) {
     throw new ControlPlaneError("validation", `${key} is not exposed to workers`);
@@ -990,6 +1072,26 @@ function bindingName(value: unknown, field: string): string {
     throw new ControlPlaneError("validation", `${field} must be an uppercase binding name`);
   }
   return name;
+}
+
+function serviceUrl(value: unknown, field: string): string {
+  const text = nonEmptyString(value, field);
+  let url: URL;
+  try {
+    url = new URL(text);
+  } catch {
+    throw new ControlPlaneError("validation", `${field} must be an absolute http(s) URL`);
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new ControlPlaneError("validation", `${field} must be an absolute http(s) URL`);
+  }
+  if (url.hash) {
+    throw new ControlPlaneError("validation", `${field} must not include a fragment`);
+  }
+  if (url.search) {
+    throw new ControlPlaneError("validation", `${field} must not include a query`);
+  }
+  return url.toString();
 }
 
 function positiveInteger(value: unknown, field: string): number {

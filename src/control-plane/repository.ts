@@ -7,6 +7,7 @@ import type {
   DeployPreview,
   Deployment,
   DurableObjectNamespace,
+  EdgeWorkerRelease,
   KvNamespace,
   Organization,
   Project,
@@ -65,6 +66,8 @@ export interface ControlPlaneRepository {
   getDeployPreview(id: string): DeployPreview | undefined;
   listProjectDeployPreviews(projectId: string): DeployPreview[];
   updateDeployPreview(preview: DeployPreview): DeployPreview;
+  createEdgeWorkerRelease(release: EdgeWorkerRelease): EdgeWorkerRelease;
+  listProjectEdgeWorkerReleases(projectId: string): EdgeWorkerRelease[];
   createProject(project: Project): Project;
   getProject(id: string): Project | undefined;
   listOrganizationProjects(organizationId: string): Project[];
@@ -748,6 +751,54 @@ class SqliteControlPlaneRepository implements ControlPlaneRepository {
     return this.getDeployPreview(preview.id) as DeployPreview;
   }
 
+  createEdgeWorkerRelease(release: EdgeWorkerRelease): EdgeWorkerRelease {
+    try {
+      this.db
+        .prepare(
+          `insert into edge_worker_releases (
+            id,
+            project_id,
+            deployment_id,
+            provider,
+            mode,
+            script_name,
+            script_digest,
+            script_module,
+            artifact_json,
+            version_id,
+            external_deployment_id,
+            url,
+            created_at
+          ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          release.id,
+          release.projectId,
+          release.deploymentId,
+          release.provider,
+          release.mode,
+          release.scriptName,
+          release.scriptDigest,
+          release.scriptModule,
+          JSON.stringify(release.artifact),
+          release.versionId ?? null,
+          release.externalDeploymentId ?? null,
+          release.url ?? null,
+          release.createdAt,
+        );
+      return release;
+    } catch (error) {
+      throw writeError("edge worker release", release.id, error);
+    }
+  }
+
+  listProjectEdgeWorkerReleases(projectId: string): EdgeWorkerRelease[] {
+    return this.db
+      .prepare("select * from edge_worker_releases where project_id = ? order by created_at desc, id desc")
+      .all(projectId)
+      .map(edgeWorkerReleaseFromRow);
+  }
+
   createProject(project: Project): Project {
     try {
       this.db
@@ -1361,6 +1412,24 @@ function deployPreviewFromRow(row: any): DeployPreview {
   };
 }
 
+function edgeWorkerReleaseFromRow(row: any): EdgeWorkerRelease {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    deploymentId: row.deployment_id,
+    provider: row.provider,
+    mode: row.mode,
+    scriptName: row.script_name,
+    scriptDigest: row.script_digest,
+    scriptModule: row.script_module,
+    artifact: JSON.parse(row.artifact_json),
+    createdAt: row.created_at,
+    ...(row.version_id ? { versionId: row.version_id } : {}),
+    ...(row.external_deployment_id ? { externalDeploymentId: row.external_deployment_id } : {}),
+    ...(row.url ? { url: row.url } : {}),
+  };
+}
+
 function projectFromRow(row: any): Project {
   return {
     id: row.id,
@@ -1869,6 +1938,27 @@ create table if not exists deploy_previews (
 create index if not exists deploy_previews_project_idx
   on deploy_previews (project_id, created_at desc, id desc);
 
+create table if not exists edge_worker_releases (
+  id text primary key,
+  project_id text not null,
+  deployment_id text not null,
+  provider text not null,
+  mode text not null,
+  script_name text not null,
+  script_digest text not null,
+  script_module text not null,
+  artifact_json text not null,
+  version_id text,
+  external_deployment_id text,
+  url text,
+  created_at text not null,
+  foreign key (project_id) references projects(id),
+  foreign key (deployment_id) references deployments(id)
+);
+
+create index if not exists edge_worker_releases_project_idx
+  on edge_worker_releases (project_id, created_at desc, id desc);
+
 create table if not exists runtime_nodes (
   id text primary key,
   url text not null unique,
@@ -2307,6 +2397,33 @@ const migrations: SchemaMigration[] = [
 
         create index if not exists billing_invoice_retention_policies_org_idx
           on billing_invoice_retention_policies (organization_id, retain_until, invoice_id);
+      `);
+    },
+  },
+  {
+    id: "202607030001_edge_worker_releases",
+    apply(db) {
+      db.exec(`
+        create table if not exists edge_worker_releases (
+          id text primary key,
+          project_id text not null,
+          deployment_id text not null,
+          provider text not null,
+          mode text not null,
+          script_name text not null,
+          script_digest text not null,
+          script_module text not null,
+          artifact_json text not null,
+          version_id text,
+          external_deployment_id text,
+          url text,
+          created_at text not null,
+          foreign key (project_id) references projects(id),
+          foreign key (deployment_id) references deployments(id)
+        );
+
+        create index if not exists edge_worker_releases_project_idx
+          on edge_worker_releases (project_id, created_at desc, id desc);
       `);
     },
   },

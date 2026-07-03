@@ -87,6 +87,12 @@ interface outbound {
   fetch: async func(req: request) -> response;
 }
 
+interface service {
+  use outbound.{request, response};
+
+  fetch: async func(binding: string, req: request) -> response;
+}
+
 interface log {
   info: func(message: string);
   warn: func(message: string);
@@ -101,6 +107,7 @@ world worker {
   import secrets;
   import durable;
   import outbound;
+  import service;
   import log;
 
   export handle: async func(req: request) -> response;

@@ -9,6 +9,11 @@ import { billingInvoiceExportSignerFromEnv } from "./billing-export.ts";
 import { projectQuotasFromEnv } from "./quotas.ts";
 import { admissionPolicyFromEnv } from "./admission.ts";
 import {
+  createCloudflareWorkersApiDeployer,
+  createMockCloudflareWorkerDeployer,
+  type EdgeWorkerDeployer,
+} from "./edge-worker-deployer.ts";
+import {
   applyControlPlaneMigrations,
   checkControlPlaneMigrations,
   type ControlPlaneMigrationStatus,
@@ -63,6 +68,7 @@ export async function createConfiguredControlPlane(
   const billingWebhookMaxAttempts = positiveInteger(env.WASMPLANE_BILLING_WEBHOOK_MAX_ATTEMPTS);
   const billingWebhookRetryDelayMs = positiveInteger(env.WASMPLANE_BILLING_WEBHOOK_RETRY_DELAY_MS);
   const admissionPolicy = admissionPolicyFromEnv(env);
+  const edgeWorkerDeployer = edgeWorkerDeployerFromEnv(env);
   if (config.kind === "postgres") {
     const [{ createAsyncControlPlane }, { createPostgresRepository }] = await Promise.all([
       import("./async-service.ts"),
@@ -88,6 +94,7 @@ export async function createConfiguredControlPlane(
       billingWebhookMaxAttempts,
       billingWebhookRetryDelayMs,
       admissionPolicy,
+      edgeWorkerDeployer,
     });
     assertMigrationStatus(await checkControlPlaneMigrations(config));
     return controlPlane;
@@ -107,9 +114,42 @@ export async function createConfiguredControlPlane(
     billingWebhookMaxAttempts,
     billingWebhookRetryDelayMs,
     admissionPolicy,
+    edgeWorkerDeployer,
   });
   assertMigrationStatus(await checkControlPlaneMigrations(config));
   return controlPlane;
+}
+
+export function edgeWorkerDeployerFromEnv(
+  env: Record<string, string | undefined> = process.env,
+): EdgeWorkerDeployer | undefined {
+  const mode = firstNonEmpty(env.WASMPLANE_EDGE_WORKER_DEPLOYER, env.WASMPLANE_EDGE_WORKER_MODE);
+  const workersDevSubdomain = firstNonEmpty(
+    env.WASMPLANE_CLOUDFLARE_WORKERS_DEV_SUBDOMAIN,
+    env.CLOUDFLARE_WORKERS_DEV_SUBDOMAIN,
+  );
+  if (!mode) {
+    return undefined;
+  }
+  const normalized = mode.toLowerCase();
+  if (normalized === "mock") {
+    return createMockCloudflareWorkerDeployer({ workersDevSubdomain });
+  }
+  if (normalized === "cloudflare-api" || normalized === "api") {
+    const accountId = firstNonEmpty(env.WASMPLANE_CLOUDFLARE_ACCOUNT_ID, env.CLOUDFLARE_ACCOUNT_ID);
+    const apiToken = firstNonEmpty(env.WASMPLANE_CLOUDFLARE_API_TOKEN, env.CLOUDFLARE_API_TOKEN);
+    if (!accountId || !apiToken) {
+      throw new Error(
+        "Cloudflare edge worker deployer requires WASMPLANE_CLOUDFLARE_ACCOUNT_ID and WASMPLANE_CLOUDFLARE_API_TOKEN",
+      );
+    }
+    return createCloudflareWorkersApiDeployer({
+      accountId,
+      apiToken,
+      workersDevSubdomain,
+    });
+  }
+  throw new Error("WASMPLANE_EDGE_WORKER_DEPLOYER must be mock, cloudflare-api, or api");
 }
 
 export async function applyConfiguredControlPlaneMigrations(

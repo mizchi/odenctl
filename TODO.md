@@ -287,3 +287,17 @@ Production readiness tasks, in implementation order.
 - [x] Move route snapshot translation from benchmark-only prepared routes into the Node runtime publisher path.
 - [x] Add production smoke for Rust-forward runtime mode before making it the Fly default.
 - [x] Add an opt-in Node runtime fast path that proxies matched worker requests to Rust daemon routes.
+
+## 37. Multi-cloud infrastructure
+
+- [x] Add AWS ECS/Fargate Terraform for control-plane and runtime services, ALB routing, S3 artifact storage, CloudWatch logs, and Secrets Manager references.
+- [x] Add optional AWS RDS/Aurora Postgres module or documented external Postgres hookup.
+- [x] Add GCP Cloud Run Terraform for control-plane and runtime services, Cloud Storage artifact bucket, Secret Manager references, and single-runtime snapshot target wiring.
+- [x] Add GKE/EKS notes for high-fidelity runtime-node discovery, warmup, drain, and per-node snapshot publish.
+- [x] Build a Cloudflare Containers control-plane POC with a Worker front door, Durable Object-backed container class, and the existing Dockerfile.
+- [x] Add a control-plane edge worker release API with a mock Cloudflare Workers deployer.
+- [x] Add an opt-in Cloudflare Workers script API deployer for generated control-plane release stubs.
+- [x] Persist edge worker releases in SQLite/Postgres instead of in-memory POC state.
+- [x] Gate live Cloudflare API deploys with scoped token policy, authorization, and audit history.
+- [ ] Verify Cloudflare Containers behavior for `/healthz`, local SQLite fallback, artifact upload persistence, cold start, logs, and sleep/wakeup.
+- [ ] Decide whether Cloudflare production mode uses Containers for runtime, or Workers/Durable Objects/R2/D1 as a separate native backend.

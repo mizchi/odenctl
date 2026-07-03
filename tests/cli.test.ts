@@ -43,6 +43,7 @@ test("CLI deploy flow uploads component, creates deployment, points route, and p
     outboundAllow: ["https://api.example.dev/v1/"],
     kv: [{ binding: "MAIN", namespaceId: "kv_main" }],
     secrets: [{ binding: "API_KEY", secretId: "sec_api_key" }],
+    services: [{ binding: "AUTH", targetProjectId: "prj_auth", url: "https://auth.internal/" }],
     token: "control-secret",
     publish: true,
     fetch: async (url, init) => {
@@ -104,6 +105,7 @@ test("CLI deploy flow uploads component, creates deployment, points route, and p
       outboundHttp: { enabled: true, allow: ["https://api.example.dev/v1/"] },
       kv: [{ binding: "MAIN", namespaceId: "kv_main" }],
       secrets: [{ binding: "API_KEY", secretId: "sec_api_key" }],
+      services: [{ binding: "AUTH", targetProjectId: "prj_auth", url: "https://auth.internal/" }],
       arbitraryFilesystem: false,
       arbitrarySockets: false,
       processSpawn: false,
@@ -132,6 +134,8 @@ test("CLI deploy args parse capability bindings and limit overrides", () => {
       "MAIN=kv_main",
       "--secret",
       "API_KEY=sec_api_key",
+      "--service",
+      "AUTH=prj_auth@https://auth.internal/",
       "--outbound",
       "https://api.example.dev/",
       "--limit",
@@ -147,6 +151,7 @@ test("CLI deploy args parse capability bindings and limit overrides", () => {
   assert.equal(input.controlPlaneUrl, "http://127.0.0.1:9999");
   assert.deepEqual(input.kv, [{ binding: "MAIN", namespaceId: "kv_main" }]);
   assert.deepEqual(input.secrets, [{ binding: "API_KEY", secretId: "sec_api_key" }]);
+  assert.deepEqual(input.services, [{ binding: "AUTH", targetProjectId: "prj_auth", url: "https://auth.internal/" }]);
   assert.deepEqual(input.outboundAllow, ["https://api.example.dev/"]);
   assert.deepEqual(input.limits, { wallMs: 2500 });
   assert.equal(input.token, "control-secret");
@@ -266,6 +271,8 @@ test("CLI dev args default to local control plane and runtime with WIT validatio
       "dev.localhost",
       "--env",
       "FEATURE_FLAG=on",
+      "--service",
+      "AUTH=prj_auth@https://auth.internal/",
     ],
     {
       WASMPLANE_CONTROL_PLANE_TOKEN: "control-secret",
@@ -280,6 +287,7 @@ test("CLI dev args default to local control plane and runtime with WIT validatio
   assert.equal(input.token, "control-secret");
   assert.equal(input.runtimeToken, "runtime-secret");
   assert.deepEqual(input.environment, { FEATURE_FLAG: "on" });
+  assert.deepEqual(input.services, [{ binding: "AUTH", targetProjectId: "prj_auth", url: "https://auth.internal/" }]);
 });
 
 test("CLI dev validates, creates a deploy preview, publishes to local runtime, and tails logs", async () => {
@@ -606,6 +614,7 @@ function snapshotRoute(input: {
   limits: { wallMs: number };
   kv: Array<{ binding: string; namespaceId: string }>;
   secrets: Array<{ binding: string; secretId: string }>;
+  services?: Array<{ binding: string; targetProjectId: string; url: string }>;
 }) {
   const limits = {
     cpuMs: 50,
@@ -620,6 +629,7 @@ function snapshotRoute(input: {
     outboundHttp: { enabled: false, allow: [] },
     kv: input.kv,
     secrets: input.secrets,
+    services: input.services ?? [],
     arbitraryFilesystem: false,
     arbitrarySockets: false,
     processSpawn: false,

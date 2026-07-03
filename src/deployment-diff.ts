@@ -140,6 +140,12 @@ function addCapabilityChanges(
     before ? normalizeSecrets(before.secrets) : undefined,
     normalizeSecrets(after.secrets),
   );
+  addChange(
+    changes,
+    "capabilities.services",
+    before ? normalizeServices(before.services) : undefined,
+    normalizeServices(after.services),
+  );
   addChange(changes, "capabilities.arbitraryFilesystem", before?.arbitraryFilesystem, after.arbitraryFilesystem);
   addChange(changes, "capabilities.arbitrarySockets", before?.arbitrarySockets, after.arbitrarySockets);
   addChange(changes, "capabilities.processSpawn", before?.processSpawn, after.processSpawn);
@@ -172,6 +178,20 @@ function normalizeSecrets(values: CapabilityPolicy["secrets"]) {
   return [...values]
     .map((value) => ({ binding: value.binding, secretId: value.secretId }))
     .sort((a, b) => `${a.binding}\0${a.secretId}`.localeCompare(`${b.binding}\0${b.secretId}`));
+}
+
+function normalizeServices(values: CapabilityPolicy["services"] | undefined) {
+  return [...(values ?? [])]
+    .map((value) => ({
+      binding: value.binding,
+      targetProjectId: value.targetProjectId,
+      url: value.url,
+    }))
+    .sort((a, b) =>
+      `${a.binding}\0${a.targetProjectId}\0${a.url}`.localeCompare(
+        `${b.binding}\0${b.targetProjectId}\0${b.url}`,
+      )
+    );
 }
 
 function stableJson(value: unknown): string {

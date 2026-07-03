@@ -254,6 +254,8 @@ host capability は deployment policy として明示的に渡す。
 - outbound HTTP allowlist
 - KV namespace binding
 - secret binding
+- durable object namespace binding
+- service binding
 
 outbound HTTP は URL scheme/host/port/path prefix で検証し、redirect 先も再検証する。
 private/loopback/link-local address への DNS rebinding は拒否する。HTTPS から HTTP への downgrade
@@ -270,7 +272,13 @@ external KMS は command provider 契約で接続し、provider は primary key 
 返す。AWS KMS adapter は KMS ciphertext blob として wrap された data key を起動時に `Decrypt` で
 unwrap し、以後は in-memory data keyring で AES-GCM envelope を処理する。GCP Cloud KMS adapter は
 `cryptoKeys.decrypt`、Azure Key Vault adapter は `keys/{name}/{version}/decrypt` を使って同じ data key
-unwrap contract に接続する。
+を unwrap する。
+
+service binding は `service.fetch(binding, req)` だけを worker-to-worker 呼び出し API として公開する。
+guest は target process や deployment 一覧を受け取らない。control plane は `binding`, `targetProjectId`,
+`url` を deployment contract に保存し、target project の存在と admission allowlist を検証する。runtime
+host は binding 名を internal service URL に解決し、guest が渡す URI は origin-form path/query のみ受け付ける。
+したがって outbound HTTP allowlist は外部 HTTP 用の capability であり、service access とは別の権限として扱う。
 
 ## Limits
 

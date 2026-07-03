@@ -10,6 +10,7 @@ import type {
   DeployPreview,
   Deployment,
   DurableObjectNamespace,
+  EdgeWorkerRelease,
   KvNamespace,
   Organization,
   Project,
@@ -742,6 +743,54 @@ export class PostgresControlPlaneRepository implements AsyncControlPlaneReposito
     return deployPreviewFromRow(result.rows[0]);
   }
 
+  async createEdgeWorkerRelease(release: EdgeWorkerRelease): Promise<EdgeWorkerRelease> {
+    try {
+      await this.pool.query(
+        `insert into edge_worker_releases (
+          id,
+          project_id,
+          deployment_id,
+          provider,
+          mode,
+          script_name,
+          script_digest,
+          script_module,
+          artifact_json,
+          version_id,
+          external_deployment_id,
+          url,
+          created_at
+        ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13)`,
+        [
+          release.id,
+          release.projectId,
+          release.deploymentId,
+          release.provider,
+          release.mode,
+          release.scriptName,
+          release.scriptDigest,
+          release.scriptModule,
+          JSON.stringify(release.artifact),
+          release.versionId ?? null,
+          release.externalDeploymentId ?? null,
+          release.url ?? null,
+          release.createdAt,
+        ],
+      );
+      return release;
+    } catch (error) {
+      throw writeError("edge worker release", release.id, error);
+    }
+  }
+
+  async listProjectEdgeWorkerReleases(projectId: string): Promise<EdgeWorkerRelease[]> {
+    const result = await this.pool.query(
+      "select * from edge_worker_releases where project_id = $1 order by created_at desc, id desc",
+      [projectId],
+    );
+    return result.rows.map(edgeWorkerReleaseFromRow);
+  }
+
   async createProject(project: Project): Promise<Project> {
     try {
       await this.pool.query(
@@ -1296,6 +1345,24 @@ function deployPreviewFromRow(row: any): DeployPreview {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     ...(row.rolled_back_at ? { rolledBackAt: row.rolled_back_at } : {}),
+  };
+}
+
+function edgeWorkerReleaseFromRow(row: any): EdgeWorkerRelease {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    deploymentId: row.deployment_id,
+    provider: row.provider,
+    mode: row.mode,
+    scriptName: row.script_name,
+    scriptDigest: row.script_digest,
+    scriptModule: row.script_module,
+    artifact: jsonValue(row.artifact_json),
+    createdAt: row.created_at,
+    ...(row.version_id ? { versionId: row.version_id } : {}),
+    ...(row.external_deployment_id ? { externalDeploymentId: row.external_deployment_id } : {}),
+    ...(row.url ? { url: row.url } : {}),
   };
 }
 

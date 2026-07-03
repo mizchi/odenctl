@@ -1,0 +1,38 @@
+lockfile_version: '1'
+generated_at: '2026-07-03T08:05:04.935195+00:00'
+apm_version: 0.21.0
+dependencies:
+- repo_url: mizchi/skills
+  host: github.com
+  resolved_commit: 01cd5b12270c6228a8664cc41e975bb846c83c61
+  virtual_path: formal-methods/reconciler
+  is_virtual: true
+  package_type: claude_skill
+  deployed_files:
+  - .agents/skills/reconciler
+  - .agents/skills/reconciler/README.md
+  - .agents/skills/reconciler/SKILL-ja.md
+  - .agents/skills/reconciler/SKILL.md
+  - .agents/skills/reconciler/agents/openai.yaml
+  - .agents/skills/reconciler/evals/eval.yaml
+  - .agents/skills/reconciler/evals/ledger.yaml
+  - .agents/skills/reconciler/evals/tasks/scenario-a-config-z3.yaml
+  - .agents/skills/reconciler/evals/tasks/scenario-b-authz-alloy.yaml
+  - .agents/skills/reconciler/evals/tasks/scenario-c-async-tla-p.yaml
+  - .agents/skills/reconciler/references/domain-ledger.md
+  - .agents/skills/reconciler/references/research-patterns.md
+  - .agents/skills/reconciler/references/tool-selection.md
+  deployed_file_hashes:
+    .agents/skills/reconciler/README.md: sha256:e335c75c851f075c2698d3b801d83d38dd78ad5b97f728501a24a4eefa34691a
+    .agents/skills/reconciler/SKILL-ja.md: sha256:4655b6ff815d27236826c27efd7ce25068e28d0632bbad684fe213ff2b02da8a
+    .agents/skills/reconciler/SKILL.md: sha256:25b6565bde9b60fd84c9e52dfcb4a9d539a272e99acce05f3f336d7275f96158
+    .agents/skills/reconciler/agents/openai.yaml: sha256:766f03482b1be662b5b41405b49907746c6a69ba31689956cadafd70f3b1daab
+    .agents/skills/reconciler/evals/eval.yaml: sha256:bc3fcc193932cc308a237ccf5932f286dfe5df6ae98e0e40c95a5ee97878e47c
+    .agents/skills/reconciler/evals/ledger.yaml: sha256:1fd0c6ad7188aa7e89ef90cd7ada3f80334bf3ca4284d9962eb6f6447a8d1461
+    .agents/skills/reconciler/evals/tasks/scenario-a-config-z3.yaml: sha256:55dcde26b03bb0f666c510d0f463d339fdcc8dc5e59a66423ddb135636d38f57
+    .agents/skills/reconciler/evals/tasks/scenario-b-authz-alloy.yaml: sha256:30090c331323f497489c497a438ea7309468302380715b1a3cab6b0c0fad196e
+    .agents/skills/reconciler/evals/tasks/scenario-c-async-tla-p.yaml: sha256:6beed63c0c13b0265acf0aa6f9174b78f9d468a5904235d872c10f1793202e9e
+    .agents/skills/reconciler/references/domain-ledger.md: sha256:11cc84b48094a0a339c478796a8dd4cfd1feb521048af0464c5a24801def2635
+    .agents/skills/reconciler/references/research-patterns.md: sha256:4e97380e0a30d59ce203cb38d8939798da5b97fb661f2c01a994f9a29a1de6be
+    .agents/skills/reconciler/references/tool-selection.md: sha256:54058f6a96132357dc96576f15954affe37031427a0a6a1f4eeb2a6aa1fe24a9
+  content_hash: sha256:aeee2e357403582bddea60f18da0ad0f675812efd235365ffacd52a189971379

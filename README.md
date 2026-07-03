@@ -521,6 +521,50 @@ available only when explicit ids are supplied with `--restart-runtime-machine <i
 `--restart-control-machine <id>`. Volume SQLite backup drills require an explicit database id with
 `--volume-sqlite-drill-id <id>`.
 
+## Multi-cloud Deploy POC
+
+Fly remains the most exercised deployment target, but the repository now includes first-pass
+scaffolds for other clouds:
+
+- AWS ECS/Fargate: `infra/terraform/aws`
+- GCP Cloud Run: `infra/terraform/gcp`
+- Cloudflare Containers control-plane POC: `cloudflare/containers-control`
+
+The Terraform scaffolds expect externally managed secrets for `DATABASE_URL`, API tokens, runtime
+tokens, and artifact-store credentials. They are intended as planable starting points, not hardened
+production modules.
+
+```sh
+just aws-terraform-plan
+just gcp-terraform-plan
+
+cd cloudflare/containers-control
+pnpm install
+pnpm wrangler login
+pnpm dev
+pnpm deploy
+```
+
+AWS is closest to the current Fly shape: ECS/Fargate runs separate control-plane and runtime
+services behind an ALB, with S3 for artifacts. GCP Cloud Run can run the same containers, but it
+does not expose stable per-instance runtime addresses, so the scaffold uses a single runtime service
+URL as a POC. Use GKE/EKS when direct runtime-node publication, warmup, and drain need to match Fly
+Machines. Cloudflare Containers can boot the existing control-plane Docker image behind a Worker,
+but container disk is ephemeral; production would need external Postgres plus R2/S3-compatible
+artifact storage.
+
+The control plane can also generate Cloudflare Worker release records for an existing wasm
+deployment. `POST /edge-workers/releases` renders a module-worker stub with a
+`/__wasmplane/manifest` endpoint and persists the provider result in the configured SQLite or
+Postgres control-plane repository. By default this uses the mock deployer, so it has no provider
+side effects. Set
+`WASMPLANE_EDGE_WORKER_DEPLOYER=cloudflare-api` with `WASMPLANE_CLOUDFLARE_ACCOUNT_ID` and
+`WASMPLANE_CLOUDFLARE_API_TOKEN` to upload the generated script through the Cloudflare Workers
+script API. Requests that create `mode: "api"` releases require the `publish` API scope and are
+written to the audit sink when API auth and audit logging are enabled. This POC keeps WASIp3
+execution delegated to Wasmtime runtime nodes; the generated Worker is control-plane-owned metadata,
+not an embedded runtime.
+
 The runtime supervisor code currently prepares deployments by resolving a route snapshot,
 materializing `file://`, `http://`, `https://`, or private `s3://` artifacts, verifying their
 `sha256` digest, validating the component through the Rust `wasmplane-wasip3-host` linker, and
@@ -539,7 +583,7 @@ rejects privileged capabilities (`arbitraryFilesystem`, `arbitrarySockets`, `pro
 passes denied-by-default capability policy to the Rust host. The Rust host applies Wasmtime memory
 limits, wall-clock and `cpuMs` interruption through Wasmtime epoch deadlines, request and response
 byte limits, KV namespace allowlists, Durable Object namespace allowlists, outbound HTTP
-allowlists, host API call counters, and subrequest counters. `cpuMs` uses epoch-tick compute budgeting rather than kernel CPU-time
+allowlists, service binding allowlists, host API call counters, and subrequest counters. `cpuMs` uses epoch-tick compute budgeting rather than kernel CPU-time
 accounting; CPU budget exits are reported as `503 cpu_limit`, while wall-clock exits remain
 `504 timeout`.
 Guest components resolve configured capability bindings through WIT handles: `kv.open-namespace`
@@ -551,6 +595,9 @@ store when `--kv-store-dir`/`WASMPLANE_KV_STORE_DIR` is configured, including TT
 `durableObjects` binding. Its `get`/`put`/`delete` operations use the same host-side persistent
 store today, scoped by namespace and object name, so it provides a Durable Objects-style API surface
 for Wasm workers while the SQLite-backed Node facade remains available for control-plane code.
+Worker-to-worker calls use `service.fetch(binding, req)`. The Rust host resolves only configured
+`services` bindings, rejects unknown bindings with 403, and treats outbound HTTP allowlists as a
+separate capability from service access.
 The control plane stores local secret values through `POST /secrets`, but all public API responses
 return only secret metadata. Set `WASMPLANE_SECRET_KMS_KEY_BASE64` to a 32-byte base64 key to store
 secret values as `wasmplane:v1:aes-256-gcm:*` envelopes before repository persistence. For local
@@ -826,6 +873,7 @@ pnpm wasmplane deploy \
   --path-prefix / \
   --kv MAIN=kv_main \
   --secret API_KEY=sec_api_key \
+  --service AUTH=prj_auth@https://auth.internal/ \
   --outbound https://api.example.dev/
 ```
 
@@ -834,7 +882,7 @@ the route, then publishes a route snapshot unless `--no-publish` is passed. Limi
 `--limit name=value`, for example `--limit wallMs=2500 --limit cpuMs=100`. The CLI also reads
 `WASMPLANE_CONTROL_PLANE_TOKEN` when `--token` is omitted. Pass `--diff` to fetch the current route
 snapshot before deploying and include JSON diff output for the route pointer, rollout targets,
-runtime version, limits, outbound allowlist, KV bindings, and secret bindings.
+runtime version, limits, outbound allowlist, KV bindings, secret bindings, and service bindings.
 
 Worker projects can be bootstrapped from the canonical WIT package with generated SDK helpers:
 
@@ -1002,7 +1050,8 @@ Production admission guardrails can be enabled through environment variables: se
 `WASMPLANE_ADMISSION_ALLOWED_WORLDS` and `WASMPLANE_ADMISSION_ALLOWED_WORLD_VERSIONS`, and restrict
 deployment capabilities with `WASMPLANE_ADMISSION_OUTBOUND_HTTP_PREFIXES`,
 `WASMPLANE_ADMISSION_KV_NAMESPACE_IDS`, `WASMPLANE_ADMISSION_DURABLE_OBJECT_NAMESPACE_IDS`, and
-`WASMPLANE_ADMISSION_SECRET_IDS`.
+`WASMPLANE_ADMISSION_SECRET_IDS`. Worker-to-worker service bindings can be restricted with
+`WASMPLANE_ADMISSION_SERVICE_PROJECT_IDS` and `WASMPLANE_ADMISSION_SERVICE_URL_PREFIXES`.
 
 Custom domains are registered before routing through `POST /custom-domains`. The response includes
 a DNS TXT challenge under `_wasmplane-challenge.<host>`; submit observed TXT values to
@@ -1060,7 +1109,8 @@ Deployment KV capability bindings reference the registered namespace id:
 ```json
 {
   "kv": [{ "binding": "MAIN", "namespaceId": "kv_main" }],
-  "durableObjects": [{ "binding": "ROOMS", "namespaceId": "do_rooms" }]
+  "durableObjects": [{ "binding": "ROOMS", "namespaceId": "do_rooms" }],
+  "services": [{ "binding": "AUTH", "targetProjectId": "prj_auth", "url": "https://auth.internal/" }]
 }
 ```
 

@@ -216,6 +216,22 @@ create table if not exists deploy_previews (
   rolled_back_at text
 );
 
+create table if not exists edge_worker_releases (
+  id text primary key,
+  project_id text not null references projects(id),
+  deployment_id text not null references deployments(id),
+  provider text not null check (provider in ('cloudflare-workers')),
+  mode text not null check (mode in ('mock', 'api')),
+  script_name text not null,
+  script_digest text not null,
+  script_module text not null,
+  artifact_json jsonb not null,
+  version_id text,
+  external_deployment_id text,
+  url text,
+  created_at text not null
+);
+
 create table if not exists runtime_nodes (
   id text primary key,
   url text not null unique,
@@ -326,6 +342,9 @@ create index if not exists routes_lookup_idx
 
 create index if not exists deploy_previews_project_idx
   on deploy_previews (project_id, created_at desc, id desc);
+
+create index if not exists edge_worker_releases_project_idx
+  on edge_worker_releases (project_id, created_at desc, id desc);
 
 create index if not exists fly_autoscaler_coordination_lease_idx
   on fly_autoscaler_coordination (lease_expires_at_ms);

@@ -25,6 +25,9 @@ export {
   type DeployPreviewEnvironment,
   type DeployPreviewPreviousRoute,
   type DeployPreviewStatus,
+  type EdgeWorkerProvider,
+  type EdgeWorkerRelease,
+  type EdgeWorkerReleaseMode,
   type Organization,
   type ProjectMembership,
   type ProjectRole,
@@ -38,8 +41,22 @@ export {
   applyConfiguredControlPlaneMigrations,
   checkConfiguredControlPlaneMigrations,
   createConfiguredControlPlane,
+  edgeWorkerDeployerFromEnv,
   resolveControlPlaneDatabaseConfig,
 } from "./control-plane/database.ts";
+export {
+  CLOUDFLARE_WORKER_COMPATIBILITY_DATE,
+  createCloudflareWorkersApiDeployer,
+  createMockCloudflareWorkerDeployer,
+  renderCloudflareWasmWorkerModule,
+  type CloudflareWorkersApiDeployerOptions,
+  type EdgeWorkerArtifactRef,
+  type EdgeWorkerDeployer,
+  type EdgeWorkerDeployInput,
+  type EdgeWorkerDeployResult,
+  type MockCloudflareWorkerDeployerOptions,
+  type RenderCloudflareWasmWorkerInput,
+} from "./control-plane/edge-worker-deployer.ts";
 export {
   applyControlPlaneMigrations,
   checkControlPlaneMigrations,

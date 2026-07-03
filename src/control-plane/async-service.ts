@@ -11,6 +11,7 @@ import type {
   DeployPreviewPreviousRoute,
   Deployment,
   DurableObjectNamespace,
+  EdgeWorkerRelease,
   KvNamespace,
   Organization,
   Project,
@@ -41,6 +42,9 @@ import {
   normalizeArtifactSignature,
   normalizeDigest,
   normalizeDurableObjectNamespaceName,
+  normalizeEdgeWorkerProvider,
+  normalizeEdgeWorkerReleaseMode,
+  normalizeEdgeWorkerScriptName,
   normalizeHost,
   normalizeKvNamespaceName,
   normalizeLimits,
@@ -141,6 +145,11 @@ import {
   type BillingInvoiceRetentionPolicy,
   type BillingInvoiceRetentionRetained,
 } from "./billing-retention.ts";
+import {
+  createMockCloudflareWorkerDeployer,
+  renderCloudflareWasmWorkerModule,
+  type EdgeWorkerDeployer,
+} from "./edge-worker-deployer.ts";
 
 export interface AsyncControlPlaneRepository {
   createOrganization(organization: Organization): Promise<Organization>;
@@ -181,6 +190,8 @@ export interface AsyncControlPlaneRepository {
   getDeployPreview(id: string): Promise<DeployPreview | undefined>;
   listProjectDeployPreviews(projectId: string): Promise<DeployPreview[]>;
   updateDeployPreview(preview: DeployPreview): Promise<DeployPreview>;
+  createEdgeWorkerRelease(release: EdgeWorkerRelease): Promise<EdgeWorkerRelease>;
+  listProjectEdgeWorkerReleases(projectId: string): Promise<EdgeWorkerRelease[]>;
   createProject(project: Project): Promise<Project>;
   getProject(id: string): Promise<Project | undefined>;
   listOrganizationProjects(organizationId: string): Promise<Project[]>;
@@ -240,6 +251,7 @@ export interface AsyncControlPlaneOptions {
   billingWebhookRetryDelayMs?: number;
   artifactSignatureVerifier?: ArtifactSignatureVerifier;
   admissionPolicy?: ControlPlaneAdmissionPolicy;
+  edgeWorkerDeployer?: EdgeWorkerDeployer;
 }
 
 export interface CreateProjectInput {
@@ -531,6 +543,19 @@ export interface CreateDeploymentInput {
   capabilities: Partial<CapabilityPolicy>;
 }
 
+export interface CreateEdgeWorkerReleaseInput {
+  id?: string;
+  projectId: string;
+  deploymentId: string;
+  provider?: unknown;
+  mode?: unknown;
+  scriptName?: unknown;
+}
+
+export interface ListProjectEdgeWorkerReleasesInput {
+  projectId: string;
+}
+
 export interface PointRouteInput {
   id?: string;
   projectId: string;
@@ -630,6 +655,7 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
   const billingWebhookRetryDelayMs = options.billingWebhookRetryDelayMs;
   const artifactSignatureVerifier = options.artifactSignatureVerifier;
   const admissionPolicy = options.admissionPolicy;
+  const edgeWorkerDeployer = options.edgeWorkerDeployer ?? createMockCloudflareWorkerDeployer();
 
   async function createOrganization(input: CreateOrganizationInput): Promise<Organization> {
     const organization: Organization = {
@@ -1370,6 +1396,7 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
     await requireDeploymentKvNamespaces(repository, input.projectId, capabilities);
     await requireDeploymentDurableObjectNamespaces(repository, input.projectId, capabilities);
     await requireDeploymentSecrets(repository, input.projectId, capabilities);
+    await requireDeploymentServiceBindings(repository, capabilities);
 
     const deployment: Deployment = {
       id: optionalId(input.id, "deployment id") ?? idGenerator("dep"),
@@ -1383,6 +1410,83 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
       createdAt: now(),
     };
     return repository.createDeployment(deployment);
+  }
+
+  async function createEdgeWorkerRelease(
+    input: CreateEdgeWorkerReleaseInput,
+  ): Promise<EdgeWorkerRelease> {
+    const project = await requireProject(repository, input.projectId);
+    const deployment = await requireDeployment(repository, input.deploymentId);
+    if (deployment.projectId !== project.id) {
+      throw new ControlPlaneError(
+        "validation",
+        "edge worker release deployment must belong to the same project",
+      );
+    }
+    const artifact = await requireArtifact(repository, deployment.artifactId);
+    const provider = normalizeEdgeWorkerProvider(input.provider);
+    const mode = normalizeEdgeWorkerReleaseMode(input.mode);
+    const releaseId = optionalId(input.id, "edge worker release id") ?? idGenerator("ewr");
+    const scriptName = normalizeEdgeWorkerScriptName(input.scriptName)
+      ?? defaultEdgeWorkerScriptName(project.id, deployment.id);
+    const createdAt = now();
+    const artifactRef = {
+      id: artifact.id,
+      digest: artifact.digest,
+      location: artifact.location,
+    };
+    const scriptModule = renderCloudflareWasmWorkerModule({
+      releaseId,
+      scriptName,
+      projectId: project.id,
+      deploymentId: deployment.id,
+      artifact: artifactRef,
+      createdAt,
+    });
+    const result = await edgeWorkerDeployer.deploy({
+      releaseId,
+      scriptName,
+      projectId: project.id,
+      deploymentId: deployment.id,
+      artifact: artifactRef,
+      createdAt,
+      scriptModule,
+    });
+    if (result.provider !== provider) {
+      throw new ControlPlaneError(
+        "validation",
+        `edge worker deployer returned provider ${result.provider}, expected ${provider}`,
+      );
+    }
+    if (mode && result.mode !== mode) {
+      throw new ControlPlaneError(
+        "validation",
+        `edge worker deployer returned mode ${result.mode}, expected ${mode}`,
+      );
+    }
+    const release: EdgeWorkerRelease = {
+      id: releaseId,
+      projectId: project.id,
+      deploymentId: deployment.id,
+      provider,
+      mode: result.mode,
+      scriptName,
+      scriptDigest: result.scriptDigest,
+      scriptModule: result.scriptModule,
+      artifact: artifactRef,
+      createdAt,
+      ...(result.versionId ? { versionId: result.versionId } : {}),
+      ...(result.externalDeploymentId ? { externalDeploymentId: result.externalDeploymentId } : {}),
+      ...(result.url ? { url: result.url } : {}),
+    };
+    return repository.createEdgeWorkerRelease(release);
+  }
+
+  async function listProjectEdgeWorkerReleases(
+    input: ListProjectEdgeWorkerReleasesInput,
+  ): Promise<EdgeWorkerRelease[]> {
+    await requireProject(repository, input.projectId);
+    return repository.listProjectEdgeWorkerReleases(input.projectId);
   }
 
   async function pointRoute(input: PointRouteInput): Promise<RoutePointer> {
@@ -1664,6 +1768,8 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
     listProjectDurableObjectNamespaces,
     deleteDurableObjectNamespace,
     createDeployment,
+    createEdgeWorkerRelease,
+    listProjectEdgeWorkerReleases,
     pointRoute,
     startRouteCanary,
     analyzeRouteCanary,
@@ -1790,8 +1896,11 @@ function isActiveRuntimeNode(
   if (node.status !== "active") {
     return false;
   }
-  if (activeTtlMs === undefined || !node.lastSeenAt) {
+  if (activeTtlMs === undefined) {
     return !isSaturatedRuntimeNode(node);
+  }
+  if (!node.lastSeenAt) {
+    return false;
   }
   return Date.parse(nowValue) - Date.parse(node.lastSeenAt) <= activeTtlMs && !isSaturatedRuntimeNode(node);
 }
@@ -1989,6 +2098,20 @@ async function requireDeploymentSecrets(
   }
 }
 
+async function requireDeploymentServiceBindings(
+  repository: AsyncControlPlaneRepository,
+  capabilities: CapabilityPolicy,
+) {
+  for (const binding of capabilities.services) {
+    if (!(await repository.getProject(binding.targetProjectId))) {
+      throw new ControlPlaneError(
+        "validation",
+        `service target project ${binding.targetProjectId} was not found`,
+      );
+    }
+  }
+}
+
 async function requireDeployment(
   repository: AsyncControlPlaneRepository,
   id: string,
@@ -2097,6 +2220,15 @@ function deployPreviewUrl(host: string, pathPrefix: string): string {
 
 function defaultDeployPreviewHost(projectId: string, deploymentId: string): string {
   return `${dnsLabel(deploymentId)}.${dnsLabel(projectId)}.preview.wasmplane.local`;
+}
+
+function defaultEdgeWorkerScriptName(projectId: string, deploymentId: string): string {
+  const label = `wasmplane-${dnsLabel(projectId)}-${dnsLabel(deploymentId)}`;
+  if (label.length <= 63) {
+    return label;
+  }
+  const digest = createHash("sha256").update(`${projectId}:${deploymentId}`).digest("hex").slice(0, 8);
+  return `${label.slice(0, 54).replace(/-+$/g, "")}-${digest}`;
 }
 
 function dnsLabel(value: string): string {

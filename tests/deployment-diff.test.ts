@@ -17,6 +17,7 @@ test("deployment diff reports route, runtime limit, and capability changes", () 
     outboundAllow: ["https://old.example.dev/"],
     kv: [{ binding: "MAIN", namespaceId: "kv_old" }],
     secrets: [{ binding: "API_KEY", secretId: "sec_old" }],
+    services: [{ binding: "AUTH", targetProjectId: "prj_auth_old", url: "https://auth-old.internal/" }],
   });
   const after = routeEntry({
     deploymentId: "dep_new",
@@ -25,6 +26,7 @@ test("deployment diff reports route, runtime limit, and capability changes", () 
     outboundAllow: ["https://api.example.dev/v1/"],
     kv: [{ binding: "MAIN", namespaceId: "kv_main" }],
     secrets: [{ binding: "API_KEY", secretId: "sec_api_key" }],
+    services: [{ binding: "AUTH", targetProjectId: "prj_auth", url: "https://auth.internal/" }],
   });
 
   const diff = createDeploymentDiff({ before: { schemaVersion: 1, generatedAt: "now", routes: [before] }, after });
@@ -40,6 +42,7 @@ test("deployment diff reports route, runtime limit, and capability changes", () 
     "capabilities.outboundHttp.allow",
     "capabilities.kv",
     "capabilities.secrets",
+    "capabilities.services",
   ]);
 });
 
@@ -63,6 +66,7 @@ function routeEntry(input: {
   kv?: RouteSnapshotEntry["capabilities"]["kv"];
   durableObjects?: RouteSnapshotEntry["capabilities"]["durableObjects"];
   secrets?: RouteSnapshotEntry["capabilities"]["secrets"];
+  services?: RouteSnapshotEntry["capabilities"]["services"];
 }): RouteSnapshotEntry {
   const limits = {
     cpuMs: 50,
@@ -82,6 +86,7 @@ function routeEntry(input: {
     kv: input.kv ?? [],
     durableObjects: input.durableObjects ?? [],
     secrets: input.secrets ?? [],
+    services: input.services ?? [],
     arbitraryFilesystem: false,
     arbitrarySockets: false,
     processSpawn: false,
