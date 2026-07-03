@@ -2,8 +2,12 @@ import { constants } from "node:fs";
 import { access, mkdir, rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import {
+  type CapabilityPolicy,
   MVP_WASI_PROFILE,
   MVP_WORKER_WORLD,
+  MVP_WORKER_WORLD_VERSION,
+  type RouteSnapshot,
+  type RuntimeLimits,
 } from "../control-plane/contracts.ts";
 import { RuntimeError } from "./errors.ts";
 import type {
@@ -12,6 +16,7 @@ import type {
   CompiledComponent,
   InvokeComponentRequest,
   InvokeComponentResponse,
+  RuntimeHeader,
   RuntimeBackend,
   RuntimeInvoker,
 } from "./types.ts";
@@ -40,6 +45,53 @@ export interface Wasip3HostInvokerOptions {
 export interface Wasip3HostDaemonInvokerOptions {
   url: string;
   fetch?: typeof fetch;
+}
+
+export interface Wasip3HostDaemonRoutePublisherOptions {
+  url: string;
+  fetch?: typeof fetch;
+}
+
+export interface Wasip3HostDaemonWorkerProxyOptions {
+  url: string;
+  fetch?: typeof fetch;
+}
+
+export interface Wasip3HostDaemonWorkerProxyRequest {
+  method: string;
+  path: string;
+  headers: RuntimeHeader[];
+  body: Uint8Array;
+}
+
+export interface Wasip3HostDaemonRouteTablePayload {
+  schemaVersion: 1;
+  routes: Wasip3HostDaemonRoutePayload[];
+}
+
+export interface Wasip3HostDaemonRoutePayload {
+  host: string;
+  pathPrefix: string;
+  projectId: string;
+  deploymentId: string;
+  precompiled: string;
+  world: typeof MVP_WORKER_WORLD;
+  worldVersion: typeof MVP_WORKER_WORLD_VERSION;
+  runtime: { backend: "wasmtime"; version: string; wasi: typeof MVP_WASI_PROFILE };
+  limits: RuntimeLimits;
+  capabilities: CapabilityPolicy;
+  targets?: Wasip3HostDaemonRouteTargetPayload[];
+}
+
+export interface Wasip3HostDaemonRouteTargetPayload {
+  deploymentId: string;
+  weight: number;
+  precompiled: string;
+  world: typeof MVP_WORKER_WORLD;
+  worldVersion: typeof MVP_WORKER_WORLD_VERSION;
+  runtime: { backend: "wasmtime"; version: string; wasi: typeof MVP_WASI_PROFILE };
+  limits: RuntimeLimits;
+  capabilities: CapabilityPolicy;
 }
 
 export function wasip3HostDaemonRuntimeArgsFromEnv(
@@ -229,6 +281,97 @@ export function createWasip3HostDaemonInvoker(options: Wasip3HostDaemonInvokerOp
   };
 }
 
+export function buildWasip3HostDaemonRouteTable(
+  snapshot: RouteSnapshot,
+  components: CompiledComponent[],
+): Wasip3HostDaemonRouteTablePayload {
+  const componentsByDeployment = new Map(components.map((component) => [component.deploymentId, component]));
+  return {
+    schemaVersion: 1,
+    routes: snapshot.routes.map((route) => {
+      const component = requiredCompiledComponent(componentsByDeployment, route.deploymentId);
+      const targets = route.targets?.map((target) => {
+        const targetComponent = requiredCompiledComponent(componentsByDeployment, target.deploymentId);
+        return {
+          deploymentId: target.deploymentId,
+          weight: target.weight,
+          precompiled: targetComponent.precompiledPath,
+          world: target.world,
+          worldVersion: target.worldVersion,
+          runtime: target.runtime,
+          limits: target.limits,
+          capabilities: target.capabilities,
+        };
+      });
+      return {
+        host: route.host,
+        pathPrefix: route.pathPrefix,
+        projectId: route.projectId,
+        deploymentId: route.deploymentId,
+        precompiled: component.precompiledPath,
+        world: route.world,
+        worldVersion: route.worldVersion,
+        runtime: route.runtime,
+        limits: route.limits,
+        capabilities: route.capabilities,
+        ...(targets && targets.length > 0 ? { targets } : {}),
+      };
+    }),
+  };
+}
+
+export async function publishWasip3HostDaemonRoutes(input: {
+  snapshot: RouteSnapshot;
+  components: CompiledComponent[];
+  url: string;
+  fetch?: typeof fetch;
+}): Promise<unknown> {
+  const fetchImpl = input.fetch ?? fetch;
+  const payload = buildWasip3HostDaemonRouteTable(input.snapshot, input.components);
+  const response = await fetchImpl(`${input.url.replace(/\/+$/, "")}/routes`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const text = await response.text();
+  if (!response.ok) {
+    throw new RuntimeError("invoke", daemonErrorMessage(text, response.status));
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { ok: true };
+  }
+}
+
+export async function proxyWasip3HostDaemonWorkerRequest(
+  options: Wasip3HostDaemonWorkerProxyOptions,
+  request: Wasip3HostDaemonWorkerProxyRequest,
+): Promise<InvokeComponentResponse> {
+  const fetchImpl = options.fetch ?? fetch;
+  const response = await fetchImpl(`${options.url.replace(/\/+$/, "")}${request.path}`, {
+    method: request.method,
+    headers: requestHeadersInit(request.headers),
+    body: request.method === "GET" || request.method === "HEAD" ? undefined : Buffer.from(request.body),
+  });
+  return {
+    status: response.status,
+    headers: responseHeaders(response.headers),
+    body: Buffer.from(await response.arrayBuffer()),
+  };
+}
+
+function requiredCompiledComponent(
+  componentsByDeployment: Map<string, CompiledComponent>,
+  deploymentId: string,
+): CompiledComponent {
+  const component = componentsByDeployment.get(deploymentId);
+  if (!component) {
+    throw new RuntimeError("validation", `compiled component is missing for deployment ${deploymentId}`);
+  }
+  return component;
+}
+
 function kvStoreArgs(kvStoreDir: string | undefined): string[] {
   return kvStoreDir ? ["--kv-store-dir", kvStoreDir] : [];
 }
@@ -308,6 +451,39 @@ function daemonErrorMessage(text: string, status: number): string {
     // Fall through to the raw text/status fallback.
   }
   return `wasip3 host daemon returned ${status}${text ? `: ${text}` : ""}`;
+}
+
+function requestHeadersInit(headers: RuntimeHeader[]): Headers {
+  const result = new Headers();
+  for (const header of headers) {
+    if (!hopByHopHeader(header.name)) {
+      result.append(header.name, header.value);
+    }
+  }
+  return result;
+}
+
+function responseHeaders(headers: Headers): RuntimeHeader[] {
+  const result: RuntimeHeader[] = [];
+  headers.forEach((value, name) => {
+    if (!hopByHopHeader(name)) {
+      result.push({ name, value });
+    }
+  });
+  return result;
+}
+
+function hopByHopHeader(name: string): boolean {
+  return new Set([
+    "connection",
+    "keep-alive",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "te",
+    "trailer",
+    "transfer-encoding",
+    "upgrade",
+  ]).has(name.toLowerCase());
 }
 
 function parseHeaders(value: unknown): Array<{ name: string; value: string }> {

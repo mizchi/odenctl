@@ -22,6 +22,7 @@ import {
 import { invalidatePrecompiledCacheVariants, pruneRuntimeCaches } from "../src/runtime/cache-retention.ts";
 import { createRouteCache, createRuntimeSupervisor } from "../src/runtime/supervisor.ts";
 import {
+  buildWasip3HostDaemonRouteTable,
   createWasip3HostBackend,
   createWasip3HostDaemonInvoker,
   createWasip3HostInvoker,
@@ -1047,6 +1048,57 @@ test("wasip3 host daemon args include explicit instance reuse contract", () => {
     "stateless-v1",
     "--pooling-total-component-instances",
     "64",
+  ]);
+});
+
+test("wasip3 host daemon route table includes prepared weighted targets", () => {
+  const routeEntry = route(
+    "dep_stable",
+    "Hello.Example.Dev:443",
+    "/api",
+    digest("stable"),
+    "file:///tmp/stable.wasm",
+  );
+  routeEntry.targets = [
+    snapshotTarget("dep_stable", 80, digest("stable"), "file:///tmp/stable.wasm"),
+    snapshotTarget("dep_canary", 20, digest("canary"), "file:///tmp/canary.wasm"),
+  ];
+
+  const payload = buildWasip3HostDaemonRouteTable(snapshot([routeEntry]), [
+    {
+      deploymentId: "dep_stable",
+      projectId: "prj_hello",
+      backend: "wasmtime",
+      componentPath: "/tmp/stable.wasm",
+      precompiledPath: "/cache/dep_stable.cwasm",
+      cached: false,
+      limits: routeEntry.limits,
+      capabilities: routeEntry.capabilities,
+    },
+    {
+      deploymentId: "dep_canary",
+      projectId: "prj_hello",
+      backend: "wasmtime",
+      componentPath: "/tmp/canary.wasm",
+      precompiledPath: "/cache/dep_canary.cwasm",
+      cached: false,
+      limits: routeEntry.targets[1].limits,
+      capabilities: routeEntry.targets[1].capabilities,
+    },
+  ]);
+
+  assert.equal(payload.schemaVersion, 1);
+  assert.equal(payload.routes[0]?.host, "Hello.Example.Dev:443");
+  assert.equal(payload.routes[0]?.pathPrefix, "/api");
+  assert.equal(payload.routes[0]?.deploymentId, "dep_stable");
+  assert.equal(payload.routes[0]?.precompiled, "/cache/dep_stable.cwasm");
+  assert.deepEqual(payload.routes[0]?.targets?.map((target) => ({
+    deploymentId: target.deploymentId,
+    weight: target.weight,
+    precompiled: target.precompiled,
+  })), [
+    { deploymentId: "dep_stable", weight: 80, precompiled: "/cache/dep_stable.cwasm" },
+    { deploymentId: "dep_canary", weight: 20, precompiled: "/cache/dep_canary.cwasm" },
   ]);
 });
 

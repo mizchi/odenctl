@@ -8,6 +8,9 @@ export interface OpsSmokeInput {
   runtimeToken?: string;
   workerHost?: string;
   workerPath?: string;
+  requireExternalDatabase?: boolean;
+  minRuntimeNodes?: number;
+  requireRustForward?: boolean;
   fetch?: typeof fetch;
 }
 
@@ -38,6 +41,9 @@ interface OpsSmokeArgsEnv {
   WASMPLANE_RUNTIME_TOKEN?: string;
   WASMPLANE_SMOKE_WORKER_HOST?: string;
   WASMPLANE_SMOKE_WORKER_PATH?: string;
+  WASMPLANE_SMOKE_REQUIRE_EXTERNAL_DB?: string;
+  WASMPLANE_SMOKE_MIN_RUNTIME_NODES?: string;
+  WASMPLANE_SMOKE_REQUIRE_RUST_FORWARD?: string;
 }
 
 export function parseOpsSmokeArgs(
@@ -67,6 +73,9 @@ export function parseOpsSmokeArgs(
     workerPath: skipWorker
       ? undefined
       : ensurePath(flags["worker-path"] ?? env.WASMPLANE_SMOKE_WORKER_PATH ?? "/"),
+    requireExternalDatabase: truthy(flags["require-external-db"] ?? env.WASMPLANE_SMOKE_REQUIRE_EXTERNAL_DB),
+    minRuntimeNodes: optionalPositiveInteger(flags["min-runtime-nodes"] ?? env.WASMPLANE_SMOKE_MIN_RUNTIME_NODES),
+    requireRustForward: truthy(flags["require-rust-forward"] ?? env.WASMPLANE_SMOKE_REQUIRE_RUST_FORWARD),
   };
 }
 
@@ -98,27 +107,103 @@ export async function runOpsSmoke(input: OpsSmokeInput): Promise<OpsSmokeResult>
     bearerHeaders(input.controlToken),
     (body) => body?.schemaVersion === 1 && Array.isArray(body?.routes),
   ));
-  checks.push(await checkJson(
+  const opsConfig = await readJsonCheck(
+    fetchImpl,
+    "control ops config",
+    `${input.controlUrl}/ops/config`,
+    bearerHeaders(input.controlToken),
+    (body) => body?.schemaVersion === 1 && isObject(body?.database) && isObject(body?.artifactStore),
+  );
+  checks.push(opsConfig.check);
+  if (input.requireExternalDatabase) {
+    checks.push({
+      name: "control external database",
+      ok: opsConfig.check.ok
+        && opsConfig.body?.database?.kind === "postgres"
+        && opsConfig.body?.database?.external === true,
+      status: opsConfig.check.status,
+      detail: opsConfig.check.ok ? undefined : opsConfig.check.detail,
+    });
+  }
+  if (input.minRuntimeNodes !== undefined) {
+    checks.push(await checkJson(
+      fetchImpl,
+      "control active runtime nodes",
+      `${input.controlUrl}/runtime-nodes`,
+      bearerHeaders(input.controlToken),
+      (body) => Array.isArray(body) && countActiveRuntimeNodes(body) >= (input.minRuntimeNodes as number),
+    ));
+  }
+  const runtimeMetrics = await readJsonCheck(
     fetchImpl,
     "runtime metrics",
     `${input.runtimeUrl}/__runtime/metrics`,
     bearerHeaders(input.runtimeToken),
     (body) => isObject(body?.requests) && isObject(body?.invocations) && isObject(body?.snapshots),
-  ));
+  );
+  checks.push(runtimeMetrics.check);
+  if (input.requireRustForward) {
+    checks.push({
+      name: "runtime rust-forward daemon routes",
+      ok: runtimeMetrics.check.ok && Number(runtimeMetrics.body?.hostDaemon?.preparedRoutes ?? 0) > 0,
+      status: runtimeMetrics.check.status,
+      detail: runtimeMetrics.check.ok ? undefined : runtimeMetrics.check.detail,
+    });
+  }
 
   if (input.workerHost) {
+    const workerUrl = `${input.runtimeUrl}${ensurePath(input.workerPath ?? "/")}`;
+    const workerHeaders = { "x-forwarded-host": input.workerHost };
     checks.push(await checkStatus(
       fetchImpl,
       "runtime worker traffic",
-      `${input.runtimeUrl}${ensurePath(input.workerPath ?? "/")}`,
-      { "x-forwarded-host": input.workerHost },
+      workerUrl,
+      workerHeaders,
     ));
+    if (input.requireRustForward) {
+      checks.push(await checkHeader(
+        fetchImpl,
+        "runtime rust-forward worker proxy",
+        workerUrl,
+        workerHeaders,
+        "x-wasmplane-host-daemon-route",
+        "1",
+      ));
+    }
   }
 
   return {
     ok: checks.every((check) => check.ok),
     checks,
   };
+}
+
+async function readJsonCheck(
+  fetchImpl: typeof fetch,
+  name: string,
+  url: string,
+  headers: Record<string, string> | undefined,
+  validate: (body: any) => boolean,
+): Promise<{ check: OpsSmokeCheck; body?: any }> {
+  try {
+    const response = await fetchImpl(url, { headers });
+    if (!response.ok) {
+      return { check: { name, ok: false, status: response.status, detail: await safeText(response) } };
+    }
+    const body = await response.json();
+    const ok = validate(body);
+    return {
+      check: {
+        name,
+        ok,
+        status: response.status,
+        detail: ok ? undefined : "response JSON did not match expected shape",
+      },
+      body,
+    };
+  } catch (error) {
+    return { check: { name, ok: false, detail: errorMessage(error) } };
+  }
 }
 
 async function checkStatus(
@@ -134,6 +219,29 @@ async function checkStatus(
       ok: response.ok,
       status: response.status,
       detail: response.ok ? undefined : await safeText(response),
+    };
+  } catch (error) {
+    return { name, ok: false, detail: errorMessage(error) };
+  }
+}
+
+async function checkHeader(
+  fetchImpl: typeof fetch,
+  name: string,
+  url: string,
+  headers: Record<string, string> | undefined,
+  headerName: string,
+  expectedValue: string,
+): Promise<OpsSmokeCheck> {
+  try {
+    const response = await fetchImpl(url, { headers });
+    const value = response.headers.get(headerName);
+    const ok = response.ok && value === expectedValue;
+    return {
+      name,
+      ok,
+      status: response.status,
+      detail: ok ? undefined : `${headerName}=${value ?? "<missing>"}`,
     };
   } catch (error) {
     return { name, ok: false, detail: errorMessage(error) };
@@ -204,8 +312,25 @@ function nonEmpty(value: string | undefined): string | undefined {
   return value && value.trim().length > 0 ? value.trim() : undefined;
 }
 
+function optionalPositiveInteger(value: string | undefined): number | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function countActiveRuntimeNodes(nodes: unknown[]): number {
+  return nodes.filter((node) => isObject(node) && node.status === "active").length;
+}
+
+function truthy(value: string | undefined): boolean {
+  const normalized = value?.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes";
 }
 
 async function safeText(response: Response): Promise<string> {

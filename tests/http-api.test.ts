@@ -981,6 +981,51 @@ test("HTTP alarm demo schedules durable object alarms and handles dispatcher web
   }
 });
 
+test("HTTP alarm demo handles duplicate dispatcher webhooks idempotently", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "wasmplane-http-alarm-demo-idempotency-"));
+  const registry = createVolumeSqliteRegistry({ rootDir: dir });
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+  });
+  const app = createHttpApp({
+    controlPlane: control,
+    volumeSqliteRegistry: registry,
+    apiTokens: [{ token: "control-token", scopes: ["*"], principal: "test" }],
+    alarmDemoWebhookToken: "alarm-webhook-token",
+    now: () => "2026-07-03T00:00:05.000Z",
+  });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const scheduled = await postJson(baseUrl, "/alarm-demo/schedules", {
+      objectName: "heartbeat",
+      delayMs: 0,
+    }, "control-token");
+    const delivery = {
+      namespace: "alarm-demo",
+      objectId: scheduled.objectId,
+      scheduledTime: scheduled.alarmAt,
+    };
+
+    const first = await postJsonOk(baseUrl, "/alarm-demo/webhook", delivery, "alarm-webhook-token");
+    assert.equal(first.alarmCount, 1);
+    assert.equal(first.lastScheduledTime, scheduled.alarmAt);
+
+    const duplicate = await postJsonOk(baseUrl, "/alarm-demo/webhook", delivery, "alarm-webhook-token");
+    assert.equal(duplicate.alarmCount, 1);
+    assert.equal(duplicate.lastScheduledTime, scheduled.alarmAt);
+  } finally {
+    await app.close();
+    registry.close();
+  }
+});
+
 test("HTTP admin UI renders routes, deployments, canaries, runtime nodes, and metrics", async () => {
   const control = createControlPlane({
     repository: createMemoryRepository(),
@@ -1349,6 +1394,61 @@ test("HTTP API enforces scoped bearer tokens", async () => {
       body: JSON.stringify({ name: "hello" }),
     });
     assert.equal(created.status, 201, await created.text());
+  } finally {
+    await app.close();
+  }
+});
+
+test("HTTP API exposes non-secret operational config with read scope", async () => {
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+  });
+  const app = createHttpApp({
+    controlPlane: control,
+    apiTokens: [
+      { token: "reader", scopes: ["read"], principal: "reader" },
+      { token: "writer", scopes: ["write"], principal: "writer" },
+    ],
+    operationalConfig: {
+      schemaVersion: 1,
+      database: { kind: "postgres", external: true },
+      artifactStore: { kind: "s3", external: true },
+      volumeSqlite: { enabled: true },
+      runtimeNodes: { staticTargets: 0 },
+      routeSnapshotReplicas: { configured: 1 },
+      durableObjectAlarms: { enabled: true, namespaces: ["alarm-demo"] },
+    },
+  });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const denied = await fetch(`${baseUrl}/ops/config`);
+    assert.equal(denied.status, 401);
+
+    const forbidden = await fetch(`${baseUrl}/ops/config`, {
+      headers: { authorization: "Bearer writer" },
+    });
+    assert.equal(forbidden.status, 403);
+
+    const response = await fetch(`${baseUrl}/ops/config`, {
+      headers: { authorization: "Bearer reader" },
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      schemaVersion: 1,
+      database: { kind: "postgres", external: true },
+      artifactStore: { kind: "s3", external: true },
+      volumeSqlite: { enabled: true },
+      runtimeNodes: { staticTargets: 0 },
+      routeSnapshotReplicas: { configured: 1 },
+      durableObjectAlarms: { enabled: true, namespaces: ["alarm-demo"] },
+    });
   } finally {
     await app.close();
   }

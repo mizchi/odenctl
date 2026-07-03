@@ -37,6 +37,7 @@ import {
   createWasip3HostBackend,
   createWasip3HostDaemonInvoker,
   createWasip3HostInvoker,
+  publishWasip3HostDaemonRoutes,
   wasip3HostDaemonPoolingRuntimeArgsFromEnv,
   wasip3HostDaemonRuntimeArgsFromEnv,
 } from "./wasip3-host.ts";
@@ -51,6 +52,8 @@ const hostDaemonEnabled = process.env.WASMPLANE_WASIP3_HOST_DAEMON === "1";
 const hostDaemonPort = Number.parseInt(process.env.WASMPLANE_WASIP3_HOST_DAEMON_PORT ?? "8790", 10);
 const hostDaemonUrl = process.env.WASMPLANE_WASIP3_HOST_DAEMON_URL
   ?? (hostDaemonEnabled ? `http://127.0.0.1:${hostDaemonPort}` : undefined);
+const hostDaemonRoutesEnabled = process.env.WASMPLANE_WASIP3_HOST_DAEMON_ROUTES === "1";
+const hostDaemonWorkerProxyEnabled = process.env.WASMPLANE_WASIP3_HOST_DAEMON_WORKER_PROXY === "1";
 const publicUrl = resolveRuntimePublicUrl(process.env, host, port);
 const runtimeNodeId = resolveRuntimeNodeId(process.env, host, port);
 const runtimeRegion = resolveRuntimeRegion(process.env);
@@ -125,6 +128,13 @@ if (hostDaemonEnabled) {
     runtimeArgs: hostDaemonServeArgs,
   });
 }
+if (hostDaemonUrl && hostDaemonRoutesEnabled && restoredRouteSnapshot) {
+  await publishWasip3HostDaemonRoutes({
+    url: hostDaemonUrl,
+    snapshot: restoredRouteSnapshot,
+    components: await supervisor.warmupSnapshot(restoredRouteSnapshot),
+  });
+}
 
 const app = createRuntimeNodeApp({
   supervisor,
@@ -156,6 +166,10 @@ const app = createRuntimeNodeApp({
     })
     : undefined,
   hostDaemonMetrics: hostDaemonUrl ? { url: hostDaemonUrl } : undefined,
+  hostDaemonRoutes: hostDaemonUrl && hostDaemonRoutesEnabled ? { url: hostDaemonUrl } : undefined,
+  hostDaemonWorkerProxy: hostDaemonUrl && hostDaemonRoutesEnabled && hostDaemonWorkerProxyEnabled
+    ? { url: hostDaemonUrl }
+    : undefined,
   secretStore: secretDbPath
     ? createRepositorySecretStore(createSqliteRepository(secretDbPath), { secretCipher })
     : createEnvSecretStore(),

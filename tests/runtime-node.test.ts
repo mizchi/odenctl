@@ -405,6 +405,253 @@ test("runtime node can warm snapshot deployments before acknowledging publish", 
   }
 });
 
+test("runtime node publishes prepared routes to host daemon when configured", async () => {
+  const preparedDeployments: string[] = [];
+  const daemonCalls: Array<{ url: string; body: any }> = [];
+  const supervisor = createRuntimeSupervisor({
+    snapshot: snapshot([]),
+    artifactStore: materializedArtifactStore(),
+    backend: {
+      async compileComponent(request) {
+        preparedDeployments.push(request.deploymentId);
+        return {
+          deploymentId: request.deploymentId,
+          projectId: request.projectId,
+          backend: "wasmtime",
+          componentPath: request.artifact.path,
+          precompiledPath: `/cache/${request.deploymentId}.cwasm`,
+          cached: false,
+          limits: request.limits,
+          capabilities: request.capabilities,
+        };
+      },
+    },
+  });
+  const app = createRuntimeNodeApp({
+    supervisor,
+    hostDaemonRoutes: {
+      url: "http://127.0.0.1:8790/",
+      fetch: async (url, init) => {
+        daemonCalls.push({ url: String(url), body: JSON.parse(String(init?.body)) });
+        return new Response(JSON.stringify({ ok: true, preparedRoutes: 2 }), { status: 200 });
+      },
+    },
+  });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+  const routeSnapshot = snapshot([
+    route("dep_root", "hello.example.dev", "/", digest("root")),
+    route("dep_api", "hello.example.dev", "/api", digest("api")),
+  ]);
+
+  try {
+    const update = await fetch(`${baseUrl}/__runtime/snapshots/routes`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(routeSnapshot),
+    });
+    const body = await update.json();
+
+    assert.equal(update.status, 200);
+    assert.deepEqual(body.daemonRoutes, { ok: true, preparedRoutes: 2 });
+    assert.deepEqual(new Set(preparedDeployments), new Set(["dep_root", "dep_api"]));
+    assert.equal(daemonCalls[0]?.url, "http://127.0.0.1:8790/routes");
+    assert.deepEqual(daemonCalls[0]?.body.routes.map((entry: any) => ({
+      host: entry.host,
+      pathPrefix: entry.pathPrefix,
+      deploymentId: entry.deploymentId,
+      precompiled: entry.precompiled,
+      targetPrecompiled: entry.targets[0].precompiled,
+    })), [
+      {
+        host: "hello.example.dev",
+        pathPrefix: "/",
+        deploymentId: "dep_root",
+        precompiled: "/cache/dep_root.cwasm",
+        targetPrecompiled: "/cache/dep_root.cwasm",
+      },
+      {
+        host: "hello.example.dev",
+        pathPrefix: "/api",
+        deploymentId: "dep_api",
+        precompiled: "/cache/dep_api.cwasm",
+        targetPrecompiled: "/cache/dep_api.cwasm",
+      },
+    ]);
+  } finally {
+    await app.close();
+  }
+});
+
+test("runtime node can proxy matched worker requests through host daemon routes", async () => {
+  const preparedDeployments: string[] = [];
+  const daemonCalls: Array<{ url: string; method?: string; headers: Headers; body: string }> = [];
+  let invokerCalled = false;
+  const daemonFetch: typeof fetch = async (url, init) => {
+    if (String(url).endsWith("/routes")) {
+      return new Response(JSON.stringify({ ok: true, preparedRoutes: 1 }), { status: 200 });
+    }
+    daemonCalls.push({
+      url: String(url),
+      method: init?.method,
+      headers: new Headers(init?.headers),
+      body: String(init?.body ?? ""),
+    });
+    return new Response("from daemon", {
+      status: 202,
+      headers: {
+        "x-daemon": "yes",
+        "x-wasmplane-deployment": "dep_api",
+        "x-wasmplane-precompiled": "/cache/dep_api.cwasm",
+        "x-wasmplane-host-daemon-route": "1",
+      },
+    });
+  };
+  const supervisor = createRuntimeSupervisor({
+    snapshot: snapshot([]),
+    artifactStore: materializedArtifactStore(),
+    backend: {
+      async compileComponent(request) {
+        preparedDeployments.push(request.deploymentId);
+        return {
+          deploymentId: request.deploymentId,
+          projectId: request.projectId,
+          backend: "wasmtime",
+          componentPath: request.artifact.path,
+          precompiledPath: `/cache/${request.deploymentId}.cwasm`,
+          cached: false,
+          limits: request.limits,
+          capabilities: request.capabilities,
+        };
+      },
+    },
+  });
+  const app = createRuntimeNodeApp({
+    requestIdGenerator: () => "req_proxy",
+    supervisor,
+    invoker: {
+      async invoke() {
+        invokerCalled = true;
+        throw new Error("invoker should not be used");
+      },
+    },
+    hostDaemonRoutes: {
+      url: "http://127.0.0.1:8790",
+      fetch: daemonFetch,
+    },
+    hostDaemonWorkerProxy: {
+      url: "http://127.0.0.1:8790",
+      fetch: daemonFetch,
+    },
+  });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const update = await fetch(`${baseUrl}/__runtime/snapshots/routes`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(snapshot([
+        route("dep_api", "hello.example.dev", "/api", digest("api")),
+      ])),
+    });
+    assert.equal(update.status, 200, await update.text());
+
+    const hit = await fetch(`${baseUrl}/api/users?limit=1`, {
+      method: "POST",
+      headers: { "x-forwarded-host": "hello.example.dev", "content-type": "text/plain" },
+      body: "payload",
+    });
+
+    assert.equal(hit.status, 202);
+    assert.equal(hit.headers.get("x-daemon"), "yes");
+    assert.equal(hit.headers.get("x-wasmplane-request-id"), "req_proxy");
+    assert.equal(hit.headers.get("x-wasmplane-deployment"), "dep_api");
+    assert.equal(hit.headers.get("x-wasmplane-precompiled"), "/cache/dep_api.cwasm");
+    assert.equal(hit.headers.get("x-wasmplane-host-daemon-route"), "1");
+    assert.equal(await hit.text(), "from daemon");
+    assert.equal(invokerCalled, false);
+    assert.deepEqual(preparedDeployments, ["dep_api"]);
+    assert.equal(daemonCalls.length, 1);
+    assert.equal(daemonCalls[0]?.url, "http://127.0.0.1:8790/api/users?limit=1");
+    assert.equal(daemonCalls[0]?.method, "POST");
+    assert.equal(daemonCalls[0]?.headers.get("x-forwarded-host"), "hello.example.dev");
+    assert.equal(daemonCalls[0]?.headers.get("content-type"), "text/plain");
+    assert.equal(daemonCalls[0]?.body, "payload");
+  } finally {
+    await app.close();
+  }
+});
+
+test("runtime node does not proxy worker paths that collide with host daemon management endpoints", async () => {
+  let proxyCalls = 0;
+  let invokerCalls = 0;
+  const supervisor = createRuntimeSupervisor({
+    snapshot: snapshot([
+      route("dep_stats", "hello.example.dev", "/stats", digest("stats")),
+    ]),
+    artifactStore: materializedArtifactStore(),
+    backend: {
+      async compileComponent(request) {
+        return {
+          deploymentId: request.deploymentId,
+          projectId: request.projectId,
+          backend: "wasmtime",
+          componentPath: request.artifact.path,
+          precompiledPath: `/cache/${request.deploymentId}.cwasm`,
+          cached: false,
+          limits: request.limits,
+          capabilities: request.capabilities,
+        };
+      },
+    },
+  });
+  const app = createRuntimeNodeApp({
+    supervisor,
+    hostDaemonWorkerProxy: {
+      url: "http://127.0.0.1:8790",
+      fetch: async () => {
+        proxyCalls += 1;
+        return new Response("leaked", { status: 200 });
+      },
+    },
+    invoker: {
+      async invoke() {
+        invokerCalls += 1;
+        return {
+          status: 200,
+          headers: [{ name: "content-type", value: "text/plain" }],
+          body: Buffer.from("from node invoker"),
+        };
+      },
+    },
+  });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const hit = await fetch(`${baseUrl}/stats`, {
+      headers: { "x-forwarded-host": "hello.example.dev" },
+    });
+
+    assert.equal(hit.status, 200);
+    assert.equal(await hit.text(), "from node invoker");
+    assert.equal(proxyCalls, 0);
+    assert.equal(invokerCalls, 1);
+  } finally {
+    await app.close();
+  }
+});
+
 test("runtime node requires management bearer token for runtime endpoints when configured", async () => {
   const loadedSnapshots: RouteSnapshot[] = [];
   const app = createRuntimeNodeApp({

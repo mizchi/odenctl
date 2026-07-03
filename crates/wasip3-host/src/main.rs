@@ -1,14 +1,20 @@
-use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
 use std::path::Path;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::thread;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
+use bytes::Bytes;
+use http_body_util::{BodyExt, Full};
+use hyper::body::Incoming;
+use hyper::header::{CONTENT_LENGTH, CONTENT_TYPE, HeaderName, HeaderValue};
+use hyper::server::conn::http1;
+use hyper::service::service_fn;
+use hyper::{Request, Response, StatusCode};
+use hyper_util::rt::TokioIo;
 use serde_json::Value;
+use tokio::net::TcpListener;
 use wasmplane_wasip3_host::{
     DurableObjectBindingPolicy, HostPolicy, HttpRequestInput, InstanceReuseContract,
     InvocationLimits, KvBindingPolicy, OutboundHttpPolicy, SecretBindingPolicy,
@@ -58,9 +64,11 @@ struct ServeArgs {
     kv_store_dir: Option<PathBuf>,
     runtime_options: Wasip3RuntimeOptions,
     max_concurrent_invocations: usize,
+    http_workers: usize,
 }
 
 const DEFAULT_MAX_CONCURRENT_INVOCATIONS: usize = 128;
+const DEFAULT_DAEMON_HTTP_WORKERS: usize = 64;
 
 #[derive(Debug, Default)]
 struct PoolingArgs {
@@ -141,6 +149,7 @@ struct DaemonState {
     kv_store_dir: Option<PathBuf>,
     admission: Arc<AdmissionLimiter>,
     metrics: Arc<DaemonMetrics>,
+    routes: Arc<Mutex<PreparedRouteTable>>,
 }
 
 impl DaemonState {
@@ -154,7 +163,100 @@ impl DaemonState {
             kv_store_dir,
             admission: Arc::new(AdmissionLimiter::new(max_concurrent_invocations)),
             metrics: Arc::new(DaemonMetrics::default()),
+            routes: Arc::new(Mutex::new(PreparedRouteTable::default())),
         }
+    }
+
+    fn replace_routes(&self, table: PreparedRouteTable) {
+        *self.routes.lock().expect("route table lock poisoned") = table;
+    }
+
+    fn route_count(&self) -> usize {
+        self.routes
+            .lock()
+            .expect("route table lock poisoned")
+            .routes
+            .len()
+    }
+
+    fn match_route(&self, host: &str, path: &str) -> Option<PreparedRoute> {
+        self.routes
+            .lock()
+            .expect("route table lock poisoned")
+            .match_route(host, path)
+            .cloned()
+    }
+}
+
+#[derive(Debug, Clone)]
+struct PreparedRoute {
+    host: String,
+    path_prefix: String,
+    deployment_id: String,
+    precompiled: PathBuf,
+    limits: InvocationLimits,
+    policy: HostPolicy,
+    targets: Vec<PreparedRouteTarget>,
+}
+
+#[derive(Debug, Clone)]
+struct PreparedRouteTarget {
+    deployment_id: String,
+    precompiled: PathBuf,
+    limits: InvocationLimits,
+    policy: HostPolicy,
+    weight: u32,
+}
+
+impl PreparedRoute {
+    fn primary_target(&self) -> PreparedRouteTarget {
+        PreparedRouteTarget {
+            deployment_id: self.deployment_id.clone(),
+            precompiled: self.precompiled.clone(),
+            limits: self.limits,
+            policy: self.policy.clone(),
+            weight: 1,
+        }
+    }
+
+    fn select_target(&self, host: &str, path: &str) -> PreparedRouteTarget {
+        let total_weight = self
+            .targets
+            .iter()
+            .fold(0u32, |sum, target| sum.saturating_add(target.weight));
+        if total_weight == 0 {
+            return self.primary_target();
+        }
+        let normalized_path = request_path_only(path);
+        let slot = stable_hash(&format!(
+            "{}{}",
+            normalize_route_host(host),
+            normalized_path
+        )) % total_weight;
+        let mut cursor = 0u32;
+        for target in &self.targets {
+            cursor = cursor.saturating_add(target.weight);
+            if slot < cursor {
+                return target.clone();
+            }
+        }
+        self.primary_target()
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct PreparedRouteTable {
+    routes: Vec<PreparedRoute>,
+}
+
+impl PreparedRouteTable {
+    fn match_route(&self, host: &str, path: &str) -> Option<&PreparedRoute> {
+        let host = normalize_route_host(host);
+        let path = request_path_only(path);
+        self.routes
+            .iter()
+            .filter(|route| route.host == host && path_prefix_matches(path, &route.path_prefix))
+            .max_by_key(|route| route.path_prefix.len())
     }
 }
 
@@ -391,6 +493,7 @@ fn parse_serve_args(args: &mut impl Iterator<Item = String>) -> Result<ServeArgs
         Wasip3RuntimeOptions::default().max_reusable_instances_per_component;
     let mut instance_reuse_contract = Wasip3RuntimeOptions::default().instance_reuse_contract;
     let mut max_concurrent_invocations = DEFAULT_MAX_CONCURRENT_INVOCATIONS;
+    let mut http_workers = DEFAULT_DAEMON_HTTP_WORKERS;
     let mut pooling = PoolingArgs::default();
 
     while let Some(flag) = args.next() {
@@ -407,6 +510,7 @@ fn parse_serve_args(args: &mut impl Iterator<Item = String>) -> Result<ServeArgs
             "--max-concurrent-invocations" => {
                 max_concurrent_invocations = parse_usize(&value, "--max-concurrent-invocations")?
             }
+            "--http-workers" => http_workers = parse_usize(&value, "--http-workers")?,
             "--experimental-instance-reuse" => {
                 max_reusable_instances_per_component =
                     parse_usize(&value, "--experimental-instance-reuse")?
@@ -430,12 +534,11 @@ fn parse_serve_args(args: &mut impl Iterator<Item = String>) -> Result<ServeArgs
             pooling: pooling.finish(),
         },
         max_concurrent_invocations,
+        http_workers,
     })
 }
 
 fn serve(args: ServeArgs) -> Result<()> {
-    let listener = TcpListener::bind((args.host.as_str(), args.port))
-        .with_context(|| format!("failed to bind {}:{}", args.host, args.port))?;
     let runtime = Arc::new(Wasip3Runtime::with_options(args.runtime_options)?);
     let state = Arc::new(DaemonState::new(
         runtime,
@@ -446,18 +549,38 @@ fn serve(args: ServeArgs) -> Result<()> {
         "wasmplane-wasip3-host serving on http://{}:{}",
         args.host, args.port
     );
-    for stream in listener.incoming() {
+    let tokio_runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(args.http_workers)
+        .max_blocking_threads(args.http_workers)
+        .enable_io()
+        .build()
+        .context("failed to build daemon HTTP runtime")?;
+    tokio_runtime.block_on(serve_http_async(args.host, args.port, state))
+}
+
+async fn serve_http_async(host: String, port: u16, state: Arc<DaemonState>) -> Result<()> {
+    let listener = TcpListener::bind((host.as_str(), port))
+        .await
+        .with_context(|| format!("failed to bind {host}:{port}"))?;
+    loop {
+        let (stream, _) = listener
+            .accept()
+            .await
+            .context("failed to accept daemon connection")?;
+        let io = TokioIo::new(stream);
         let state = Arc::clone(&state);
-        match stream {
-            Ok(stream) => {
-                thread::spawn(move || {
-                    let _ = handle_daemon_connection(stream, state);
-                });
+        tokio::task::spawn(async move {
+            let service =
+                service_fn(move |request| handle_hyper_daemon_request(request, Arc::clone(&state)));
+            if let Err(error) = http1::Builder::new()
+                .keep_alive(true)
+                .serve_connection(io, service)
+                .await
+            {
+                eprintln!("daemon HTTP connection failed: {error}");
             }
-            Err(error) => eprintln!("failed to accept daemon connection: {error}"),
-        }
+        });
     }
-    Ok(())
 }
 
 fn parse_invoke_args(args: &mut impl Iterator<Item = String>) -> Result<InvokeArgs> {
@@ -521,60 +644,314 @@ fn parse_invoke_args(args: &mut impl Iterator<Item = String>) -> Result<InvokeAr
 struct DaemonHttpRequest {
     method: String,
     path: String,
+    headers: Vec<(String, String)>,
     body: Vec<u8>,
 }
 
-fn handle_daemon_connection(mut stream: TcpStream, state: Arc<DaemonState>) -> Result<()> {
-    let request = read_daemon_http_request(&mut stream)?;
-    match (request.method.as_str(), request.path.as_str()) {
-        ("GET", "/healthz") => write_http_json(&mut stream, 200, r#"{"ok":true}"#),
-        ("GET", "/stats") => write_http_json(&mut stream, 200, &daemon_stats_json(&state)),
-        ("GET", "/metrics") => write_http_text(&mut stream, 200, &daemon_metrics_text(&state)),
-        ("POST", "/invoke") => {
-            let Some(_permit) = state.admission.try_acquire() else {
-                state.metrics.record_rejected();
-                return write_http_json(
-                    &mut stream,
-                    503,
-                    r#"{"error":{"code":"busy","message":"daemon concurrency limit reached"}}"#,
-                );
-            };
-            let started_at = Instant::now();
-            let result = handle_daemon_invoke(
-                Arc::clone(&state.runtime),
-                state.kv_store_dir.as_deref(),
-                &request.body,
-            );
-            state
-                .metrics
-                .record_invoke(started_at.elapsed(), result.is_ok());
-            match result {
-                Ok(response) => write_http_json(
-                    &mut stream,
-                    200,
-                    &format!(
-                        "{{\"status\":{},\"headers\":{},\"body\":\"{}\"}}",
-                        response.status,
-                        headers_json(&response.headers),
-                        json_escape(&String::from_utf8_lossy(&response.body))
-                    ),
-                ),
-                Err(error) => write_http_json(
-                    &mut stream,
-                    500,
-                    &format!(
-                        "{{\"error\":{{\"code\":\"invoke\",\"message\":\"{}\"}}}}",
-                        json_escape(&format!("{error:#}"))
-                    ),
-                ),
-            }
+struct DaemonHttpResponse {
+    status: u16,
+    content_type: Option<&'static str>,
+    headers: Vec<(String, String)>,
+    body: Vec<u8>,
+}
+
+impl DaemonHttpResponse {
+    fn json(status: u16, body: &str) -> Self {
+        Self {
+            status,
+            content_type: Some("application/json; charset=utf-8"),
+            headers: Vec::new(),
+            body: body.as_bytes().to_vec(),
         }
-        _ => write_http_json(
-            &mut stream,
-            404,
-            r#"{"error":{"code":"not_found","message":"daemon endpoint not found"}}"#,
-        ),
     }
+
+    fn text(status: u16, body: &str) -> Self {
+        Self {
+            status,
+            content_type: Some("text/plain; version=0.0.4; charset=utf-8"),
+            headers: Vec::new(),
+            body: body.as_bytes().to_vec(),
+        }
+    }
+
+    fn worker(response: wasmplane_wasip3_host::HttpResponseOutput) -> Self {
+        let headers = response
+            .headers
+            .into_iter()
+            .filter(|(name, value)| {
+                safe_http_header(name) && safe_http_header(value) && !hop_by_hop_header(name)
+            })
+            .collect();
+        Self {
+            status: response.status,
+            content_type: None,
+            headers,
+            body: response.body,
+        }
+    }
+
+    fn error_json(status: u16, code: &str, message: &str) -> Self {
+        Self::json(
+            status,
+            &format!(
+                "{{\"error\":{{\"code\":\"{}\",\"message\":\"{}\"}}}}",
+                json_escape(code),
+                json_escape(message)
+            ),
+        )
+    }
+}
+
+type HyperDaemonResponse = Response<Full<Bytes>>;
+
+async fn handle_hyper_daemon_request(
+    request: Request<Incoming>,
+    state: Arc<DaemonState>,
+) -> Result<HyperDaemonResponse, std::convert::Infallible> {
+    let request = match daemon_request_from_hyper(request).await {
+        Ok(request) => request,
+        Err(error) => {
+            return Ok(daemon_response_to_hyper(DaemonHttpResponse::error_json(
+                400,
+                "bad_request",
+                &format!("{error:#}"),
+            )));
+        }
+    };
+    let response =
+        match tokio::task::spawn_blocking(move || handle_daemon_request(state, request)).await {
+            Ok(response) => response,
+            Err(error) => DaemonHttpResponse::error_json(
+                500,
+                "daemon",
+                &format!("daemon worker task failed: {error}"),
+            ),
+        };
+    Ok(daemon_response_to_hyper(response))
+}
+
+async fn daemon_request_from_hyper(request: Request<Incoming>) -> Result<DaemonHttpRequest> {
+    let (parts, body) = request.into_parts();
+    let body = body
+        .collect()
+        .await
+        .context("failed to read HTTP request body")?
+        .to_bytes()
+        .to_vec();
+    daemon_request_from_parts(parts, body)
+}
+
+fn daemon_request_from_parts(
+    parts: hyper::http::request::Parts,
+    body: Vec<u8>,
+) -> Result<DaemonHttpRequest> {
+    let mut headers = Vec::new();
+    for (name, value) in parts.headers.iter() {
+        headers.push((
+            name.as_str().to_string(),
+            value
+                .to_str()
+                .with_context(|| format!("HTTP header {name} must be UTF-8"))?
+                .to_string(),
+        ));
+    }
+    let path = parts
+        .uri
+        .path_and_query()
+        .map(|value| value.as_str())
+        .unwrap_or("/")
+        .to_string();
+    Ok(DaemonHttpRequest {
+        method: parts.method.as_str().to_string(),
+        path,
+        headers,
+        body,
+    })
+}
+
+fn daemon_response_to_hyper(response: DaemonHttpResponse) -> HyperDaemonResponse {
+    let status = StatusCode::from_u16(response.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    let content_length = response.body.len().to_string();
+    let mut builder = Response::builder()
+        .status(status)
+        .header(CONTENT_LENGTH, content_length);
+    if let Some(content_type) = response.content_type {
+        builder = builder.header(CONTENT_TYPE, content_type);
+    }
+    for (name, value) in response.headers {
+        if !safe_http_header(&name) || !safe_http_header(&value) || hop_by_hop_header(&name) {
+            continue;
+        }
+        let Ok(name) = HeaderName::from_bytes(name.as_bytes()) else {
+            continue;
+        };
+        let Ok(value) = HeaderValue::from_str(&value) else {
+            continue;
+        };
+        builder = builder.header(name, value);
+    }
+    builder
+        .body(Full::new(Bytes::from(response.body)))
+        .unwrap_or_else(|_| {
+            Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .header(CONTENT_TYPE, "application/json; charset=utf-8")
+                .body(Full::new(Bytes::from_static(
+                    br#"{"error":{"code":"daemon","message":"failed to build HTTP response"}}"#,
+                )))
+                .expect("static response should be valid")
+        })
+}
+
+fn handle_daemon_request(
+    state: Arc<DaemonState>,
+    request: DaemonHttpRequest,
+) -> DaemonHttpResponse {
+    let method = request.method.clone();
+    let path = request.path.clone();
+    match (method.as_str(), path.as_str()) {
+        ("GET", "/healthz") => DaemonHttpResponse::json(200, r#"{"ok":true}"#),
+        ("GET", "/stats") => DaemonHttpResponse::json(200, &daemon_stats_json(&state)),
+        ("GET", "/metrics") => DaemonHttpResponse::text(200, &daemon_metrics_text(&state)),
+        ("PUT", "/routes") => handle_daemon_routes_request(state, request),
+        ("POST", "/invoke") => handle_daemon_invoke_request(state, request),
+        _ => handle_daemon_worker_request(state, request),
+    }
+}
+
+fn handle_daemon_routes_request(
+    state: Arc<DaemonState>,
+    request: DaemonHttpRequest,
+) -> DaemonHttpResponse {
+    let json: Value = match serde_json::from_slice(&request.body) {
+        Ok(json) => json,
+        Err(error) => {
+            return DaemonHttpResponse::error_json(
+                400,
+                "bad_routes",
+                &format!("route table body must be JSON: {error}"),
+            );
+        }
+    };
+    let table = match parse_prepared_route_table(&json) {
+        Ok(table) => table,
+        Err(error) => {
+            return DaemonHttpResponse::error_json(400, "bad_routes", &format!("{error:#}"));
+        }
+    };
+    let routes = table.routes.len();
+    state.replace_routes(table);
+    DaemonHttpResponse::json(200, &format!("{{\"ok\":true,\"preparedRoutes\":{routes}}}"))
+}
+
+fn handle_daemon_invoke_request(
+    state: Arc<DaemonState>,
+    request: DaemonHttpRequest,
+) -> DaemonHttpResponse {
+    let Some(_permit) = state.admission.try_acquire() else {
+        state.metrics.record_rejected();
+        return DaemonHttpResponse::json(
+            503,
+            r#"{"error":{"code":"busy","message":"daemon concurrency limit reached"}}"#,
+        );
+    };
+    let started_at = Instant::now();
+    let result = handle_daemon_invoke(
+        Arc::clone(&state.runtime),
+        state.kv_store_dir.as_deref(),
+        &request.body,
+    );
+    state
+        .metrics
+        .record_invoke(started_at.elapsed(), result.is_ok());
+    match result {
+        Ok(response) => DaemonHttpResponse::json(
+            200,
+            &format!(
+                "{{\"status\":{},\"headers\":{},\"body\":\"{}\"}}",
+                response.status,
+                headers_json(&response.headers),
+                json_escape(&String::from_utf8_lossy(&response.body))
+            ),
+        ),
+        Err(error) => DaemonHttpResponse::error_json(500, "invoke", &format!("{error:#}")),
+    }
+}
+
+fn handle_daemon_worker_request(
+    state: Arc<DaemonState>,
+    request: DaemonHttpRequest,
+) -> DaemonHttpResponse {
+    let host = request_host(&request.headers).unwrap_or_default();
+    let Some(route) = state.match_route(&host, &request.path) else {
+        return DaemonHttpResponse::json(
+            404,
+            r#"{"error":{"code":"not_found","message":"daemon route not found"}}"#,
+        );
+    };
+    let Some(_permit) = state.admission.try_acquire() else {
+        state.metrics.record_rejected();
+        return DaemonHttpResponse::json(
+            503,
+            r#"{"error":{"code":"busy","message":"daemon concurrency limit reached"}}"#,
+        );
+    };
+
+    let started_at = Instant::now();
+    let target = route.select_target(&host, &request.path);
+    let input = HttpRequestInput {
+        method: request.method,
+        uri: format!("http://{}{}", host, request.path),
+        headers: request_headers_for_guest(&request.headers),
+        body: request.body,
+    };
+    let result = match state.kv_store_dir.as_deref() {
+        Some(kv_store_dir) => state
+            .runtime
+            .invoke_precompiled_component_handle_with_persistent_kv(
+                &target.precompiled,
+                input,
+                target.limits,
+                target.policy.clone(),
+                kv_store_dir,
+            ),
+        None => state
+            .runtime
+            .invoke_precompiled_component_handle_with_limits_and_policy(
+                &target.precompiled,
+                input,
+                target.limits,
+                target.policy.clone(),
+            ),
+    };
+    state
+        .metrics
+        .record_invoke(started_at.elapsed(), result.is_ok());
+    match result {
+        Ok(mut response) => {
+            append_worker_route_headers(&mut response, &target);
+            DaemonHttpResponse::worker(response)
+        }
+        Err(error) => DaemonHttpResponse::error_json(500, "invoke", &format!("{error:#}")),
+    }
+}
+
+fn append_worker_route_headers(
+    response: &mut wasmplane_wasip3_host::HttpResponseOutput,
+    target: &PreparedRouteTarget,
+) {
+    response.headers.push((
+        "x-wasmplane-deployment".to_string(),
+        target.deployment_id.clone(),
+    ));
+    response.headers.push((
+        "x-wasmplane-precompiled".to_string(),
+        target.precompiled.display().to_string(),
+    ));
+    response.headers.push((
+        "x-wasmplane-host-daemon-route".to_string(),
+        "1".to_string(),
+    ));
 }
 
 fn handle_daemon_invoke(
@@ -686,96 +1063,133 @@ fn parse_daemon_invoke(value: &Value) -> Result<InvokeArgs> {
     })
 }
 
-fn read_daemon_http_request(stream: &mut TcpStream) -> Result<DaemonHttpRequest> {
-    let mut bytes = Vec::new();
-    let mut buffer = [0u8; 8192];
-    let header_end = loop {
-        let read = stream.read(&mut buffer)?;
-        if read == 0 {
-            bail!("connection closed before HTTP headers");
-        }
-        bytes.extend_from_slice(&buffer[..read]);
-        if bytes.len() > 64 * 1024 {
-            bail!("HTTP headers exceeded 64KB");
-        }
-        if let Some(index) = find_header_end(&bytes) {
-            break index;
-        }
-    };
-    let headers =
-        std::str::from_utf8(&bytes[..header_end]).context("HTTP headers must be UTF-8")?;
-    let mut lines = headers.split("\r\n");
-    let request_line = lines.next().context("HTTP request line is missing")?;
-    let mut request_parts = request_line.split_whitespace();
-    let method = request_parts
-        .next()
-        .context("HTTP method is missing")?
-        .to_string();
-    let path = request_parts
-        .next()
-        .context("HTTP path is missing")?
-        .to_string();
-    let content_length = lines
-        .filter_map(|line| line.split_once(':'))
-        .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
-        .map(|(_, value)| value.trim().parse::<usize>())
-        .transpose()
-        .context("invalid content-length")?
-        .unwrap_or(0);
-    let body_start = header_end + 4;
-    while bytes.len().saturating_sub(body_start) < content_length {
-        let read = stream.read(&mut buffer)?;
-        if read == 0 {
-            bail!("connection closed before HTTP body");
-        }
-        bytes.extend_from_slice(&buffer[..read]);
+fn parse_prepared_route_table(value: &Value) -> Result<PreparedRouteTable> {
+    let object = value
+        .as_object()
+        .context("prepared route table must be a JSON object")?;
+    let schema_version = object
+        .get("schemaVersion")
+        .and_then(Value::as_u64)
+        .context("prepared route table must include schemaVersion")?;
+    if schema_version != 1 {
+        bail!("prepared route table schemaVersion must be 1");
     }
-    Ok(DaemonHttpRequest {
-        method,
-        path,
-        body: bytes[body_start..body_start + content_length].to_vec(),
+    let routes = object
+        .get("routes")
+        .and_then(Value::as_array)
+        .context("prepared route table must include routes")?
+        .iter()
+        .map(parse_prepared_route)
+        .collect::<Result<Vec<_>>>()?;
+    Ok(PreparedRouteTable { routes })
+}
+
+fn parse_prepared_route(value: &Value) -> Result<PreparedRoute> {
+    let object = value
+        .as_object()
+        .context("prepared route must be an object")?;
+    let host = normalize_route_host(
+        object
+            .get("host")
+            .and_then(Value::as_str)
+            .context("prepared route must include host")?,
+    );
+    if host.is_empty() {
+        bail!("prepared route host must not be empty");
+    }
+    let path_prefix = normalize_path_prefix(
+        object
+            .get("pathPrefix")
+            .and_then(Value::as_str)
+            .context("prepared route must include pathPrefix")?,
+    )?;
+    let deployment_id = object
+        .get("deploymentId")
+        .and_then(Value::as_str)
+        .context("prepared route must include deploymentId")?
+        .to_string();
+    let precompiled = object
+        .get("precompiled")
+        .and_then(Value::as_str)
+        .map(PathBuf::from)
+        .context("prepared route must include precompiled")?;
+    let limits = object
+        .get("limits")
+        .map(parse_limits_value)
+        .transpose()?
+        .unwrap_or_default();
+    let policy = object
+        .get("capabilities")
+        .map(|capabilities| parse_host_policy(&capabilities.to_string()))
+        .transpose()?
+        .unwrap_or_else(HostPolicy::deny_all);
+    let targets = object
+        .get("targets")
+        .map(parse_prepared_route_targets)
+        .transpose()?
+        .unwrap_or_default();
+
+    Ok(PreparedRoute {
+        host,
+        path_prefix,
+        deployment_id,
+        precompiled,
+        limits,
+        policy,
+        targets,
     })
 }
 
-fn write_http_json(stream: &mut TcpStream, status: u16, body: &str) -> Result<()> {
-    write_http_response(stream, status, "application/json; charset=utf-8", body)
-}
-
-fn write_http_text(stream: &mut TcpStream, status: u16, body: &str) -> Result<()> {
-    write_http_response(
-        stream,
-        status,
-        "text/plain; version=0.0.4; charset=utf-8",
-        body,
-    )
-}
-
-fn write_http_response(
-    stream: &mut TcpStream,
-    status: u16,
-    content_type: &str,
-    body: &str,
-) -> Result<()> {
-    let reason = match status {
-        200 => "OK",
-        404 => "Not Found",
-        503 => "Service Unavailable",
-        500 => "Internal Server Error",
-        _ => "OK",
+fn parse_prepared_route_targets(value: &Value) -> Result<Vec<PreparedRouteTarget>> {
+    let Value::Array(items) = value else {
+        bail!("prepared route targets must be an array");
     };
-    write!(
-        stream,
-        "HTTP/1.1 {status} {reason}\r\ncontent-type: {content_type}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
-        body.as_bytes().len(),
-        body
-    )?;
-    Ok(())
+    items.iter().map(parse_prepared_route_target).collect()
+}
+
+fn parse_prepared_route_target(value: &Value) -> Result<PreparedRouteTarget> {
+    let object = value
+        .as_object()
+        .context("prepared route target must be an object")?;
+    let deployment_id = object
+        .get("deploymentId")
+        .and_then(Value::as_str)
+        .context("prepared route target must include deploymentId")?
+        .to_string();
+    let precompiled = object
+        .get("precompiled")
+        .and_then(Value::as_str)
+        .map(PathBuf::from)
+        .context("prepared route target must include precompiled")?;
+    let weight = object
+        .get("weight")
+        .map(|value| json_u32(value, "prepared route target weight"))
+        .transpose()?
+        .unwrap_or(1);
+    let limits = object
+        .get("limits")
+        .map(parse_limits_value)
+        .transpose()?
+        .unwrap_or_default();
+    let policy = object
+        .get("capabilities")
+        .map(|capabilities| parse_host_policy(&capabilities.to_string()))
+        .transpose()?
+        .unwrap_or_else(HostPolicy::deny_all);
+    Ok(PreparedRouteTarget {
+        deployment_id,
+        precompiled,
+        limits,
+        policy,
+        weight,
+    })
 }
 
 fn daemon_stats_json(state: &DaemonState) -> String {
     format!(
-        "{{\"ok\":true,\"preparedComponents\":{},\"reusableInstances\":{},\"activeInvocations\":{},\"maxConcurrentInvocations\":{},\"totalInvocations\":{},\"failedInvocations\":{},\"rejectedInvocations\":{},\"avgInvokeMs\":{:.3}}}",
+        "{{\"ok\":true,\"preparedComponents\":{},\"preparedRoutes\":{},\"reusableInstances\":{},\"activeInvocations\":{},\"maxConcurrentInvocations\":{},\"totalInvocations\":{},\"failedInvocations\":{},\"rejectedInvocations\":{},\"avgInvokeMs\":{:.3}}}",
         state.runtime.prepared_component_count(),
+        state.route_count(),
         state.runtime.reusable_instance_count(),
         state.admission.active(),
         state.admission.max(),
@@ -791,6 +1205,8 @@ fn daemon_metrics_text(state: &DaemonState) -> String {
         concat!(
             "# TYPE wasmplane_host_prepared_components gauge\n",
             "wasmplane_host_prepared_components {}\n",
+            "# TYPE wasmplane_host_prepared_routes gauge\n",
+            "wasmplane_host_prepared_routes {}\n",
             "# TYPE wasmplane_host_reusable_instances gauge\n",
             "wasmplane_host_reusable_instances {}\n",
             "# TYPE wasmplane_host_active_invocations gauge\n",
@@ -807,6 +1223,7 @@ fn daemon_metrics_text(state: &DaemonState) -> String {
             "wasmplane_host_invocation_duration_seconds_sum {:.6}\n",
         ),
         state.runtime.prepared_component_count(),
+        state.route_count(),
         state.runtime.reusable_instance_count(),
         state.admission.active(),
         state.admission.max(),
@@ -816,10 +1233,6 @@ fn daemon_metrics_text(state: &DaemonState) -> String {
         state.metrics.total_invocations(),
         state.metrics.total_duration_seconds(),
     )
-}
-
-fn find_header_end(bytes: &[u8]) -> Option<usize> {
-    bytes.windows(4).position(|window| window == b"\r\n\r\n")
 }
 
 fn parse_u64(value: &str, name: &str) -> Result<u64> {
@@ -1095,7 +1508,7 @@ fn print_usage() {
         "  wasmplane-wasip3-host invoke (--component <component.wasm> | --precompiled <component.cwasm>) --method <METHOD> --uri <URI> [--headers <JSON>] [--body <TEXT>] [--wall-ms <MS>] [--cpu-ms <MS>] [--memory-mb <MB>] [--request-bytes <BYTES>] [--response-bytes <BYTES>] [--subrequests <COUNT>] [--host-calls <COUNT>] [--capabilities <JSON>] [--kv-store-dir <DIR>]"
     );
     eprintln!(
-        "  wasmplane-wasip3-host serve [--host <HOST>] [--port <PORT>] [--kv-store-dir <DIR>] [--max-prepared-components <COUNT>] [--max-concurrent-invocations <COUNT>] [--experimental-instance-reuse <COUNT>] [--instance-reuse-contract <disabled|stateless-v1|guest-reset-v1>] [--pooling-total-component-instances <COUNT>] [--pooling-memory-mb <MB>]"
+        "  wasmplane-wasip3-host serve [--host <HOST>] [--port <PORT>] [--kv-store-dir <DIR>] [--max-prepared-components <COUNT>] [--max-concurrent-invocations <COUNT>] [--http-workers <COUNT>] [--experimental-instance-reuse <COUNT>] [--instance-reuse-contract <disabled|stateless-v1|guest-reset-v1>] [--pooling-total-component-instances <COUNT>] [--pooling-memory-mb <MB>]"
     );
 }
 
@@ -1116,6 +1529,93 @@ fn headers_json(headers: &[(String, String)]) -> String {
         })
         .collect::<Vec<_>>();
     format!("[{}]", items.join(","))
+}
+
+fn request_host(headers: &[(String, String)]) -> Option<String> {
+    first_header(headers, "x-forwarded-host")
+        .or_else(|| first_header(headers, "host"))
+        .map(normalize_route_host)
+}
+
+fn first_header<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
+    headers
+        .iter()
+        .find(|(header_name, _)| header_name.eq_ignore_ascii_case(name))
+        .map(|(_, value)| value.as_str())
+}
+
+fn request_headers_for_guest(headers: &[(String, String)]) -> Vec<(String, String)> {
+    headers
+        .iter()
+        .filter(|(name, _)| !hop_by_hop_header(name))
+        .cloned()
+        .collect()
+}
+
+fn hop_by_hop_header(name: &str) -> bool {
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "connection"
+            | "content-length"
+            | "keep-alive"
+            | "proxy-authenticate"
+            | "proxy-authorization"
+            | "te"
+            | "trailer"
+            | "transfer-encoding"
+            | "upgrade"
+    )
+}
+
+fn safe_http_header(value: &str) -> bool {
+    !value.contains('\r') && !value.contains('\n')
+}
+
+fn normalize_route_host(value: &str) -> String {
+    let trimmed = value.trim().to_ascii_lowercase();
+    let without_port = match trimmed.rsplit_once(':') {
+        Some((host, port)) if port.chars().all(|ch| ch.is_ascii_digit()) => host,
+        _ => trimmed.as_str(),
+    };
+    without_port.to_string()
+}
+
+fn normalize_path_prefix(value: &str) -> Result<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Ok("/".to_string());
+    }
+    if !trimmed.starts_with('/') {
+        bail!("prepared route pathPrefix must start with /");
+    }
+    let prefix = request_path_only(trimmed);
+    if prefix != "/" && prefix.ends_with('/') {
+        Ok(prefix.trim_end_matches('/').to_string())
+    } else {
+        Ok(prefix.to_string())
+    }
+}
+
+fn request_path_only(value: &str) -> &str {
+    value.split_once('?').map(|(path, _)| path).unwrap_or(value)
+}
+
+fn path_prefix_matches(path: &str, prefix: &str) -> bool {
+    if prefix == "/" {
+        return true;
+    }
+    if path == prefix {
+        return true;
+    }
+    path.strip_prefix(prefix)
+        .map(|suffix| suffix.starts_with('/'))
+        .unwrap_or(false)
+}
+
+fn stable_hash(value: &str) -> u32 {
+    value
+        .bytes()
+        .fold(0u32, |hash, byte| hash.wrapping_add(u32::from(byte)))
 }
 
 #[cfg(test)]
@@ -1254,6 +1754,7 @@ mod tests {
                 kv_store_dir: Some(kv_store_dir),
                 runtime_options: Wasip3RuntimeOptions::default(),
                 max_concurrent_invocations: DEFAULT_MAX_CONCURRENT_INVOCATIONS,
+                http_workers: DEFAULT_DAEMON_HTTP_WORKERS,
             }
         );
     }
@@ -1265,6 +1766,8 @@ mod tests {
             "512",
             "--max-concurrent-invocations",
             "64",
+            "--http-workers",
+            "32",
             "--pooling-total-component-instances",
             "64",
             "--pooling-memory-mb",
@@ -1292,6 +1795,7 @@ mod tests {
         let parsed = parse_serve_args(&mut args).expect("serve args");
 
         assert_eq!(parsed.runtime_options.max_prepared_components, 512);
+        assert_eq!(parsed.http_workers, 32);
         assert_eq!(
             parsed.runtime_options.max_reusable_instances_per_component,
             2
@@ -1431,6 +1935,121 @@ mod tests {
     }
 
     #[test]
+    fn parse_prepared_route_table_accepts_precompiled_routes() {
+        let payload: Value = serde_json::json!({
+            "schemaVersion": 1,
+            "routes": [{
+                "host": "hello.example.dev",
+                "pathPrefix": "/api",
+                "deploymentId": "dep_blue",
+                "precompiled": "/tmp/worker.component.cwasm",
+                "limits": {
+                    "wallMs": 1000,
+                    "cpuMs": 50,
+                    "memoryMb": 64
+                },
+                "capabilities": {
+                    "outboundHttp": { "enabled": false, "allow": [] },
+                    "kv": [],
+                    "secrets": [],
+                    "durableObjects": [],
+                    "arbitraryFilesystem": false,
+                    "arbitrarySockets": false,
+                    "processSpawn": false
+                }
+            }]
+        });
+
+        let table = parse_prepared_route_table(&payload).expect("prepared routes");
+
+        assert_eq!(table.routes.len(), 1);
+        assert_eq!(table.routes[0].host, "hello.example.dev");
+        assert_eq!(table.routes[0].path_prefix, "/api");
+        assert_eq!(table.routes[0].deployment_id, "dep_blue");
+        assert_eq!(
+            table.routes[0].precompiled,
+            PathBuf::from("/tmp/worker.component.cwasm")
+        );
+        assert_eq!(table.routes[0].limits.wall_ms, Some(1000));
+    }
+
+    #[test]
+    fn prepared_route_table_matches_longest_path_prefix() {
+        let table = PreparedRouteTable {
+            routes: vec![
+                prepared_route("hello.example.dev", "/", "dep_root"),
+                prepared_route("hello.example.dev", "/api", "dep_api"),
+                prepared_route("admin.example.dev", "/", "dep_admin"),
+            ],
+        };
+
+        let matched = table
+            .match_route("hello.example.dev", "/api/users?limit=1")
+            .expect("route");
+
+        assert_eq!(matched.deployment_id, "dep_api");
+        assert!(table.match_route("missing.example.dev", "/api").is_none());
+    }
+
+    #[test]
+    fn prepared_route_selects_weighted_targets() {
+        let mut route = prepared_route("hello.example.dev", "/", "dep_stable");
+        route.targets = vec![
+            PreparedRouteTarget {
+                deployment_id: "dep_stable".to_string(),
+                precompiled: PathBuf::from("/tmp/stable.cwasm"),
+                limits: InvocationLimits::default(),
+                policy: HostPolicy::deny_all(),
+                weight: 1,
+            },
+            PreparedRouteTarget {
+                deployment_id: "dep_canary".to_string(),
+                precompiled: PathBuf::from("/tmp/canary.cwasm"),
+                limits: InvocationLimits::default(),
+                policy: HostPolicy::deny_all(),
+                weight: 99,
+            },
+        ];
+
+        let selected = route.select_target("hello.example.dev", "/");
+
+        assert_eq!(selected.deployment_id, "dep_canary");
+        assert_eq!(selected.precompiled, PathBuf::from("/tmp/canary.cwasm"));
+    }
+
+    #[test]
+    fn parse_prepared_route_table_accepts_weighted_targets() {
+        let payload: Value = serde_json::json!({
+            "schemaVersion": 1,
+            "routes": [{
+                "host": "hello.example.dev",
+                "pathPrefix": "/",
+                "deploymentId": "dep_stable",
+                "precompiled": "/tmp/stable.cwasm",
+                "targets": [{
+                    "deploymentId": "dep_stable",
+                    "weight": 80,
+                    "precompiled": "/tmp/stable.cwasm",
+                    "limits": { "wallMs": 1000, "cpuMs": 50, "memoryMb": 64 },
+                    "capabilities": { "outboundHttp": { "enabled": false, "allow": [] }, "kv": [], "secrets": [], "durableObjects": [] }
+                }, {
+                    "deploymentId": "dep_canary",
+                    "weight": 20,
+                    "precompiled": "/tmp/canary.cwasm",
+                    "limits": { "wallMs": 1000, "cpuMs": 50, "memoryMb": 64 },
+                    "capabilities": { "outboundHttp": { "enabled": false, "allow": [] }, "kv": [], "secrets": [], "durableObjects": [] }
+                }]
+            }]
+        });
+
+        let table = parse_prepared_route_table(&payload).expect("prepared routes");
+
+        assert_eq!(table.routes[0].targets.len(), 2);
+        assert_eq!(table.routes[0].targets[1].deployment_id, "dep_canary");
+        assert_eq!(table.routes[0].targets[1].weight, 20);
+    }
+
+    #[test]
     fn parse_invoke_args_rejects_ambiguous_component_source() {
         let mut args = vec![
             "--component",
@@ -1463,6 +2082,49 @@ mod tests {
         assert_eq!(parsed["status"], 200);
         assert_eq!(parsed["headers"][0]["value"], "quote: \"");
         assert_eq!(parsed["body"], "line 1\nline 2\r\nquote: \"");
+    }
+
+    #[test]
+    fn daemon_request_from_parts_preserves_path_query_headers_and_body() {
+        let (parts, ()) = hyper::Request::builder()
+            .method("POST")
+            .uri("/api/users?limit=1")
+            .header("host", "Hello.Example.Dev:443")
+            .header("x-test", "yes")
+            .body(())
+            .expect("request")
+            .into_parts();
+
+        let request =
+            daemon_request_from_parts(parts, b"payload".to_vec()).expect("daemon request");
+
+        assert_eq!(request.method, "POST");
+        assert_eq!(request.path, "/api/users?limit=1");
+        assert_eq!(request.body, b"payload");
+        assert_eq!(
+            request_host(&request.headers),
+            Some("hello.example.dev".to_string())
+        );
+        assert!(
+            request
+                .headers
+                .contains(&("x-test".to_string(), "yes".to_string()))
+        );
+    }
+
+    #[test]
+    fn daemon_response_to_hyper_omits_connection_close_for_keep_alive() {
+        let response = daemon_response_to_hyper(DaemonHttpResponse::json(200, r#"{"ok":true}"#));
+
+        assert_eq!(response.status(), 200);
+        assert_eq!(
+            response
+                .headers()
+                .get(hyper::header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok()),
+            Some("application/json; charset=utf-8")
+        );
+        assert!(response.headers().get(hyper::header::CONNECTION).is_none());
     }
 
     #[test]
@@ -1500,6 +2162,9 @@ mod tests {
     #[test]
     fn daemon_stats_and_metrics_report_runtime_pressure() {
         let state = DaemonState::new(Arc::new(Wasip3Runtime::new().expect("runtime")), None, 2);
+        state.replace_routes(PreparedRouteTable {
+            routes: vec![prepared_route("hello.example.dev", "/", "dep_stats")],
+        });
         let _permit = state.admission.try_acquire().expect("permit");
         state
             .metrics
@@ -1511,6 +2176,7 @@ mod tests {
 
         let stats: Value = serde_json::from_str(&daemon_stats_json(&state)).expect("stats json");
         assert_eq!(stats["preparedComponents"], 0);
+        assert_eq!(stats["preparedRoutes"], 1);
         assert_eq!(stats["reusableInstances"], 0);
         assert_eq!(stats["activeInvocations"], 1);
         assert_eq!(stats["maxConcurrentInvocations"], 2);
@@ -1521,6 +2187,7 @@ mod tests {
 
         let metrics = daemon_metrics_text(&state);
         assert!(metrics.contains("wasmplane_host_prepared_components 0"));
+        assert!(metrics.contains("wasmplane_host_prepared_routes 1"));
         assert!(metrics.contains("wasmplane_host_reusable_instances 0"));
         assert!(metrics.contains("wasmplane_host_active_invocations 1"));
         assert!(metrics.contains("wasmplane_host_max_concurrent_invocations 2"));
@@ -1529,5 +2196,48 @@ mod tests {
         assert!(metrics.contains("wasmplane_host_invocations_rejected_total 1"));
         assert!(metrics.contains("wasmplane_host_invocation_duration_seconds_count 2"));
         assert!(metrics.contains("wasmplane_host_invocation_duration_seconds_sum 0.035"));
+    }
+
+    #[test]
+    fn worker_route_response_headers_expose_selected_target_metadata() {
+        let target = PreparedRouteTarget {
+            deployment_id: "dep_canary".to_string(),
+            precompiled: PathBuf::from("/cache/dep_canary.cwasm"),
+            limits: InvocationLimits::default(),
+            policy: HostPolicy::deny_all(),
+            weight: 20,
+        };
+        let mut response = wasmplane_wasip3_host::HttpResponseOutput {
+            status: 200,
+            headers: Vec::new(),
+            body: Vec::new(),
+        };
+
+        append_worker_route_headers(&mut response, &target);
+
+        assert!(response.headers.contains(&(
+            "x-wasmplane-deployment".to_string(),
+            "dep_canary".to_string()
+        )));
+        assert!(response.headers.contains(&(
+            "x-wasmplane-precompiled".to_string(),
+            "/cache/dep_canary.cwasm".to_string()
+        )));
+        assert!(response.headers.contains(&(
+            "x-wasmplane-host-daemon-route".to_string(),
+            "1".to_string()
+        )));
+    }
+
+    fn prepared_route(host: &str, path_prefix: &str, deployment_id: &str) -> PreparedRoute {
+        PreparedRoute {
+            host: host.to_string(),
+            path_prefix: path_prefix.to_string(),
+            deployment_id: deployment_id.to_string(),
+            precompiled: PathBuf::from("/tmp/worker.component.cwasm"),
+            limits: InvocationLimits::default(),
+            policy: HostPolicy::deny_all(),
+            targets: Vec::new(),
+        }
     }
 }

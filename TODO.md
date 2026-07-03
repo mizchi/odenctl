@@ -268,3 +268,22 @@ Production readiness tasks, in implementation order.
 ## 34. Billing retention automation
 
 - [x] Add scheduled invoice retention pruning for configured organizations.
+
+## 35. Fly production scale evaluation
+
+- [x] Expose non-secret operational config for deployed posture checks.
+- [x] Add production smoke assertions for external Postgres and active runtime node count.
+- [x] Make alarm demo webhook handling idempotent by scheduled delivery key.
+- [x] Add a dry-run/execute Fly scale evaluation command for N+1 runtime, deployment publish, HTTP throughput, and drain/activate drills.
+- [x] Keep destructive failure drills explicit by requiring Machine ids or volume SQLite database ids.
+
+## 36. Rust-forward runtime daemon
+
+- [x] Add prepared route tables to the Rust Wasmtime daemon.
+- [x] Serve worker HTTP requests directly from Rust daemon routes.
+- [x] Add a Rust daemon benchmark harness that precompiles `.cwasm`, publishes prepared routes, and measures direct HTTP throughput.
+- [x] Compare direct Rust daemon latency/throughput against the existing Node runtime shell plus Rust daemon path.
+- [x] Replace the daemon's blocking TCP HTTP loop with an async keep-alive capable server.
+- [x] Move route snapshot translation from benchmark-only prepared routes into the Node runtime publisher path.
+- [x] Add production smoke for Rust-forward runtime mode before making it the Fly default.
+- [x] Add an opt-in Node runtime fast path that proxies matched worker requests to Rust daemon routes.

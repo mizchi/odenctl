@@ -105,6 +105,10 @@ export async function handleAlarmDemoWebhook(
 
   await object.storage.transaction(async (txn) => {
     objectName = (await txn.get<string>("objectName")) ?? input.objectId;
+    const deliveryKey = alarmDeliveryKey(new Date(scheduledMs).toISOString());
+    if ((await txn.get<boolean>(deliveryKey)) === true) {
+      return;
+    }
     const alarmCount = ((await txn.get<number>("alarmCount")) ?? 0) + 1;
     const repeatMs = await txn.get<number | null>("repeatMs");
     const remainingRepeats = (await txn.get<number>("remainingRepeats")) ?? 0;
@@ -118,6 +122,7 @@ export async function handleAlarmDemoWebhook(
       lastScheduledTime: new Date(scheduledMs).toISOString(),
       remainingRepeats: nextRemainingRepeats,
       updatedAt: firedAt,
+      [deliveryKey]: true,
       ...(nextAlarmAt ? { scheduledAt: nextAlarmAt } : {}),
     });
   });
@@ -220,4 +225,8 @@ function numberValue(value: unknown, fallback: number): number {
 
 function numberOrNull(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function alarmDeliveryKey(scheduledTime: string): string {
+  return `alarmDelivery:${scheduledTime}`;
 }

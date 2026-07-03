@@ -51,6 +51,7 @@ import {
   readAlarmDemoStatus,
   scheduleAlarmDemo,
 } from "../control-plane/alarm-demo.ts";
+import type { OperationalConfig } from "../ops-config.ts";
 
 type MaybePromise<T> = T | Promise<T>;
 
@@ -133,6 +134,7 @@ export interface HttpAppOptions {
   apiToken?: string;
   apiTokens?: ApiToken[];
   alarmDemoWebhookToken?: string;
+  operationalConfig?: OperationalConfig;
   auditSink?: AuditSink;
   now?: () => string;
   fetch?: FetchLike;
@@ -197,6 +199,10 @@ export function createHttpApp(options: HttpAppOptions) {
         return;
       }
       installAuditHook(options, request, response, authorization.token, requiredScope, url.pathname);
+      if (method === "GET" && url.pathname === "/ops/config") {
+        writeJson(response, 200, options.operationalConfig ?? defaultOperationalConfig(options));
+        return;
+      }
       if (method === "GET" && url.pathname === "/admin") {
         writeHtml(response, 200, await renderAdminPage(options, url.searchParams.get("notice")));
         return;
@@ -992,6 +998,18 @@ function configuredApiTokens(options: HttpAppOptions): ApiToken[] {
     ...(options.apiToken ? [{ token: options.apiToken, scopes: ["*" as const], principal: "legacy" }] : []),
     ...(options.apiTokens ?? []),
   ];
+}
+
+function defaultOperationalConfig(options: HttpAppOptions): OperationalConfig {
+  return {
+    schemaVersion: 1,
+    database: { kind: "sqlite", external: false },
+    artifactStore: { kind: "local", external: false },
+    volumeSqlite: { enabled: Boolean(options.volumeSqliteRegistry) },
+    runtimeNodes: { staticTargets: options.runtimeNodes?.length ?? 0 },
+    routeSnapshotReplicas: { configured: options.routeSnapshotReplicas?.length ?? 0 },
+    durableObjectAlarms: { enabled: false, namespaces: [] },
+  };
 }
 
 function requiredScopeFor(method: string, pathname: string): ApiScope {

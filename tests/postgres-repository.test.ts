@@ -2,10 +2,39 @@ import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { test } from "node:test";
 import { createAsyncControlPlane } from "../src/control-plane/async-service.ts";
-import { createPostgresRepository } from "../src/control-plane/postgres-repository.ts";
+import {
+  createPostgresPoolConfig,
+  createPostgresRepository,
+} from "../src/control-plane/postgres-repository.ts";
 
 test("Postgres repository module loads with the pg runtime dependency", async () => {
   assert.equal(typeof createPostgresRepository, "function");
+});
+
+test("Postgres pool config lets explicit ssl options override URL sslmode", () => {
+  assert.deepEqual(
+    createPostgresPoolConfig({
+      connectionString: "postgres://user:secret@db.example/wasmplane?application_name=wasmplane&sslmode=require",
+      ssl: true,
+      max: 3,
+    }),
+    {
+      connectionString: "postgres://user:secret@db.example/wasmplane?application_name=wasmplane",
+      max: 3,
+      ssl: { rejectUnauthorized: false },
+    },
+  );
+  assert.deepEqual(
+    createPostgresPoolConfig({
+      connectionString: "postgres://user:secret@db.example/wasmplane?sslmode=require",
+      ssl: false,
+    }),
+    {
+      connectionString: "postgres://user:secret@db.example/wasmplane",
+      max: 10,
+      ssl: false,
+    },
+  );
 });
 
 test(

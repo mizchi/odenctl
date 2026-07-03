@@ -28,6 +28,12 @@ import type {
   RuntimeSecretStore,
   RuntimeWorkerLogLine,
 } from "./types.ts";
+import {
+  publishWasip3HostDaemonRoutes,
+  proxyWasip3HostDaemonWorkerRequest,
+  type Wasip3HostDaemonRoutePublisherOptions,
+  type Wasip3HostDaemonWorkerProxyOptions,
+} from "./wasip3-host.ts";
 
 export interface RuntimeNodeAppOptions {
   supervisor: RuntimeNodeSupervisor;
@@ -52,6 +58,8 @@ export interface RuntimeNodeAppOptions {
   telemetry?: RuntimeTelemetry;
   warmupOnSnapshot?: boolean;
   hostDaemonMetrics?: RuntimeHostDaemonMetricsOptions;
+  hostDaemonRoutes?: Wasip3HostDaemonRoutePublisherOptions;
+  hostDaemonWorkerProxy?: Wasip3HostDaemonWorkerProxyOptions;
   initialLifecycleStatus?: RuntimeNodeStatus;
   initialRouteSnapshot?: RouteSnapshot;
   snapshotStore?: RuntimeRouteSnapshotStore;
@@ -206,23 +214,32 @@ export function createRuntimeNodeApp(options: RuntimeNodeAppOptions) {
         const snapshot = parseJson<RouteSnapshot>(bodyText);
         assertRouteSnapshot(snapshot);
         const warmup = options.warmupOnSnapshot === true;
-        if (warmup) {
+        let preparedComponents: CompiledComponent[] | undefined;
+        if (warmup || options.hostDaemonRoutes) {
           if (!options.supervisor.warmupSnapshot) {
             throw new RuntimeError("validation", "runtime supervisor does not support snapshot warmup");
           }
-          await options.supervisor.warmupSnapshot(snapshot);
+          preparedComponents = await options.supervisor.warmupSnapshot(snapshot);
         } else {
           options.supervisor.loadSnapshot(snapshot);
         }
+        const daemonRoutes = options.hostDaemonRoutes
+          ? await publishWasip3HostDaemonRoutes({
+            ...options.hostDaemonRoutes,
+            snapshot,
+            components: preparedComponents ?? await options.supervisor.preparedComponents?.() ?? [],
+          })
+          : undefined;
         await options.snapshotStore?.save(snapshot);
         metrics.recordSnapshot(snapshot);
-        writeJson(response, 200, {
+        writeJson(response, 200, stripUndefined({
           ok: true,
           snapshotId: snapshot.id,
           warmed: warmup,
           routes: snapshot.routes.length,
           generatedAt: snapshot.generatedAt,
-        });
+          daemonRoutes,
+        }));
         return;
       }
 
@@ -255,7 +272,9 @@ export function createRuntimeNodeApp(options: RuntimeNodeAppOptions) {
         throw new RuntimeError("rate_limited", "runtime node project request rate limit exceeded");
       }
 
-      if (options.invoker) {
+      const canProxyToHostDaemon = options.hostDaemonWorkerProxy
+        && canProxyToHostDaemonWorker(method, url.pathname);
+      if (options.invoker || canProxyToHostDaemon) {
         const component = await withResolvedCapabilities(prepared, options.secretStore);
         enforceRuntimeCapabilities(component.capabilities);
         const projectInvocation = projectConcurrency.tryStart(component.projectId);
@@ -270,15 +289,24 @@ export function createRuntimeNodeApp(options: RuntimeNodeAppOptions) {
         const finishInvocationDrain = invocationDrain.start();
         invocationStarted = true;
         try {
+          const body = await readBody(request, component.limits?.requestBytes);
+          const headers = requestHeaders(request.headers);
           const invocation = await withWallTimeout(
-            options.invoker.invoke({
-              deploymentId: component.deploymentId,
-              component,
-              method,
-              uri: requestUri(request.headers, url),
-              headers: requestHeaders(request.headers),
-              body: await readBody(request, component.limits?.requestBytes),
-            }),
+            canProxyToHostDaemon
+              ? proxyWasip3HostDaemonWorkerRequest(options.hostDaemonWorkerProxy!, {
+                method,
+                path: requestPath(url),
+                headers,
+                body,
+              })
+              : options.invoker!.invoke({
+                deploymentId: component.deploymentId,
+                component,
+                method,
+                uri: requestUri(request.headers, url),
+                headers,
+                body,
+              }),
             component.limits?.wallMs,
           );
           enforceResponseBytes(component, invocation);
@@ -1277,6 +1305,21 @@ function requestUri(headers: Record<string, string | string[] | undefined>, url:
   const host = requestHost(headers).replace(/:\d+$/, "");
   const proto = firstHeader(headers["x-forwarded-proto"]) ?? "http";
   return `${proto}://${host}${url.pathname}${url.search}`;
+}
+
+function requestPath(url: URL): string {
+  return `${url.pathname}${url.search}`;
+}
+
+function canProxyToHostDaemonWorker(method: string, path: string): boolean {
+  const normalized = path.replace(/\/+$/, "") || "/";
+  if (method === "PUT" && normalized === "/routes") {
+    return false;
+  }
+  if (method === "POST" && normalized === "/invoke") {
+    return false;
+  }
+  return !new Set(["/healthz", "/stats", "/metrics", "/routes", "/invoke"]).has(normalized);
 }
 
 function requestHeaders(headers: Record<string, string | string[] | undefined>): RuntimeHeader[] {

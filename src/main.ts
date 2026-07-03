@@ -22,6 +22,10 @@ import {
   type RouteSnapshotReplicationOptions,
 } from "./control-plane/snapshot-replication.ts";
 import { createHttpApp, publishCurrentRouteSnapshot } from "./http/app.ts";
+import {
+  assertOperationalRequirements,
+  operationalConfigFromEnv,
+} from "./ops-config.ts";
 import { parseRuntimeIdentityKeys } from "./runtime/config.ts";
 
 const port = Number.parseInt(process.env.PORT ?? "8787", 10);
@@ -72,6 +76,8 @@ const snapshotReplicationOptions: RouteSnapshotReplicationOptions = {
   timeoutMs: optionalPositiveInteger(process.env.WASMPLANE_SNAPSHOT_REPLICATION_TIMEOUT_MS),
 };
 const volumeSqliteBackupCipher = createConfiguredVolumeSqliteBackupCipher(process.env);
+const operationalConfig = operationalConfigFromEnv(process.env);
+assertOperationalRequirements(operationalConfig, process.env);
 
 const controlPlane = await createConfiguredControlPlane({
   runtimeNodeActiveTtlMs,
@@ -128,6 +134,7 @@ const appOptions = {
     process.env.WASMPLANE_ROUTE_SNAPSHOT_REPLICA_TOKEN,
   ),
   snapshotReplication: snapshotReplicationOptions,
+  operationalConfig,
 };
 const app = createHttpApp(appOptions);
 

@@ -7,8 +7,13 @@ publish.workspace = true
 
 [dependencies]
 anyhow = "1.0.100"
+bytes = "1"
 futures = "0.3.32"
+http-body-util = "0.1"
+hyper = { version = "1", features = ["http1", "server"] }
+hyper-util = { version = "0.1", features = ["http1", "server", "tokio"] }
 native-tls = "0.2.18"
 serde_json = "1.0.145"
+tokio = { version = "1", features = ["rt-multi-thread", "net"] }
 wasmtime = { version = "42.0.1", features = ["component-model", "component-model-async", "cranelift", "runtime"] }
 wasmtime-wasi = { version = "42.0.1", features = ["p2"] }

@@ -15,12 +15,17 @@ The MVP follows the design memo in `/Users/mz/Downloads/wasi-edge-worker-platfor
 
 ```sh
 just test
+just coverage
 pnpm start
 just runtime
 pnpm wasmplane deploy --project-id prj_hello --component ./worker.component.wasm --host hello.example.dev
 just bench
 just e2e
 ```
+
+`just coverage` runs Node's test-runner coverage and Rust coverage through
+`rustup run stable cargo llvm-cov --workspace --summary-only`. Use `just node-coverage` or
+`just rust-coverage` to collect one side only.
 
 The control plane listens on `http://127.0.0.1:8787` by default and stores state in
 `wasmplane.sqlite`. Set `WASMPLANE_DB`, `HOST`, or `PORT` to override this. For production, set
@@ -257,6 +262,10 @@ omit it to force isolated instances even when the pool size env is present.
 When the runtime is configured with `WASMPLANE_WASIP3_HOST_DAEMON=1` or
 `WASMPLANE_WASIP3_HOST_DAEMON_URL`, `GET /__runtime/metrics` includes the daemon `/stats` payload
 under `hostDaemon`.
+Set `WASMPLANE_WASIP3_HOST_DAEMON_ROUTES=1` to publish accepted route snapshots into the daemon's
+prepared route table. This keeps the Node runtime responsible for management endpoints, snapshot
+validation, warmup, metrics, logs, and drains while worker HTTP traffic can be served directly by the
+Rust daemon route table.
 Set `WASMPLANE_WASIP3_POOLING_TOTAL_COMPONENT_INSTANCES` to enable Wasmtime's pooling allocator
 for high-density instance allocation. `WASMPLANE_WASIP3_POOLING_MEMORY_MB` caps each pooled linear
 memory slot, while `WASMPLANE_WASIP3_POOLING_TOTAL_CORE_INSTANCES`,
@@ -341,6 +350,7 @@ Check the deployed services:
 ```sh
 just fly-status
 just fly-smoke
+just fly-smoke-rust-forward
 
 curl -H "authorization: Bearer $WASMPLANE_CONTROL_PLANE_TOKEN" \
   "https://$FLY_CONTROL_APP.fly.dev/runtime-nodes"
@@ -352,7 +362,8 @@ curl "https://$FLY_COLLECTOR_APP.fly.dev/"
 `/autoscaling/signals` and `/snapshots/routes`, authenticated runtime `/__runtime/metrics`, and one
 worker request using `WASMPLANE_SMOKE_WORKER_HOST`/`WASMPLANE_SMOKE_WORKER_PATH` defaulting to
 `hello.example.dev` and `/`. Run `pnpm ops-smoke -- --skip-worker` when no route has been deployed
-yet.
+yet. `just fly-smoke-rust-forward` adds production posture checks plus a host daemon assertion that
+runtime metrics include `hostDaemon.preparedRoutes > 0`.
 
 The control app stores SQLite state and uploaded local artifacts on `/data`. For Fly, local uploads
 are recorded as `https://<control-app>/artifacts/local/<digest>.wasm`, so the separate runtime app can
@@ -457,6 +468,14 @@ pnpm wasmplane volume-sqlite gc --root /data/sqlite --id prj_example --keep-late
 To move the control plane state to managed Postgres, create a Postgres database and set
 `DATABASE_URL` on the control app. To remove the control app volume dependency, also set the
 S3/R2 artifact store variables above so local uploads are persisted outside `/data`.
+Set `WASMPLANE_REQUIRE_EXTERNAL_DATABASE=1` when a production control-plane process must refuse to
+start on the fallback SQLite database. Set `WASMPLANE_REQUIRE_EXTERNAL_ARTIFACT_STORE=1` to apply
+the same guard for artifact storage. Authenticated `GET /ops/config` returns non-secret posture
+metadata such as database kind, artifact store kind, configured snapshot replicas, static runtime
+targets, and enabled durable object alarm namespaces; `just fly-smoke-production` verifies that the
+deployed control plane is on an external database and has at least two active runtime nodes.
+`just fly-smoke-rust-forward` also verifies that the runtime has published route snapshots into the
+Rust-forward host daemon.
 
 On Fly, leave `RUNTIME_PUBLIC_URL=auto`. Each runtime Machine registers as
 `rt_<FLY_MACHINE_ID>` and advertises `http://<FLY_MACHINE_ID>.vm.<FLY_APP_NAME>.internal:<port>`
@@ -475,6 +494,10 @@ real trace backend exporter for production retention.
 Short scale test:
 
 ```sh
+just fly-scale-eval
+pnpm fly-scale-eval -- --runtime-machines 2 --iterations 300 --concurrency 1,8,32,64,128
+pnpm fly-scale-eval -- --execute --runtime-machines 2 --output perf-results/fly-scale-eval.md
+
 fly scale count 2 -a "$FLY_RUNTIME_APP" -r "$FLY_REGION" --with-new-volumes --yes
 sleep 30
 curl -X POST "https://$FLY_CONTROL_APP.fly.dev/snapshots/routes/publish" \
@@ -490,6 +513,13 @@ pnpm bench http \
 fly scale count 1 -a "$FLY_RUNTIME_APP" -r "$FLY_REGION" --yes
 fly volumes list -a "$FLY_RUNTIME_APP"
 ```
+
+`fly-scale-eval` is dry-run by default. With `--execute`, it scales the runtime app, publishes the
+current route snapshot, runs production smoke checks, measures HTTP throughput at the requested
+concurrency levels, and performs a runtime drain/activate readiness drill. Machine restarts are
+available only when explicit ids are supplied with `--restart-runtime-machine <id>` or
+`--restart-control-machine <id>`. Volume SQLite backup drills require an explicit database id with
+`--volume-sqlite-drill-id <id>`.
 
 The runtime supervisor code currently prepares deployments by resolving a route snapshot,
 materializing `file://`, `http://`, `https://`, or private `s3://` artifacts, verifying their
@@ -610,6 +640,42 @@ The output includes per-run throughput, average latency, p50/p95/p99 latency, an
 `host.invoke.component` with `host.invoke.cwasm` to isolate the benefit of skipping Cranelift
 compilation on each host process start. Use `--format json` or `--output bench.json` for
 machine-readable result capture.
+
+To measure the experimental Rust-forward runtime path, run:
+
+```sh
+just rust-daemon-bench
+
+pnpm rust-daemon-bench \
+  --component examples/hello-worker/target/wasm32-wasip1/debug/hello_worker.component.wasm \
+  --host-bin target/debug/wasmplane-wasip3-host \
+  --iterations 1000 \
+  --concurrency 1,8,32,64 \
+  --pooling-total-component-instances 64 \
+  --pooling-memory-mb 64
+```
+
+`rust-daemon-bench` precompiles the component, starts `wasmplane-wasip3-host serve`, publishes a
+prepared route table to `PUT /routes`, then sends worker HTTP traffic directly to the Rust daemon.
+This bypasses the Node runtime's request routing and supervisor path while still using the same
+WASI p3 Wasmtime host. The daemon HTTP server is async HTTP/1.1 with keep-alive, so direct Rust
+daemon results can be compared against the Node runtime shell without forcing per-request TCP
+connection setup.
+Pass `--baseline-url http://127.0.0.1:8788` to include an already-running Node runtime in the same
+report.
+
+Runtime nodes can publish accepted route snapshots into an embedded host daemon by setting
+`WASMPLANE_WASIP3_HOST_DAEMON=1` and `WASMPLANE_WASIP3_HOST_DAEMON_ROUTES=1`. In that mode the Node
+runtime still accepts `PUT /__runtime/snapshots/routes`, warms the snapshot to produce `.cwasm`
+artifacts, and forwards a prepared route table to the daemon's `PUT /routes` endpoint. The daemon
+route table carries weighted targets, so canary route snapshots use the same deterministic
+host/path target selection as the Node runtime supervisor.
+Set `WASMPLANE_WASIP3_HOST_DAEMON_WORKER_PROXY=1` to dogfood the Rust-forward worker path in the
+Node runtime: after Node performs lifecycle, route match, rate, concurrency, request-byte, and
+capability checks, the guest HTTP request is proxied to the daemon route endpoint instead of the
+JSON `/invoke` endpoint. Node reserves the daemon management paths (`/healthz`, `/stats`,
+`/metrics`, `/routes`, `/invoke`) for the legacy invoker path so worker routes cannot expose host
+daemon internals by path collision.
 
 Volume-backed SQLite density can be measured separately:
 

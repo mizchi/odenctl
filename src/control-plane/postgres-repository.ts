@@ -43,14 +43,24 @@ export interface PostgresRepositoryOptions {
 export async function createPostgresRepository(
   options: PostgresRepositoryOptions,
 ): Promise<PostgresControlPlaneRepository> {
-  const pool = new Pool({
-    connectionString: options.connectionString,
-    max: options.max ?? 10,
-    ssl: options.ssl ? { rejectUnauthorized: false } : undefined,
-  });
+  const pool = new Pool(createPostgresPoolConfig(options));
   const repository = new PostgresControlPlaneRepository(pool);
   await repository.migrate();
   return repository;
+}
+
+export function createPostgresPoolConfig(options: PostgresRepositoryOptions) {
+  return {
+    connectionString: options.ssl === undefined
+      ? options.connectionString
+      : stripPostgresSslQueryParams(options.connectionString),
+    max: options.max ?? 10,
+    ssl: options.ssl === undefined
+      ? undefined
+      : options.ssl
+      ? { rejectUnauthorized: false }
+      : false,
+  };
 }
 
 export async function applyPostgresMigrations(
@@ -58,6 +68,22 @@ export async function applyPostgresMigrations(
 ): Promise<void> {
   const repository = await createPostgresRepository(options);
   await repository.close();
+}
+
+function stripPostgresSslQueryParams(connectionString: string): string {
+  try {
+    const url = new URL(connectionString);
+    let changed = false;
+    for (const key of ["sslmode", "sslcert", "sslkey", "sslrootcert"]) {
+      if (url.searchParams.has(key)) {
+        url.searchParams.delete(key);
+        changed = true;
+      }
+    }
+    return changed ? url.toString() : connectionString;
+  } catch {
+    return connectionString;
+  }
 }
 
 export class PostgresControlPlaneRepository implements AsyncControlPlaneRepository {

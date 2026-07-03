@@ -46,6 +46,11 @@ export {
   expectedControlPlaneMigrationIds,
 } from "./control-plane/migrations.ts";
 export {
+  assertOperationalRequirements,
+  operationalConfigFromEnv,
+  type OperationalConfig,
+} from "./ops-config.ts";
+export {
   createAesGcmSecretCipher,
   createAwsKmsSecretKeyProvider,
   createAzureKeyVaultSecretKeyProvider,

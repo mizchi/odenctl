@@ -21,6 +21,14 @@ test:
     pnpm test
     cargo test --workspace
 
+coverage: node-coverage rust-coverage
+
+node-coverage:
+    pnpm coverage
+
+rust-coverage:
+    rustup run stable cargo llvm-cov --workspace --summary-only
+
 e2e: rust-build guest-build
     WASMPLANE_E2E_COMPONENT="{{ guest_component }}" WASMPLANE_E2E_HOST_BIN="target/debug/wasmplane-wasip3-host" node --experimental-strip-types --test tests/full-flow.test.ts
 
@@ -71,6 +79,9 @@ cluster-bench: rust-build guest-build
 
 cluster-bench-daemon: rust-build guest-build
     pnpm cluster-bench --component "{{ guest_component }}" --host-bin target/debug/wasmplane-wasip3-host --host-daemon-url http://127.0.0.1:8790 --pooling-total-component-instances 64 --pooling-total-core-instances 256 --pooling-total-memories 64 --pooling-total-tables 128 --pooling-memory-mb 64 --nodes 1,2,4 --iterations 30 --warmup 2 --concurrency 1,4,16
+
+rust-daemon-bench: rust-build guest-build
+    pnpm rust-daemon-bench --component "{{ guest_component }}" --host-bin target/debug/wasmplane-wasip3-host --iterations 300 --warmup 10 --concurrency 1,8,32,64 --http-workers 64 --pooling-total-component-instances 64 --pooling-total-core-instances 256 --pooling-total-memories 64 --pooling-total-tables 128 --pooling-memory-mb 64
 
 volume-sqlite-bench:
     pnpm volume-sqlite-bench --root .wasmplane/volume-sqlite-bench --databases 1000 --max-open 64 --max-pending-writes 64 --schema-version 1 --write-iterations 1000 --write-concurrency 1,4,16
@@ -125,8 +136,20 @@ fly-status:
 fly-smoke:
     pnpm ops-smoke
 
+fly-smoke-production:
+    pnpm ops-smoke -- --require-external-db --min-runtime-nodes 2
+
+fly-smoke-rust-forward:
+    pnpm ops-smoke -- --require-external-db --min-runtime-nodes 2 --require-rust-forward
+
 fly-alarm-demo:
     pnpm alarm-demo-smoke
+
+fly-scale-eval:
+    pnpm fly-scale-eval
+
+fly-scale-eval-execute:
+    pnpm fly-scale-eval -- --execute
 
 dev:
     pnpm start
