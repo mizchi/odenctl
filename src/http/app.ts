@@ -44,7 +44,13 @@ import type {
   VolumeSqliteBackupRecord,
   VolumeSqliteBackupGcReport,
   VolumeSqliteDatabaseRecord,
+  VolumeSqliteRegistry,
 } from "../control-plane/volume-sqlite.ts";
+import {
+  handleAlarmDemoWebhook,
+  readAlarmDemoStatus,
+  scheduleAlarmDemo,
+} from "../control-plane/alarm-demo.ts";
 
 type MaybePromise<T> = T | Promise<T>;
 
@@ -119,13 +125,14 @@ export interface HttpAppOptions {
   routeSnapshotReplicaStore?: RouteSnapshotReplicaStore;
   routeSnapshotReplicas?: RouteSnapshotReplicaTarget[];
   snapshotReplication?: RouteSnapshotReplicationOptions;
-  volumeSqliteRegistry?: VolumeSqliteRegistryApi;
+  volumeSqliteRegistry?: VolumeSqliteRegistry;
   artifactStore?: ControlPlaneArtifactStore;
   artifactStoreDir?: string;
   artifactPublicBaseUrl?: string;
   artifactValidator?: LocalArtifactValidator;
   apiToken?: string;
   apiTokens?: ApiToken[];
+  alarmDemoWebhookToken?: string;
   auditSink?: AuditSink;
   now?: () => string;
   fetch?: FetchLike;
@@ -151,6 +158,23 @@ export function createHttpApp(options: HttpAppOptions) {
 
       if (method === "GET" && url.pathname === "/healthz") {
         writeJson(response, 200, { ok: true });
+        return;
+      }
+      if (method === "POST" && url.pathname === "/alarm-demo/webhook") {
+        if (!authorizeAlarmDemoWebhook(options, request.headers)) {
+          writeJson(response, 401, {
+            error: { code: "unauthorized", message: "missing or invalid alarm demo webhook token" },
+          });
+          return;
+        }
+        writeJson(
+          response,
+          200,
+          await handleAlarmDemoWebhook(
+            { registry: requiredVolumeSqliteRegistry(options), nowMs: nowMsFromOptions(options) },
+            await readJson(request),
+          ),
+        );
         return;
       }
       const localArtifact = localArtifactMatch(method, url.pathname);
@@ -621,6 +645,29 @@ export function createHttpApp(options: HttpAppOptions) {
         response.writeHead(204).end();
         return;
       }
+      if (method === "POST" && url.pathname === "/alarm-demo/schedules") {
+        writeJson(
+          response,
+          201,
+          await scheduleAlarmDemo(
+            { registry: requiredVolumeSqliteRegistry(options), nowMs: nowMsFromOptions(options) },
+            await readJson(request),
+          ),
+        );
+        return;
+      }
+      const alarmDemoObject = alarmDemoObjectMatch(method, url.pathname);
+      if (alarmDemoObject) {
+        writeJson(
+          response,
+          200,
+          await readAlarmDemoStatus(
+            { registry: requiredVolumeSqliteRegistry(options), nowMs: nowMsFromOptions(options) },
+            alarmDemoObject.objectName,
+          ),
+        );
+        return;
+      }
       if (method === "POST" && url.pathname === "/durable-object-namespaces") {
         writeJson(response, 201, await options.controlPlane.createDurableObjectNamespace(await readJson(request)));
         return;
@@ -854,11 +901,15 @@ async function listSqliteDatabases(options: HttpAppOptions) {
   };
 }
 
-function requiredVolumeSqliteRegistry(options: HttpAppOptions): VolumeSqliteRegistryApi {
+function requiredVolumeSqliteRegistry(options: HttpAppOptions): VolumeSqliteRegistry {
   if (!options.volumeSqliteRegistry) {
     throw new ControlPlaneError("validation", "volume sqlite registry is not configured");
   }
   return options.volumeSqliteRegistry;
+}
+
+function nowMsFromOptions(options: HttpAppOptions): () => number {
+  return () => Date.parse((options.now ?? (() => new Date().toISOString()))());
 }
 
 export async function publishCurrentRouteSnapshot(options: HttpAppOptions) {
@@ -919,6 +970,17 @@ async function authorizeRequest(
     };
   }
   return { ok: true, token };
+}
+
+function authorizeAlarmDemoWebhook(
+  options: HttpAppOptions,
+  headers: Record<string, string | string[] | undefined>,
+): boolean {
+  const token = options.alarmDemoWebhookToken;
+  if (!token) {
+    return false;
+  }
+  return firstHeader(headers.authorization) === `Bearer ${token}`;
 }
 
 async function authenticateDbApiToken(options: HttpAppOptions, token: string): Promise<ApiToken | undefined> {
@@ -1808,6 +1870,17 @@ function projectDurableObjectNamespacesMatch(method: string, pathname: string): 
     return undefined;
   }
   return { projectId: decodeURIComponent(match[1]) };
+}
+
+function alarmDemoObjectMatch(method: string, pathname: string): { objectName: string } | undefined {
+  if (method !== "GET") {
+    return undefined;
+  }
+  const match = /^\/alarm-demo\/objects\/([^/]+)$/.exec(pathname);
+  if (!match) {
+    return undefined;
+  }
+  return { objectName: decodeURIComponent(match[1]) };
 }
 
 function durableObjectNamespaceMatch(method: string, pathname: string): { id: string } | undefined {

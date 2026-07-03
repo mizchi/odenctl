@@ -125,6 +125,9 @@ fly-status:
 fly-smoke:
     pnpm ops-smoke
 
+fly-alarm-demo:
+    pnpm alarm-demo-smoke
+
 dev:
     pnpm start
 

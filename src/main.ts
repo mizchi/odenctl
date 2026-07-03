@@ -111,6 +111,10 @@ const appOptions = {
           hostBin: process.env.WASMPLANE_WASIP3_HOST_BIN,
         }),
   apiTokens: apiTokens.length > 0 ? apiTokens : undefined,
+  alarmDemoWebhookToken: firstNonEmpty(
+    process.env.WASMPLANE_ALARM_DEMO_WEBHOOK_TOKEN,
+    process.env.WASMPLANE_DURABLE_OBJECT_ALARM_WEBHOOK_TOKEN,
+  ),
   auditSink,
   runtimeNodeToken,
   runtimeIdentityKeys,

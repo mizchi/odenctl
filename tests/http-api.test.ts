@@ -11,6 +11,7 @@ import { createJsonlAuditSink } from "../src/control-plane/audit.ts";
 import { createInMemoryRouteSnapshotReplicaStore } from "../src/control-plane/snapshot-replication.ts";
 import { createMemoryRepository } from "../src/control-plane/repository.ts";
 import { createControlPlane } from "../src/control-plane/service.ts";
+import { createConfiguredDurableObjectAlarmDispatcherJobs } from "../src/control-plane/durable-object-alarm-runtime.ts";
 import { createVolumeSqliteRegistry } from "../src/control-plane/volume-sqlite.ts";
 import { createHttpApp, publishCurrentRouteSnapshot } from "../src/http/app.ts";
 import { verifyRuntimeIdentityHeaders } from "../src/runtime/identity.ts";
@@ -904,6 +905,76 @@ test("HTTP API provisions project volume sqlite database units", async () => {
 
     const missing = await fetch(`${baseUrl}/sqlite-databases/missing`);
     assert.equal(missing.status, 404);
+  } finally {
+    await app.close();
+    registry.close();
+  }
+});
+
+test("HTTP alarm demo schedules durable object alarms and handles dispatcher webhooks", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "wasmplane-http-alarm-demo-"));
+  const registry = createVolumeSqliteRegistry({ rootDir: dir });
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+  });
+  let nowMs = Date.parse("2026-07-03T00:00:00.000Z");
+  const app = createHttpApp({
+    controlPlane: control,
+    volumeSqliteRegistry: registry,
+    apiTokens: [{ token: "control-token", scopes: ["*"], principal: "test" }],
+    alarmDemoWebhookToken: "alarm-webhook-token",
+    now: () => new Date(nowMs).toISOString(),
+  });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const scheduled = await postJson(baseUrl, "/alarm-demo/schedules", {
+      objectName: "heartbeat",
+      message: "wake up",
+      delayMs: 0,
+      repeatMs: 1000,
+      repeatLimit: 1,
+    }, "control-token");
+    assert.equal(scheduled.namespace, "alarm-demo");
+    assert.equal(scheduled.objectName, "heartbeat");
+    assert.equal(scheduled.alarmCount, 0);
+    assert.equal(scheduled.alarmAt, "2026-07-03T00:00:00.000Z");
+    assert.equal(scheduled.remainingRepeats, 1);
+
+    const jobs = createConfiguredDurableObjectAlarmDispatcherJobs({
+      registry,
+      env: {
+        WASMPLANE_DURABLE_OBJECT_ALARM_INTERVAL_MS: "1000",
+        WASMPLANE_DURABLE_OBJECT_ALARM_NAMESPACES: "alarm-demo",
+        WASMPLANE_DURABLE_OBJECT_ALARM_WEBHOOK_URL: `${baseUrl}/alarm-demo/webhook`,
+        WASMPLANE_DURABLE_OBJECT_ALARM_WEBHOOK_TOKEN: "alarm-webhook-token",
+      },
+      now: () => nowMs,
+      fetchFn: fetch,
+    });
+    assert.equal(jobs.length, 1);
+
+    nowMs += 1;
+    assert.equal(await jobs[0].tick(), true);
+    const afterFirst = await getJson(baseUrl, "/alarm-demo/objects/heartbeat", "control-token");
+    assert.equal(afterFirst.alarmCount, 1);
+    assert.equal(afterFirst.lastScheduledTime, "2026-07-03T00:00:00.000Z");
+    assert.equal(afterFirst.alarmAt, "2026-07-03T00:00:01.000Z");
+    assert.equal(afterFirst.remainingRepeats, 0);
+
+    nowMs += 1000;
+    assert.equal(await jobs[0].tick(), true);
+    const afterSecond = await getJson(baseUrl, "/alarm-demo/objects/heartbeat", "control-token");
+    assert.equal(afterSecond.alarmCount, 2);
+    assert.equal(afterSecond.lastScheduledTime, "2026-07-03T00:00:01.000Z");
+    assert.equal(afterSecond.alarmAt, null);
+    assert.equal(afterSecond.remainingRepeats, 0);
   } finally {
     await app.close();
     registry.close();
@@ -3185,6 +3256,16 @@ async function postJson(baseUrl: string, path: string, body: unknown, token?: st
     body: JSON.stringify(body),
   });
   if (response.status !== 201) {
+    assert.fail(await response.text());
+  }
+  return await response.json();
+}
+
+async function getJson(baseUrl: string, path: string, token?: string) {
+  const response = await fetch(`${baseUrl}${path}`, {
+    headers: token ? { authorization: `Bearer ${token}` } : {},
+  });
+  if (response.status !== 200) {
     assert.fail(await response.text());
   }
   return await response.json();

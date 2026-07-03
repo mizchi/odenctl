@@ -429,6 +429,18 @@ settings are `WASMPLANE_DURABLE_OBJECT_ALARM_WEBHOOK_TOKEN`,
 `WASMPLANE_DURABLE_OBJECT_ALARM_WEBHOOK_TIMEOUT_MS`, and `WASMPLANE_DURABLE_OBJECT_ALARM_LIMIT`.
 Idle alarm polling ticks are not logged by default; set
 `WASMPLANE_DURABLE_OBJECT_ALARM_LOG_IDLE_TICKS=1` when diagnosing scheduler liveness.
+The Fly control-plane config enables an `alarm-demo` app backed by the same durable object registry:
+`POST /alarm-demo/schedules` schedules an object-local alarm, the dispatcher POSTs
+`/alarm-demo/webhook`, and `GET /alarm-demo/objects/:name` reports `alarmCount`, `alarmAt`, and the
+last fired timestamp. Set the shared webhook secret before deploying:
+
+```sh
+fly secrets set -a "$FLY_CONTROL_APP" \
+  WASMPLANE_DURABLE_OBJECT_ALARM_WEBHOOK_TOKEN="$(openssl rand -hex 24)"
+just fly-deploy-control
+WASMPLANE_CONTROL_PLANE_TOKEN="$WASMPLANE_CONTROL_PLANE_TOKEN" just fly-alarm-demo
+```
+
 Set `WASMPLANE_VOLUME_SQLITE_BACKUP_INTERVAL_MS` on the control plane to run scheduled backups for
 all cataloged volume SQLite databases. Scheduled backups require encryption by default; set
 `WASMPLANE_VOLUME_SQLITE_BACKUP_REQUIRE_ENCRYPTION=0` only for local development. Enable

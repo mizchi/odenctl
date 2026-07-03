@@ -21,8 +21,10 @@ test("project tooling keeps Wasm E2E portable", async () => {
   assert.match(justfile, /fly_runtime_app := env_var_or_default\("FLY_RUNTIME_APP", "mz-wasmplane-runtime"\)/);
   assert.match(justfile, /fly_collector_app := env_var_or_default\("FLY_COLLECTOR_APP", "mz-wasmplane-otel-collector"\)/);
   assert.match(justfile, /^fly-smoke:/m);
+  assert.match(justfile, /^fly-alarm-demo:/m);
   assert.doesNotMatch(justfile, /\/Users\//);
   assert.match(packageJson.scripts["ops-smoke"], /src\/ops-smoke\.ts/);
+  assert.match(packageJson.scripts["alarm-demo-smoke"], /src\/alarm-demo-smoke\.ts/);
   assert.match(packageJson.scripts["volume-sqlite-bench"], /src\/volume-sqlite-bench\.ts/);
   assert.equal(packageJson.devDependencies["@bytecodealliance/jco"], "1.15.4");
   assert.match(workflow, /pnpm\/action-setup@v4/);
@@ -38,10 +40,14 @@ test("project tooling keeps Wasm E2E portable", async () => {
   assert.match(flyControl, /WASMPLANE_VOLUME_SQLITE_MAX_PENDING_WRITES = "64"/);
   assert.match(flyControl, /WASMPLANE_VOLUME_SQLITE_MAX_BACKUPS_PER_DATABASE = "24"/);
   assert.match(flyControl, /WASMPLANE_VOLUME_SQLITE_BACKUP_RETENTION_MS = "604800000"/);
+  assert.match(flyControl, /WASMPLANE_DURABLE_OBJECT_ALARM_INTERVAL_MS = "1000"/);
+  assert.match(flyControl, /WASMPLANE_DURABLE_OBJECT_ALARM_NAMESPACES = "alarm-demo"/);
+  assert.match(flyControl, /WASMPLANE_DURABLE_OBJECT_ALARM_WEBHOOK_URL = "https:\/\/mz-wasmplane-control\.fly\.dev\/alarm-demo\/webhook"/);
   assert.match(readme, /WASMPLANE_VOLUME_SQLITE_BACKUP_KEY_BASE64/);
   assert.match(readme, /WASMPLANE_VOLUME_SQLITE_BACKUP_KEYS_BASE64/);
   assert.match(readme, /WASMPLANE_DURABLE_OBJECT_ALARM_INTERVAL_MS/);
   assert.match(readme, /WASMPLANE_DURABLE_OBJECT_ALARM_WEBHOOK_URL/);
+  assert.match(readme, /just fly-alarm-demo/);
   assert.match(readme, /just fly-smoke/);
   assert.match(justfile, /--max-pending-writes 64/);
   assert.match(flyRuntime, /app = "mz-wasmplane-runtime"/);

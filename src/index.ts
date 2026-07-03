@@ -253,6 +253,16 @@ export {
   type DurableObjectAlarmWebhookHandlerOptions,
 } from "./control-plane/durable-object-alarm-runtime.ts";
 export {
+  ALARM_DEMO_NAMESPACE,
+  handleAlarmDemoWebhook,
+  readAlarmDemoStatus,
+  scheduleAlarmDemo,
+  type AlarmDemoOptions,
+  type AlarmDemoScheduleInput,
+  type AlarmDemoStatus,
+  type AlarmDemoWebhookInput,
+} from "./control-plane/alarm-demo.ts";
+export {
   createDurableObjectStorageNamespace,
   DurableObjectSqlCursor,
   DurableObjectSqlRawCursor,

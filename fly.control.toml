@@ -21,6 +21,9 @@ primary_region = "nrt"
   WASMPLANE_VOLUME_SQLITE_BACKUP_RETENTION_MS = "604800000"
   WASMPLANE_WASIP3_HOST_BIN = "/usr/local/bin/wasmplane-wasip3-host"
   WASMPLANE_SNAPSHOT_PUBLISH_INTERVAL_MS = "5000"
+  WASMPLANE_DURABLE_OBJECT_ALARM_INTERVAL_MS = "1000"
+  WASMPLANE_DURABLE_OBJECT_ALARM_NAMESPACES = "alarm-demo"
+  WASMPLANE_DURABLE_OBJECT_ALARM_WEBHOOK_URL = "https://mz-wasmplane-control.fly.dev/alarm-demo/webhook"
 
 [mounts]
   source = "wasmplane_control_data"
