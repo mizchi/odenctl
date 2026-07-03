@@ -301,6 +301,9 @@ Production readiness tasks, in implementation order.
 - [x] Gate live Cloudflare API deploys with scoped token policy, authorization, and audit history.
 - [x] Add edge worker release detail/delete lifecycle APIs and optional provider-side Worker deletion.
 - [x] Add a Cloudflare Containers smoke harness for `/healthz`, local SQLite fallback, control-plane writes, generated release persistence, cold start, and sleep/wakeup checks.
+- [x] Persist Cloudflare Containers smoke reports as JSON/Markdown and include release delete checks.
+- [x] Add retryable edge worker release operations for provider-side delete failures.
+- [x] Add a local `just release-check` SRE gate for tests, Rust tests, OpenTofu validation, and diff hygiene.
 - [x] Add OpenTofu fmt/validate checks for AWS and GCP scaffolds to CI.
 - [x] Decide whether Cloudflare production mode uses Containers for runtime, or Workers/Durable Objects/R2/D1 as a separate native backend.
 - [ ] Run the Cloudflare Containers smoke harness against the deployed Worker/container pair and capture logs/cold-start numbers.

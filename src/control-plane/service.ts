@@ -12,6 +12,7 @@ import type {
   Deployment,
   DurableObjectNamespace,
   EdgeWorkerRelease,
+  EdgeWorkerReleaseOperation,
   KvNamespace,
   Organization,
   Project,
@@ -482,6 +483,21 @@ export interface DeleteEdgeWorkerReleaseInput {
   id: string;
   deleteProvider?: boolean;
   forceProviderDelete?: boolean;
+}
+
+export interface ListEdgeWorkerReleaseOperationsInput {
+  releaseId?: string;
+}
+
+export interface DeliverPendingEdgeWorkerReleaseOperationsInput {
+  limit?: number;
+  retryDelayMs?: number;
+}
+
+export interface DeliverPendingEdgeWorkerReleaseOperationsReport {
+  attempted: number;
+  succeeded: number;
+  failed: number;
 }
 
 export interface PointRouteInput {
@@ -1372,6 +1388,7 @@ export function createControlPlane(options: ControlPlaneOptions) {
       scriptModule: result.scriptModule,
       artifact: artifactRef,
       createdAt,
+      updatedAt: createdAt,
       ...(result.versionId ? { versionId: result.versionId } : {}),
       ...(result.externalDeploymentId ? { externalDeploymentId: result.externalDeploymentId } : {}),
       ...(result.url ? { url: result.url } : {}),
@@ -1396,38 +1413,137 @@ export function createControlPlane(options: ControlPlaneOptions) {
       return release;
     }
     if (input.deleteProvider) {
-      const result = await edgeWorkerDeployer.delete?.({
-        releaseId: release.id,
-        scriptName: release.scriptName,
-        force: input.forceProviderDelete,
+      const deleting = repository.updateEdgeWorkerRelease({
+        ...release,
+        status: "deleting",
+        updatedAt: now(),
+        lastError: undefined,
       });
-      if (!result?.deleted) {
-        throw new ControlPlaneError("validation", "edge worker deployer did not confirm deletion");
-      }
-      if (result.provider !== release.provider) {
-        throw new ControlPlaneError(
-          "validation",
-          `edge worker deployer returned provider ${result.provider}, expected ${release.provider}`,
-        );
-      }
-      if (result.mode !== release.mode) {
-        throw new ControlPlaneError(
-          "validation",
-          `edge worker deployer returned mode ${result.mode}, expected ${release.mode}`,
-        );
-      }
-      if (result.scriptName !== release.scriptName) {
-        throw new ControlPlaneError(
-          "validation",
-          `edge worker deployer deleted script ${result.scriptName}, expected ${release.scriptName}`,
-        );
+      try {
+        await deleteProviderEdgeWorkerRelease(deleting, input.forceProviderDelete);
+      } catch (error) {
+        const failedAt = now();
+        const failed = repository.updateEdgeWorkerRelease({
+          ...deleting,
+          status: "failed",
+          updatedAt: failedAt,
+          lastError: errorMessage(error),
+        });
+        repository.createEdgeWorkerReleaseOperation({
+          id: idGenerator("ewo"),
+          releaseId: release.id,
+          action: "delete",
+          status: "pending",
+          attempts: 0,
+          nextAttemptAt: failedAt,
+          deleteProvider: true,
+          forceProviderDelete: Boolean(input.forceProviderDelete),
+          createdAt: failedAt,
+          updatedAt: failedAt,
+          lastError: errorMessage(error),
+        });
+        return failed;
       }
     }
     return repository.updateEdgeWorkerRelease({
       ...release,
       status: "deleted",
+      updatedAt: now(),
       deletedAt: now(),
+      lastError: undefined,
     });
+  }
+
+  function listEdgeWorkerReleaseOperations(
+    input: ListEdgeWorkerReleaseOperationsInput = {},
+  ): EdgeWorkerReleaseOperation[] {
+    return repository.listEdgeWorkerReleaseOperations(input.releaseId);
+  }
+
+  async function deliverPendingEdgeWorkerReleaseOperations(
+    input: DeliverPendingEdgeWorkerReleaseOperationsInput = {},
+  ): Promise<DeliverPendingEdgeWorkerReleaseOperationsReport> {
+    const due = repository.listPendingEdgeWorkerReleaseOperations(now()).slice(0, input.limit ?? Number.POSITIVE_INFINITY);
+    const retryDelayMs = input.retryDelayMs ?? 60_000;
+    const report = { attempted: 0, succeeded: 0, failed: 0 };
+    for (const operation of due) {
+      report.attempted += 1;
+      const attemptedAt = now();
+      const attempts = operation.attempts + 1;
+      const release = requireEdgeWorkerRelease(repository, operation.releaseId);
+      try {
+        if (operation.action === "delete") {
+          if (operation.deleteProvider) {
+            await deleteProviderEdgeWorkerRelease(release, operation.forceProviderDelete);
+          }
+          repository.updateEdgeWorkerRelease({
+            ...release,
+            status: "deleted",
+            updatedAt: attemptedAt,
+            deletedAt: attemptedAt,
+            lastError: undefined,
+          });
+        }
+        repository.updateEdgeWorkerReleaseOperation({
+          ...operation,
+          status: "succeeded",
+          attempts,
+          updatedAt: attemptedAt,
+          lastError: undefined,
+        });
+        report.succeeded += 1;
+      } catch (error) {
+        const message = errorMessage(error);
+        repository.updateEdgeWorkerRelease({
+          ...release,
+          status: "failed",
+          updatedAt: attemptedAt,
+          lastError: message,
+        });
+        repository.updateEdgeWorkerReleaseOperation({
+          ...operation,
+          status: "pending",
+          attempts,
+          nextAttemptAt: addMilliseconds(attemptedAt, retryDelayMs),
+          updatedAt: attemptedAt,
+          lastError: message,
+        });
+        report.failed += 1;
+      }
+    }
+    return report;
+  }
+
+  async function deleteProviderEdgeWorkerRelease(
+    release: EdgeWorkerRelease,
+    forceProviderDelete?: boolean,
+  ): Promise<void> {
+    const result = await edgeWorkerDeployer.delete?.({
+      releaseId: release.id,
+      scriptName: release.scriptName,
+      force: forceProviderDelete,
+    });
+    if (!result?.deleted) {
+      throw new ControlPlaneError("validation", "edge worker deployer did not confirm deletion");
+    }
+    if (result.provider !== release.provider) {
+      throw new ControlPlaneError(
+        "validation",
+        `edge worker deployer returned provider ${result.provider}, expected ${release.provider}`,
+      );
+    }
+    if (result.mode !== release.mode) {
+      throw new ControlPlaneError(
+        "validation",
+        `edge worker deployer returned mode ${result.mode}, expected ${release.mode}`,
+      );
+    }
+    if (result.scriptName !== release.scriptName) {
+      throw new ControlPlaneError(
+        "validation",
+        `edge worker deployer deleted script ${result.scriptName}, expected ${release.scriptName}`,
+      );
+    }
   }
 
   function pointRoute(input: PointRouteInput): RoutePointer {
@@ -1707,6 +1823,8 @@ export function createControlPlane(options: ControlPlaneOptions) {
     getEdgeWorkerRelease,
     listProjectEdgeWorkerReleases,
     deleteEdgeWorkerRelease,
+    listEdgeWorkerReleaseOperations,
+    deliverPendingEdgeWorkerReleaseOperations,
     pointRoute,
     startRouteCanary,
     analyzeRouteCanary,
@@ -2182,4 +2300,12 @@ function snapshotId(generatedAt: string, routes: RouteSnapshot["routes"]): strin
     .digest("hex")
     .slice(0, 16);
   return `snap_${digest}`;
+}
+
+function addMilliseconds(iso: string, ms: number): string {
+  return new Date(Date.parse(iso) + ms).toISOString();
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

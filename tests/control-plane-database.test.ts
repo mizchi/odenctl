@@ -64,6 +64,7 @@ test("Postgres schema covers control-plane tables without SQLite-only syntax", a
     "custom_domains",
     "deploy_previews",
     "edge_worker_releases",
+    "edge_worker_release_operations",
     "billing_invoices",
     "billing_webhook_deliveries",
     "billing_invoice_adjustments",
@@ -88,9 +89,10 @@ test("Postgres schema covers control-plane tables without SQLite-only syntax", a
   assert.match(sql, /create index if not exists custom_domains_project_idx/);
   assert.match(sql, /create index if not exists deploy_previews_project_idx/);
   assert.match(sql, /create index if not exists edge_worker_releases_project_idx/);
+  assert.match(sql, /create index if not exists edge_worker_release_operations_pending_idx/);
   assert.match(sql, /statement_json jsonb not null/);
   assert.match(sql, /artifact_json jsonb not null/);
-  assert.match(sql, /status text not null default 'active' check \(status in \('active', 'deleted'\)\)/);
+  assert.match(sql, /status text not null default 'active' check \(status in \('creating', 'active', 'deleting', 'deleted', 'failed'\)\)/);
   assert.match(sql, /deleted_at text/);
   assert.match(sql, /content_digest text not null/);
   assert.match(sql, /unique \(organization_id, period_key\)/);

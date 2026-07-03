@@ -29,12 +29,16 @@ From the repository root, run the smoke harness against the deployed Worker/cont
 ```sh
 WASMPLANE_CLOUDFLARE_CONTROL_URL=https://wasmplane-control-container-poc.<workers-subdomain>.workers.dev \
   WASMPLANE_CONTROL_PLANE_TOKEN=... \
-  just cloudflare-control-smoke
+  pnpm cloudflare-control-smoke -- \
+    --json-output reports/cloudflare-control-smoke.json \
+    --markdown-output reports/cloudflare-control-smoke.md
 ```
 
 The harness verifies the Worker edge health endpoint, container `/healthz` cold-start latency,
 local SQLite fallback through `/ops/config`, project/artifact/deployment writes, generated edge
-worker release persistence, and optional sleep/wakeup persistence with `--wake-delay-ms`.
+worker release persistence/delete, optional log retrieval with `--logs-url`, report persistence with
+`--json-output` and `--markdown-output`, and optional sleep/wakeup persistence with
+`--wake-delay-ms`.
 
 The default container config keeps edge-worker deployment in mock mode. It is enough to verify that
 the control plane can generate a Cloudflare Worker release record for a wasm deployment without

@@ -21,6 +21,13 @@ test:
     pnpm test
     cargo test --workspace
 
+release-check:
+    git diff --check
+    pnpm test
+    cargo test --workspace
+    just tofu-fmt-check
+    just tofu-validate
+
 formal-check:
     pnpm formal:route-placement
     node --experimental-strip-types --test tests/formal-route-snapshot-placement.test.ts

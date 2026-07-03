@@ -7,6 +7,7 @@ import type {
   DeployPreview,
   Deployment,
   DurableObjectNamespace,
+  EdgeWorkerReleaseOperation,
   EdgeWorkerRelease,
   KvNamespace,
   Organization,
@@ -70,6 +71,10 @@ export interface ControlPlaneRepository {
   getEdgeWorkerRelease(id: string): EdgeWorkerRelease | undefined;
   listProjectEdgeWorkerReleases(projectId: string): EdgeWorkerRelease[];
   updateEdgeWorkerRelease(release: EdgeWorkerRelease): EdgeWorkerRelease;
+  createEdgeWorkerReleaseOperation(operation: EdgeWorkerReleaseOperation): EdgeWorkerReleaseOperation;
+  listEdgeWorkerReleaseOperations(releaseId?: string): EdgeWorkerReleaseOperation[];
+  listPendingEdgeWorkerReleaseOperations(now: string): EdgeWorkerReleaseOperation[];
+  updateEdgeWorkerReleaseOperation(operation: EdgeWorkerReleaseOperation): EdgeWorkerReleaseOperation;
   createProject(project: Project): Project;
   getProject(id: string): Project | undefined;
   listOrganizationProjects(organizationId: string): Project[];
@@ -772,8 +777,10 @@ class SqliteControlPlaneRepository implements ControlPlaneRepository {
             external_deployment_id,
             url,
             created_at,
-            deleted_at
-          ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            updated_at,
+            deleted_at,
+            last_error
+          ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           release.id,
@@ -790,7 +797,9 @@ class SqliteControlPlaneRepository implements ControlPlaneRepository {
           release.externalDeploymentId ?? null,
           release.url ?? null,
           release.createdAt,
+          release.updatedAt,
           release.deletedAt ?? null,
+          release.lastError ?? null,
         );
       return release;
     } catch (error) {
@@ -815,14 +824,122 @@ class SqliteControlPlaneRepository implements ControlPlaneRepository {
       .prepare(
         `update edge_worker_releases set
           status = ?,
-          deleted_at = ?
+          script_digest = ?,
+          script_module = ?,
+          version_id = ?,
+          external_deployment_id = ?,
+          url = ?,
+          updated_at = ?,
+          deleted_at = ?,
+          last_error = ?
         where id = ?`,
       )
-      .run(release.status, release.deletedAt ?? null, release.id);
+      .run(
+        release.status,
+        release.scriptDigest,
+        release.scriptModule,
+        release.versionId ?? null,
+        release.externalDeploymentId ?? null,
+        release.url ?? null,
+        release.updatedAt,
+        release.deletedAt ?? null,
+        release.lastError ?? null,
+        release.id,
+      );
     if (result.changes === 0) {
       throw new ControlPlaneError("not_found", `edge worker release ${release.id} was not found`);
     }
     return this.getEdgeWorkerRelease(release.id) as EdgeWorkerRelease;
+  }
+
+  createEdgeWorkerReleaseOperation(operation: EdgeWorkerReleaseOperation): EdgeWorkerReleaseOperation {
+    try {
+      this.db
+        .prepare(
+          `insert into edge_worker_release_operations (
+            id,
+            release_id,
+            action,
+            status,
+            attempts,
+            next_attempt_at,
+            delete_provider,
+            force_provider_delete,
+            created_at,
+            updated_at,
+            last_error
+          ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          operation.id,
+          operation.releaseId,
+          operation.action,
+          operation.status,
+          operation.attempts,
+          operation.nextAttemptAt,
+          operation.deleteProvider ? 1 : 0,
+          operation.forceProviderDelete ? 1 : 0,
+          operation.createdAt,
+          operation.updatedAt,
+          operation.lastError ?? null,
+        );
+      return operation;
+    } catch (error) {
+      throw writeError("edge worker release operation", operation.id, error);
+    }
+  }
+
+  listEdgeWorkerReleaseOperations(releaseId?: string): EdgeWorkerReleaseOperation[] {
+    const rows = releaseId
+      ? this.db
+        .prepare(
+          "select * from edge_worker_release_operations where release_id = ? order by created_at asc, id asc",
+        )
+        .all(releaseId)
+      : this.db
+        .prepare("select * from edge_worker_release_operations order by created_at asc, id asc")
+        .all();
+    return rows.map(edgeWorkerReleaseOperationFromRow);
+  }
+
+  listPendingEdgeWorkerReleaseOperations(now: string): EdgeWorkerReleaseOperation[] {
+    return this.db
+      .prepare(
+        `select * from edge_worker_release_operations
+         where status = 'pending' and next_attempt_at <= ?
+         order by next_attempt_at asc, id asc`,
+      )
+      .all(now)
+      .map(edgeWorkerReleaseOperationFromRow);
+  }
+
+  updateEdgeWorkerReleaseOperation(operation: EdgeWorkerReleaseOperation): EdgeWorkerReleaseOperation {
+    const result = this.db
+      .prepare(
+        `update edge_worker_release_operations set
+          status = ?,
+          attempts = ?,
+          next_attempt_at = ?,
+          delete_provider = ?,
+          force_provider_delete = ?,
+          updated_at = ?,
+          last_error = ?
+         where id = ?`,
+      )
+      .run(
+        operation.status,
+        operation.attempts,
+        operation.nextAttemptAt,
+        operation.deleteProvider ? 1 : 0,
+        operation.forceProviderDelete ? 1 : 0,
+        operation.updatedAt,
+        operation.lastError ?? null,
+        operation.id,
+      );
+    if (result.changes === 0) {
+      throw new ControlPlaneError("not_found", `edge worker release operation ${operation.id} was not found`);
+    }
+    return this.listEdgeWorkerReleaseOperations().find((item) => item.id === operation.id) as EdgeWorkerReleaseOperation;
   }
 
   createProject(project: Project): Project {
@@ -1451,10 +1568,28 @@ function edgeWorkerReleaseFromRow(row: any): EdgeWorkerRelease {
     scriptModule: row.script_module,
     artifact: JSON.parse(row.artifact_json),
     createdAt: row.created_at,
+    updatedAt: row.updated_at || row.created_at,
     ...(row.version_id ? { versionId: row.version_id } : {}),
     ...(row.external_deployment_id ? { externalDeploymentId: row.external_deployment_id } : {}),
     ...(row.url ? { url: row.url } : {}),
     ...(row.deleted_at ? { deletedAt: row.deleted_at } : {}),
+    ...(row.last_error ? { lastError: row.last_error } : {}),
+  };
+}
+
+function edgeWorkerReleaseOperationFromRow(row: any): EdgeWorkerReleaseOperation {
+  return {
+    id: row.id,
+    releaseId: row.release_id,
+    action: row.action,
+    status: row.status,
+    attempts: row.attempts,
+    nextAttemptAt: row.next_attempt_at,
+    deleteProvider: Boolean(row.delete_provider),
+    forceProviderDelete: Boolean(row.force_provider_delete),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    ...(row.last_error ? { lastError: row.last_error } : {}),
   };
 }
 
@@ -1981,13 +2116,36 @@ create table if not exists edge_worker_releases (
   external_deployment_id text,
   url text,
   created_at text not null,
+  updated_at text not null default '',
   deleted_at text,
+  last_error text,
   foreign key (project_id) references projects(id),
   foreign key (deployment_id) references deployments(id)
 );
 
 create index if not exists edge_worker_releases_project_idx
   on edge_worker_releases (project_id, created_at desc, id desc);
+
+create table if not exists edge_worker_release_operations (
+  id text primary key,
+  release_id text not null,
+  action text not null,
+  status text not null,
+  attempts integer not null,
+  next_attempt_at text not null,
+  delete_provider integer not null,
+  force_provider_delete integer not null,
+  created_at text not null,
+  updated_at text not null,
+  last_error text,
+  foreign key (release_id) references edge_worker_releases(id)
+);
+
+create index if not exists edge_worker_release_operations_pending_idx
+  on edge_worker_release_operations (status, next_attempt_at, id);
+
+create index if not exists edge_worker_release_operations_release_idx
+  on edge_worker_release_operations (release_id, created_at asc, id asc);
 
 create table if not exists runtime_nodes (
   id text primary key,
@@ -2449,7 +2607,9 @@ const migrations: SchemaMigration[] = [
           external_deployment_id text,
           url text,
           created_at text not null,
+          updated_at text not null default '',
           deleted_at text,
+          last_error text,
           foreign key (project_id) references projects(id),
           foreign key (deployment_id) references deployments(id)
         );
@@ -2464,6 +2624,39 @@ const migrations: SchemaMigration[] = [
     apply(db) {
       ensureColumn(db, "edge_worker_releases", "status", "text not null default 'active'");
       ensureColumn(db, "edge_worker_releases", "deleted_at", "text");
+    },
+  },
+  {
+    id: "202607030003_edge_worker_release_operations",
+    apply(db) {
+      ensureColumn(db, "edge_worker_releases", "updated_at", "text not null default ''");
+      ensureColumn(db, "edge_worker_releases", "last_error", "text");
+      db.exec(`
+        update edge_worker_releases
+        set updated_at = created_at
+        where updated_at = '';
+
+        create table if not exists edge_worker_release_operations (
+          id text primary key,
+          release_id text not null,
+          action text not null,
+          status text not null,
+          attempts integer not null,
+          next_attempt_at text not null,
+          delete_provider integer not null,
+          force_provider_delete integer not null,
+          created_at text not null,
+          updated_at text not null,
+          last_error text,
+          foreign key (release_id) references edge_worker_releases(id)
+        );
+
+        create index if not exists edge_worker_release_operations_pending_idx
+          on edge_worker_release_operations (status, next_attempt_at, id);
+
+        create index if not exists edge_worker_release_operations_release_idx
+          on edge_worker_release_operations (release_id, created_at asc, id asc);
+      `);
     },
   },
 ];

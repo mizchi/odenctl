@@ -107,6 +107,8 @@ export interface HttpAppOptions {
     getEdgeWorkerRelease(input: any): MaybePromise<unknown>;
     listProjectEdgeWorkerReleases(input: any): MaybePromise<unknown>;
     deleteEdgeWorkerRelease(input: any): MaybePromise<unknown>;
+    listEdgeWorkerReleaseOperations(input: any): MaybePromise<unknown>;
+    deliverPendingEdgeWorkerReleaseOperations(input?: any): MaybePromise<unknown>;
     pointRoute(input: any): MaybePromise<unknown>;
     startRouteCanary(input: any): MaybePromise<unknown>;
     analyzeRouteCanary(input: any): MaybePromise<unknown>;
@@ -375,6 +377,27 @@ export function createHttpApp(options: HttpAppOptions) {
             deleteProvider: truthy(url.searchParams.get("provider") ?? undefined),
             forceProviderDelete: truthy(url.searchParams.get("force") ?? undefined),
           }),
+        );
+        return;
+      }
+      const edgeWorkerReleaseOperations = edgeWorkerReleaseOperationsMatch(method, url.pathname);
+      if (edgeWorkerReleaseOperations) {
+        writeJson(
+          response,
+          200,
+          await options.controlPlane.listEdgeWorkerReleaseOperations({
+            releaseId: edgeWorkerReleaseOperations.id,
+          }),
+        );
+        return;
+      }
+      if (method === "POST" && url.pathname === "/edge-workers/releases/operations/deliver") {
+        writeJson(
+          response,
+          200,
+          await options.controlPlane.deliverPendingEdgeWorkerReleaseOperations(
+            hasCachedJson ? cachedJson : await readJson(request),
+          ),
         );
         return;
       }
@@ -1062,6 +1085,9 @@ function requiredScopeFor(method: string, pathname: string, body?: unknown): Api
     return "publish";
   }
   if (method === "DELETE" && /^\/edge-workers\/releases\/[^/]+$/.test(pathname)) {
+    return "publish";
+  }
+  if (method === "POST" && pathname === "/edge-workers/releases/operations/deliver") {
     return "publish";
   }
   if (
@@ -1798,6 +1824,17 @@ function edgeWorkerReleaseMatch(method: string, pathname: string): { id: string 
     return undefined;
   }
   const match = /^\/edge-workers\/releases\/([^/]+)$/.exec(pathname);
+  if (!match) {
+    return undefined;
+  }
+  return { id: decodeURIComponent(match[1]) };
+}
+
+function edgeWorkerReleaseOperationsMatch(method: string, pathname: string): { id: string } | undefined {
+  if (method !== "GET") {
+    return undefined;
+  }
+  const match = /^\/edge-workers\/releases\/([^/]+)\/operations$/.exec(pathname);
   if (!match) {
     return undefined;
   }

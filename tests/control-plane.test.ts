@@ -3001,6 +3001,7 @@ test("sqlite repository records schema migrations and upgrades existing database
     "202607020005_billing_invoice_retention_policies",
     "202607030001_edge_worker_releases",
     "202607030002_edge_worker_release_lifecycle",
+    "202607030003_edge_worker_release_operations",
   ]);
   assert.ok(routeColumns.includes("targets_json"));
   const artifactColumns = db
@@ -3041,7 +3042,10 @@ test("sqlite repository records schema migrations and upgrades existing database
     .all()
     .map((row: any) => row.name);
   assert.ok(edgeWorkerReleaseColumns.includes("status"));
+  assert.ok(edgeWorkerReleaseColumns.includes("updated_at"));
   assert.ok(edgeWorkerReleaseColumns.includes("deleted_at"));
+  assert.ok(edgeWorkerReleaseColumns.includes("last_error"));
+  assert.equal(db.prepare("select count(*) as count from edge_worker_release_operations").get().count, 0);
   assert.equal(db.prepare("select count(*) as count from billing_invoices").get().count, 0);
   assert.equal(db.prepare("select count(*) as count from billing_webhook_deliveries").get().count, 0);
   assert.equal(db.prepare("select count(*) as count from billing_invoice_adjustments").get().count, 0);

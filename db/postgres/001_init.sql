@@ -222,7 +222,7 @@ create table if not exists edge_worker_releases (
   deployment_id text not null references deployments(id),
   provider text not null check (provider in ('cloudflare-workers')),
   mode text not null check (mode in ('mock', 'api')),
-  status text not null default 'active' check (status in ('active', 'deleted')),
+  status text not null default 'active' check (status in ('creating', 'active', 'deleting', 'deleted', 'failed')),
   script_name text not null,
   script_digest text not null,
   script_module text not null,
@@ -231,7 +231,43 @@ create table if not exists edge_worker_releases (
   external_deployment_id text,
   url text,
   created_at text not null,
-  deleted_at text
+  updated_at text not null,
+  deleted_at text,
+  last_error text
+);
+
+alter table edge_worker_releases
+  add column if not exists updated_at text;
+
+update edge_worker_releases
+  set updated_at = created_at
+  where updated_at is null;
+
+alter table edge_worker_releases
+  alter column updated_at set not null;
+
+alter table edge_worker_releases
+  add column if not exists last_error text;
+
+alter table edge_worker_releases
+  drop constraint if exists edge_worker_releases_status_check;
+
+alter table edge_worker_releases
+  add constraint edge_worker_releases_status_check
+  check (status in ('creating', 'active', 'deleting', 'deleted', 'failed'));
+
+create table if not exists edge_worker_release_operations (
+  id text primary key,
+  release_id text not null references edge_worker_releases(id),
+  action text not null check (action in ('delete')),
+  status text not null check (status in ('pending', 'succeeded', 'failed')),
+  attempts integer not null,
+  next_attempt_at text not null,
+  delete_provider boolean not null,
+  force_provider_delete boolean not null,
+  created_at text not null,
+  updated_at text not null,
+  last_error text
 );
 
 create table if not exists runtime_nodes (
@@ -347,6 +383,12 @@ create index if not exists deploy_previews_project_idx
 
 create index if not exists edge_worker_releases_project_idx
   on edge_worker_releases (project_id, created_at desc, id desc);
+
+create index if not exists edge_worker_release_operations_pending_idx
+  on edge_worker_release_operations (status, next_attempt_at, id);
+
+create index if not exists edge_worker_release_operations_release_idx
+  on edge_worker_release_operations (release_id, created_at asc, id asc);
 
 create index if not exists fly_autoscaler_coordination_lease_idx
   on fly_autoscaler_coordination (lease_expires_at_ms);

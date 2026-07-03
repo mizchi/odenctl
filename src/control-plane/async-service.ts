@@ -12,6 +12,7 @@ import type {
   Deployment,
   DurableObjectNamespace,
   EdgeWorkerRelease,
+  EdgeWorkerReleaseOperation,
   KvNamespace,
   Organization,
   Project,
@@ -194,6 +195,10 @@ export interface AsyncControlPlaneRepository {
   getEdgeWorkerRelease(id: string): Promise<EdgeWorkerRelease | undefined>;
   listProjectEdgeWorkerReleases(projectId: string): Promise<EdgeWorkerRelease[]>;
   updateEdgeWorkerRelease(release: EdgeWorkerRelease): Promise<EdgeWorkerRelease>;
+  createEdgeWorkerReleaseOperation(operation: EdgeWorkerReleaseOperation): Promise<EdgeWorkerReleaseOperation>;
+  listEdgeWorkerReleaseOperations(releaseId?: string): Promise<EdgeWorkerReleaseOperation[]>;
+  listPendingEdgeWorkerReleaseOperations(now: string): Promise<EdgeWorkerReleaseOperation[]>;
+  updateEdgeWorkerReleaseOperation(operation: EdgeWorkerReleaseOperation): Promise<EdgeWorkerReleaseOperation>;
   createProject(project: Project): Promise<Project>;
   getProject(id: string): Promise<Project | undefined>;
   listOrganizationProjects(organizationId: string): Promise<Project[]>;
@@ -566,6 +571,21 @@ export interface DeleteEdgeWorkerReleaseInput {
   id: string;
   deleteProvider?: boolean;
   forceProviderDelete?: boolean;
+}
+
+export interface ListEdgeWorkerReleaseOperationsInput {
+  releaseId?: string;
+}
+
+export interface DeliverPendingEdgeWorkerReleaseOperationsInput {
+  limit?: number;
+  retryDelayMs?: number;
+}
+
+export interface DeliverPendingEdgeWorkerReleaseOperationsReport {
+  attempted: number;
+  succeeded: number;
+  failed: number;
 }
 
 export interface PointRouteInput {
@@ -1488,6 +1508,7 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
       scriptModule: result.scriptModule,
       artifact: artifactRef,
       createdAt,
+      updatedAt: createdAt,
       ...(result.versionId ? { versionId: result.versionId } : {}),
       ...(result.externalDeploymentId ? { externalDeploymentId: result.externalDeploymentId } : {}),
       ...(result.url ? { url: result.url } : {}),
@@ -1512,38 +1533,138 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
       return release;
     }
     if (input.deleteProvider) {
-      const result = await edgeWorkerDeployer.delete?.({
-        releaseId: release.id,
-        scriptName: release.scriptName,
-        force: input.forceProviderDelete,
+      const deleting = await repository.updateEdgeWorkerRelease({
+        ...release,
+        status: "deleting",
+        updatedAt: now(),
+        lastError: undefined,
       });
-      if (!result?.deleted) {
-        throw new ControlPlaneError("validation", "edge worker deployer did not confirm deletion");
-      }
-      if (result.provider !== release.provider) {
-        throw new ControlPlaneError(
-          "validation",
-          `edge worker deployer returned provider ${result.provider}, expected ${release.provider}`,
-        );
-      }
-      if (result.mode !== release.mode) {
-        throw new ControlPlaneError(
-          "validation",
-          `edge worker deployer returned mode ${result.mode}, expected ${release.mode}`,
-        );
-      }
-      if (result.scriptName !== release.scriptName) {
-        throw new ControlPlaneError(
-          "validation",
-          `edge worker deployer deleted script ${result.scriptName}, expected ${release.scriptName}`,
-        );
+      try {
+        await deleteProviderEdgeWorkerRelease(deleting, input.forceProviderDelete);
+      } catch (error) {
+        const failedAt = now();
+        const failed = await repository.updateEdgeWorkerRelease({
+          ...deleting,
+          status: "failed",
+          updatedAt: failedAt,
+          lastError: errorMessage(error),
+        });
+        await repository.createEdgeWorkerReleaseOperation({
+          id: idGenerator("ewo"),
+          releaseId: release.id,
+          action: "delete",
+          status: "pending",
+          attempts: 0,
+          nextAttemptAt: failedAt,
+          deleteProvider: true,
+          forceProviderDelete: Boolean(input.forceProviderDelete),
+          createdAt: failedAt,
+          updatedAt: failedAt,
+          lastError: errorMessage(error),
+        });
+        return failed;
       }
     }
     return repository.updateEdgeWorkerRelease({
       ...release,
       status: "deleted",
+      updatedAt: now(),
       deletedAt: now(),
+      lastError: undefined,
     });
+  }
+
+  async function listEdgeWorkerReleaseOperations(
+    input: ListEdgeWorkerReleaseOperationsInput = {},
+  ): Promise<EdgeWorkerReleaseOperation[]> {
+    return repository.listEdgeWorkerReleaseOperations(input.releaseId);
+  }
+
+  async function deliverPendingEdgeWorkerReleaseOperations(
+    input: DeliverPendingEdgeWorkerReleaseOperationsInput = {},
+  ): Promise<DeliverPendingEdgeWorkerReleaseOperationsReport> {
+    const due = (await repository.listPendingEdgeWorkerReleaseOperations(now()))
+      .slice(0, input.limit ?? Number.POSITIVE_INFINITY);
+    const retryDelayMs = input.retryDelayMs ?? 60_000;
+    const report = { attempted: 0, succeeded: 0, failed: 0 };
+    for (const operation of due) {
+      report.attempted += 1;
+      const attemptedAt = now();
+      const attempts = operation.attempts + 1;
+      const release = await requireEdgeWorkerRelease(repository, operation.releaseId);
+      try {
+        if (operation.action === "delete") {
+          if (operation.deleteProvider) {
+            await deleteProviderEdgeWorkerRelease(release, operation.forceProviderDelete);
+          }
+          await repository.updateEdgeWorkerRelease({
+            ...release,
+            status: "deleted",
+            updatedAt: attemptedAt,
+            deletedAt: attemptedAt,
+            lastError: undefined,
+          });
+        }
+        await repository.updateEdgeWorkerReleaseOperation({
+          ...operation,
+          status: "succeeded",
+          attempts,
+          updatedAt: attemptedAt,
+          lastError: undefined,
+        });
+        report.succeeded += 1;
+      } catch (error) {
+        const message = errorMessage(error);
+        await repository.updateEdgeWorkerRelease({
+          ...release,
+          status: "failed",
+          updatedAt: attemptedAt,
+          lastError: message,
+        });
+        await repository.updateEdgeWorkerReleaseOperation({
+          ...operation,
+          status: "pending",
+          attempts,
+          nextAttemptAt: addMilliseconds(attemptedAt, retryDelayMs),
+          updatedAt: attemptedAt,
+          lastError: message,
+        });
+        report.failed += 1;
+      }
+    }
+    return report;
+  }
+
+  async function deleteProviderEdgeWorkerRelease(
+    release: EdgeWorkerRelease,
+    forceProviderDelete?: boolean,
+  ): Promise<void> {
+    const result = await edgeWorkerDeployer.delete?.({
+      releaseId: release.id,
+      scriptName: release.scriptName,
+      force: forceProviderDelete,
+    });
+    if (!result?.deleted) {
+      throw new ControlPlaneError("validation", "edge worker deployer did not confirm deletion");
+    }
+    if (result.provider !== release.provider) {
+      throw new ControlPlaneError(
+        "validation",
+        `edge worker deployer returned provider ${result.provider}, expected ${release.provider}`,
+      );
+    }
+    if (result.mode !== release.mode) {
+      throw new ControlPlaneError(
+        "validation",
+        `edge worker deployer returned mode ${result.mode}, expected ${release.mode}`,
+      );
+    }
+    if (result.scriptName !== release.scriptName) {
+      throw new ControlPlaneError(
+        "validation",
+        `edge worker deployer deleted script ${result.scriptName}, expected ${release.scriptName}`,
+      );
+    }
   }
 
   async function pointRoute(input: PointRouteInput): Promise<RoutePointer> {
@@ -1829,6 +1950,8 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
     getEdgeWorkerRelease,
     listProjectEdgeWorkerReleases,
     deleteEdgeWorkerRelease,
+    listEdgeWorkerReleaseOperations,
+    deliverPendingEdgeWorkerReleaseOperations,
     pointRoute,
     startRouteCanary,
     analyzeRouteCanary,
@@ -2322,4 +2445,12 @@ function optionalNonEmpty(value: unknown, field: string): string | undefined {
     return undefined;
   }
   return normalizeProvider(value, field);
+}
+
+function addMilliseconds(iso: string, ms: number): string {
+  return new Date(Date.parse(iso) + ms).toISOString();
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

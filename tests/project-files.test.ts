@@ -15,6 +15,8 @@ test("project tooling keeps Wasm E2E portable", async () => {
   assert.match(justfile, /node_modules\/@bytecodealliance\/jco\/lib\/wasi_snapshot_preview1\.reactor\.wasm/);
   assert.match(justfile, /^db-migrate-check:/m);
   assert.match(justfile, /^db-migrate-apply:/m);
+  assert.match(justfile, /^release-check:/m);
+  assert.match(justfile, /just tofu-validate/);
   assert.match(justfile, /^volume-sqlite-bench:/m);
   assert.match(justfile, /^fly-volume-sqlite-bench:/m);
   assert.match(justfile, /fly_control_app := env_var_or_default\("FLY_CONTROL_APP", "mz-wasmplane-control"\)/);
@@ -62,7 +64,7 @@ test("project tooling keeps Wasm E2E portable", async () => {
   assert.match(readme, /WASMPLANE_DURABLE_OBJECT_ALARM_WEBHOOK_URL/);
   assert.match(readme, /just fly-alarm-demo/);
   assert.match(readme, /just fly-scale-eval/);
-  assert.match(readme, /just cloudflare-control-smoke/);
+  assert.match(readme, /pnpm cloudflare-control-smoke/);
   assert.match(readme, /just rust-daemon-bench/);
   assert.match(readme, /just fly-smoke/);
   assert.match(readme, /just coverage/);

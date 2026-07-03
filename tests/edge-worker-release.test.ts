@@ -95,6 +95,79 @@ test("control plane reads and soft-deletes edge worker releases with provider cl
   assert.deepEqual(control.listProjectEdgeWorkerReleases({ projectId: project.id }), [deletedRelease]);
 });
 
+test("control plane records provider delete failures as retryable edge release operations", async () => {
+  let failDelete = true;
+  const deleted: any[] = [];
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+    edgeWorkerDeployer: {
+      deploy(input: any) {
+        return {
+          provider: "cloudflare-workers",
+          mode: "mock",
+          scriptName: input.scriptName,
+          scriptDigest: digest(input.scriptModule),
+          scriptModule: input.scriptModule,
+        };
+      },
+      delete(input: any) {
+        if (failDelete) {
+          throw new Error("cloudflare delete unavailable");
+        }
+        deleted.push(input);
+        return {
+          provider: "cloudflare-workers",
+          mode: "mock",
+          scriptName: input.scriptName,
+          deleted: true,
+        };
+      },
+    },
+  });
+  const { project, deployment } = seedDeployment(control);
+  const release = await control.createEdgeWorkerRelease({
+    projectId: project.id,
+    deploymentId: deployment.id,
+    scriptName: "wasmplane-retry-delete",
+  });
+
+  const failedRelease = await control.deleteEdgeWorkerRelease({
+    id: release.id,
+    deleteProvider: true,
+    forceProviderDelete: true,
+  });
+
+  assert.equal(failedRelease.status, "failed");
+  assert.match(failedRelease.lastError ?? "", /cloudflare delete unavailable/);
+  assert.deepEqual(control.listEdgeWorkerReleaseOperations({ releaseId: release.id }), [
+    {
+      id: "ewo_2",
+      releaseId: release.id,
+      action: "delete",
+      status: "pending",
+      attempts: 0,
+      nextAttemptAt: fixedNow(),
+      deleteProvider: true,
+      forceProviderDelete: true,
+      createdAt: fixedNow(),
+      updatedAt: fixedNow(),
+      lastError: "cloudflare delete unavailable",
+    },
+  ]);
+
+  failDelete = false;
+  const report = await control.deliverPendingEdgeWorkerReleaseOperations();
+
+  assert.deepEqual(report, { attempted: 1, succeeded: 1, failed: 0 });
+  assert.deepEqual(deleted, [
+    { releaseId: release.id, scriptName: "wasmplane-retry-delete", force: true },
+  ]);
+  assert.equal(control.getEdgeWorkerRelease({ id: release.id }).status, "deleted");
+  assert.equal(control.listEdgeWorkerReleaseOperations({ releaseId: release.id })[0]?.status, "succeeded");
+});
+
 test("edge worker release rejects deployments from another project", async () => {
   const control = createControlPlane({
     repository: createMemoryRepository(),
@@ -199,6 +272,85 @@ test("HTTP API reads and deletes edge worker releases with publish scope", async
     const deleted = await deletedResponse.json();
     assert.equal(deleted.status, "deleted");
     assert.equal(deleted.deletedAt, fixedNow());
+  } finally {
+    await app.close();
+  }
+});
+
+test("HTTP API exposes edge worker release operation retry controls", async () => {
+  let failDelete = true;
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+    edgeWorkerDeployer: {
+      deploy(input: any) {
+        return {
+          provider: "cloudflare-workers",
+          mode: "mock",
+          scriptName: input.scriptName,
+          scriptDigest: digest(input.scriptModule),
+          scriptModule: input.scriptModule,
+        };
+      },
+      delete(input: any) {
+        if (failDelete) {
+          throw new Error("provider is down");
+        }
+        return {
+          provider: "cloudflare-workers",
+          mode: "mock",
+          scriptName: input.scriptName,
+          deleted: true,
+        };
+      },
+    },
+  });
+  const { project, deployment } = seedDeployment(control);
+  const release = await control.createEdgeWorkerRelease({
+    projectId: project.id,
+    deploymentId: deployment.id,
+    scriptName: "wasmplane-http-retry-edge",
+  });
+  await control.deleteEdgeWorkerRelease({ id: release.id, deleteProvider: true });
+
+  const app = createHttpApp({
+    controlPlane: control,
+    apiTokens: [
+      { token: "read-token", scopes: ["read"], principal: "reader" },
+      { token: "publish-token", scopes: ["publish"], principal: "publisher" },
+    ],
+  });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const listResponse = await fetch(`${baseUrl}/edge-workers/releases/${release.id}/operations`, {
+      headers: { authorization: "Bearer read-token" },
+    });
+    assert.equal(listResponse.status, 200);
+    const operations = await listResponse.json();
+    assert.equal(operations[0]?.status, "pending");
+    assert.equal(operations[0]?.action, "delete");
+
+    const denied = await fetch(`${baseUrl}/edge-workers/releases/operations/deliver`, {
+      method: "POST",
+      headers: { authorization: "Bearer read-token", "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    assert.equal(denied.status, 403);
+
+    failDelete = false;
+    const deliverResponse = await fetch(`${baseUrl}/edge-workers/releases/operations/deliver`, {
+      method: "POST",
+      headers: { authorization: "Bearer publish-token", "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    assert.equal(deliverResponse.status, 200);
+    assert.deepEqual(await deliverResponse.json(), { attempted: 1, succeeded: 1, failed: 0 });
   } finally {
     await app.close();
   }

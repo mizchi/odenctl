@@ -10,6 +10,7 @@ import type {
   DeployPreview,
   Deployment,
   DurableObjectNamespace,
+  EdgeWorkerReleaseOperation,
   EdgeWorkerRelease,
   KvNamespace,
   Organization,
@@ -761,8 +762,10 @@ export class PostgresControlPlaneRepository implements AsyncControlPlaneReposito
           external_deployment_id,
           url,
           created_at,
-          deleted_at
-        ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13, $14, $15)`,
+          updated_at,
+          deleted_at,
+          last_error
+        ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13, $14, $15, $16, $17)`,
         [
           release.id,
           release.projectId,
@@ -778,7 +781,9 @@ export class PostgresControlPlaneRepository implements AsyncControlPlaneReposito
           release.externalDeploymentId ?? null,
           release.url ?? null,
           release.createdAt,
+          release.updatedAt,
           release.deletedAt ?? null,
+          release.lastError ?? null,
         ],
       );
       return release;
@@ -804,15 +809,126 @@ export class PostgresControlPlaneRepository implements AsyncControlPlaneReposito
     const result = await this.pool.query(
       `update edge_worker_releases set
         status = $1,
-        deleted_at = $2
-       where id = $3
+        script_digest = $2,
+        script_module = $3,
+        version_id = $4,
+        external_deployment_id = $5,
+        url = $6,
+        updated_at = $7,
+        deleted_at = $8,
+        last_error = $9
+       where id = $10
        returning *`,
-      [release.status, release.deletedAt ?? null, release.id],
+      [
+        release.status,
+        release.scriptDigest,
+        release.scriptModule,
+        release.versionId ?? null,
+        release.externalDeploymentId ?? null,
+        release.url ?? null,
+        release.updatedAt,
+        release.deletedAt ?? null,
+        release.lastError ?? null,
+        release.id,
+      ],
     );
     if (result.rowCount === 0) {
       throw new ControlPlaneError("not_found", `edge worker release ${release.id} was not found`);
     }
     return edgeWorkerReleaseFromRow(result.rows[0]);
+  }
+
+  async createEdgeWorkerReleaseOperation(
+    operation: EdgeWorkerReleaseOperation,
+  ): Promise<EdgeWorkerReleaseOperation> {
+    try {
+      await this.pool.query(
+        `insert into edge_worker_release_operations (
+          id,
+          release_id,
+          action,
+          status,
+          attempts,
+          next_attempt_at,
+          delete_provider,
+          force_provider_delete,
+          created_at,
+          updated_at,
+          last_error
+        ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+        [
+          operation.id,
+          operation.releaseId,
+          operation.action,
+          operation.status,
+          operation.attempts,
+          operation.nextAttemptAt,
+          operation.deleteProvider,
+          operation.forceProviderDelete,
+          operation.createdAt,
+          operation.updatedAt,
+          operation.lastError ?? null,
+        ],
+      );
+      return operation;
+    } catch (error) {
+      throw writeError("edge worker release operation", operation.id, error);
+    }
+  }
+
+  async listEdgeWorkerReleaseOperations(releaseId?: string): Promise<EdgeWorkerReleaseOperation[]> {
+    const result = releaseId
+      ? await this.pool.query(
+        `select * from edge_worker_release_operations
+         where release_id = $1
+         order by created_at asc, id asc`,
+        [releaseId],
+      )
+      : await this.pool.query(
+        "select * from edge_worker_release_operations order by created_at asc, id asc",
+      );
+    return result.rows.map(edgeWorkerReleaseOperationFromRow);
+  }
+
+  async listPendingEdgeWorkerReleaseOperations(now: string): Promise<EdgeWorkerReleaseOperation[]> {
+    const result = await this.pool.query(
+      `select * from edge_worker_release_operations
+       where status = 'pending' and next_attempt_at <= $1
+       order by next_attempt_at asc, id asc`,
+      [now],
+    );
+    return result.rows.map(edgeWorkerReleaseOperationFromRow);
+  }
+
+  async updateEdgeWorkerReleaseOperation(
+    operation: EdgeWorkerReleaseOperation,
+  ): Promise<EdgeWorkerReleaseOperation> {
+    const result = await this.pool.query(
+      `update edge_worker_release_operations set
+        status = $1,
+        attempts = $2,
+        next_attempt_at = $3,
+        delete_provider = $4,
+        force_provider_delete = $5,
+        updated_at = $6,
+        last_error = $7
+       where id = $8
+       returning *`,
+      [
+        operation.status,
+        operation.attempts,
+        operation.nextAttemptAt,
+        operation.deleteProvider,
+        operation.forceProviderDelete,
+        operation.updatedAt,
+        operation.lastError ?? null,
+        operation.id,
+      ],
+    );
+    if (result.rowCount === 0) {
+      throw new ControlPlaneError("not_found", `edge worker release operation ${operation.id} was not found`);
+    }
+    return edgeWorkerReleaseOperationFromRow(result.rows[0]);
   }
 
   async createProject(project: Project): Promise<Project> {
@@ -1385,10 +1501,28 @@ function edgeWorkerReleaseFromRow(row: any): EdgeWorkerRelease {
     scriptModule: row.script_module,
     artifact: jsonValue(row.artifact_json),
     createdAt: row.created_at,
+    updatedAt: row.updated_at || row.created_at,
     ...(row.version_id ? { versionId: row.version_id } : {}),
     ...(row.external_deployment_id ? { externalDeploymentId: row.external_deployment_id } : {}),
     ...(row.url ? { url: row.url } : {}),
     ...(row.deleted_at ? { deletedAt: row.deleted_at } : {}),
+    ...(row.last_error ? { lastError: row.last_error } : {}),
+  };
+}
+
+function edgeWorkerReleaseOperationFromRow(row: any): EdgeWorkerReleaseOperation {
+  return {
+    id: row.id,
+    releaseId: row.release_id,
+    action: row.action,
+    status: row.status,
+    attempts: Number(row.attempts),
+    nextAttemptAt: row.next_attempt_at,
+    deleteProvider: Boolean(row.delete_provider),
+    forceProviderDelete: Boolean(row.force_provider_delete),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    ...(row.last_error ? { lastError: row.last_error } : {}),
   };
 }
 

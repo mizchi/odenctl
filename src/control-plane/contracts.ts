@@ -228,7 +228,9 @@ export interface Deployment {
 
 export type EdgeWorkerProvider = "cloudflare-workers";
 export type EdgeWorkerReleaseMode = "mock" | "api";
-export type EdgeWorkerReleaseStatus = "active" | "deleted";
+export type EdgeWorkerReleaseStatus = "creating" | "active" | "deleting" | "deleted" | "failed";
+export type EdgeWorkerReleaseOperationAction = "delete";
+export type EdgeWorkerReleaseOperationStatus = "pending" | "succeeded" | "failed";
 
 export interface EdgeWorkerRelease {
   id: string;
@@ -246,10 +248,26 @@ export interface EdgeWorkerRelease {
     location: string;
   };
   createdAt: string;
+  updatedAt: string;
   versionId?: string;
   externalDeploymentId?: string;
   url?: string;
   deletedAt?: string;
+  lastError?: string;
+}
+
+export interface EdgeWorkerReleaseOperation {
+  id: string;
+  releaseId: string;
+  action: EdgeWorkerReleaseOperationAction;
+  status: EdgeWorkerReleaseOperationStatus;
+  attempts: number;
+  nextAttemptAt: string;
+  deleteProvider: boolean;
+  forceProviderDelete: boolean;
+  createdAt: string;
+  updatedAt: string;
+  lastError?: string;
 }
 
 export interface RoutePointer {

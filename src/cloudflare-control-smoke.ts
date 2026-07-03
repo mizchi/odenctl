@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { mkdir, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
 import { pathToFileURL } from "node:url";
 
 export interface CloudflareControlSmokeInput {
@@ -10,6 +12,12 @@ export interface CloudflareControlSmokeInput {
   scriptName: string;
   releaseMode?: "mock" | "api";
   requireLocalSqlite: boolean;
+  deleteRelease: boolean;
+  deleteProvider: boolean;
+  forceProviderDelete: boolean;
+  jsonOutput?: string;
+  markdownOutput?: string;
+  logsUrl?: string;
   wakeDelayMs: number;
   maxContainerHealthMs: number;
   fetch?: typeof fetch;
@@ -27,7 +35,20 @@ export interface CloudflareControlSmokeCheck {
 
 export interface CloudflareControlSmokeResult {
   ok: boolean;
+  summary: CloudflareControlSmokeSummary;
   checks: CloudflareControlSmokeCheck[];
+}
+
+export interface CloudflareControlSmokeSummary {
+  controlUrl: string;
+  projectId: string;
+  artifactId: string;
+  deploymentId: string;
+  scriptName: string;
+  releaseId?: string;
+  startedAt: string;
+  finishedAt: string;
+  durationMs: number;
 }
 
 interface CloudflareControlSmokeEnv {
@@ -40,6 +61,7 @@ interface CloudflareControlSmokeEnv {
   WASMPLANE_CLOUDFLARE_SMOKE_DEPLOYMENT_ID?: string;
   WASMPLANE_CLOUDFLARE_SMOKE_SCRIPT_NAME?: string;
   WASMPLANE_CLOUDFLARE_SMOKE_RELEASE_MODE?: string;
+  WASMPLANE_CLOUDFLARE_SMOKE_LOGS_URL?: string;
 }
 
 export function parseCloudflareControlSmokeArgs(
@@ -67,6 +89,12 @@ export function parseCloudflareControlSmokeArgs(
       ?? `wasmplane-cf-smoke-${suffix}`,
     releaseMode: releaseMode(flags["release-mode"] ?? env.WASMPLANE_CLOUDFLARE_SMOKE_RELEASE_MODE),
     requireLocalSqlite: !truthy(flags["allow-external-db"]),
+    deleteRelease: !truthy(flags["keep-release"]),
+    deleteProvider: truthy(flags["delete-provider"]),
+    forceProviderDelete: truthy(flags["force-provider-delete"]) || truthy(flags.force),
+    jsonOutput: nonEmpty(flags["json-output"]),
+    markdownOutput: nonEmpty(flags["markdown-output"]),
+    logsUrl: nonEmpty(flags["logs-url"] ?? env.WASMPLANE_CLOUDFLARE_SMOKE_LOGS_URL),
     wakeDelayMs: nonnegativeInteger(flagNumber(flags["wake-delay-ms"], 0), "wake-delay-ms"),
     maxContainerHealthMs: positiveInteger(flagNumber(flags["max-container-health-ms"], 60_000), "max-container-health-ms"),
   };
@@ -78,8 +106,11 @@ export async function runCloudflareControlSmoke(
   const fetchImpl = input.fetch ?? fetch;
   const sleepImpl = input.sleep ?? ((ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const nowMs = input.nowMs ?? (() => Date.now());
+  const startedAtMs = nowMs();
+  const startedAt = new Date().toISOString();
   const checks: CloudflareControlSmokeCheck[] = [];
   const headers = bearerHeaders(input.token);
+  let releaseId: string | undefined;
 
   checks.push(await checkJson(
     fetchImpl,
@@ -171,6 +202,7 @@ export async function runCloudflareControlSmoke(
     (body) => body?.projectId === input.projectId && body?.deploymentId === input.deploymentId,
   );
   checks.push(release.check);
+  releaseId = typeof release.body?.id === "string" ? release.body.id : undefined;
   checks.push({
     name: "edge release manifest",
     ok: release.check.ok
@@ -208,8 +240,49 @@ export async function runCloudflareControlSmoke(
     )).check);
   }
 
+  if (input.logsUrl) {
+    checks.push(await readTextCheck(
+      fetchImpl,
+      "control logs retrieval",
+      input.logsUrl,
+      headers,
+      (body) => body.trim().length > 0,
+    ));
+  }
+
+  if (input.deleteRelease && releaseId) {
+    const query = new URLSearchParams();
+    if (input.deleteProvider) {
+      query.set("provider", "1");
+    }
+    if (input.forceProviderDelete) {
+      query.set("force", "1");
+    }
+    const suffix = query.size > 0 ? `?${query}` : "";
+    checks.push((await deleteJsonCheck(
+      fetchImpl,
+      "edge release delete",
+      `${input.controlUrl}/edge-workers/releases/${encodeURIComponent(releaseId)}${suffix}`,
+      headers,
+      (body) => body?.id === releaseId && body?.status === "deleted",
+    )).check);
+  }
+
+  const finishedAt = new Date().toISOString();
+  const durationMs = Math.max(0, nowMs() - startedAtMs);
   return {
     ok: checks.every((check) => check.ok),
+    summary: {
+      controlUrl: input.controlUrl,
+      projectId: input.projectId,
+      artifactId: input.artifactId,
+      deploymentId: input.deploymentId,
+      scriptName: input.scriptName,
+      ...(releaseId ? { releaseId } : {}),
+      startedAt,
+      finishedAt,
+      durationMs,
+    },
     checks,
   };
 }
@@ -228,6 +301,34 @@ async function postJsonCheck(
       headers: { "content-type": "application/json", ...(headers ?? {}) },
       body: JSON.stringify(body),
     });
+    if (!response.ok) {
+      return { check: { name, ok: false, status: response.status, detail: await safeText(response) } };
+    }
+    const payload = await response.json();
+    const ok = validate(payload);
+    return {
+      check: {
+        name,
+        ok,
+        status: response.status,
+        detail: ok ? undefined : "response JSON did not match expected shape",
+      },
+      body: payload,
+    };
+  } catch (error) {
+    return { check: { name, ok: false, detail: errorMessage(error) } };
+  }
+}
+
+async function deleteJsonCheck(
+  fetchImpl: typeof fetch,
+  name: string,
+  url: string,
+  headers: Record<string, string> | undefined,
+  validate: (body: any) => boolean,
+): Promise<{ check: CloudflareControlSmokeCheck; body?: any }> {
+  try {
+    const response = await fetchImpl(url, { method: "DELETE", headers });
     if (!response.ok) {
       return { check: { name, ok: false, status: response.status, detail: await safeText(response) } };
     }
@@ -272,6 +373,31 @@ async function readJsonCheck(
     };
   } catch (error) {
     return { check: { name, ok: false, detail: errorMessage(error) } };
+  }
+}
+
+async function readTextCheck(
+  fetchImpl: typeof fetch,
+  name: string,
+  url: string,
+  headers: Record<string, string> | undefined,
+  validate: (body: string) => boolean,
+): Promise<CloudflareControlSmokeCheck> {
+  try {
+    const response = await fetchImpl(url, { headers });
+    if (!response.ok) {
+      return { name, ok: false, status: response.status, detail: await safeText(response) };
+    }
+    const body = await response.text();
+    const ok = validate(body);
+    return {
+      name,
+      ok,
+      status: response.status,
+      detail: ok ? undefined : "response text did not match expected shape",
+    };
+  } catch (error) {
+    return { name, ok: false, detail: errorMessage(error) };
   }
 }
 
@@ -410,9 +536,60 @@ function printResult(result: CloudflareControlSmokeResult): void {
   }
 }
 
+export function formatCloudflareControlSmokeMarkdown(result: CloudflareControlSmokeResult): string {
+  const summary = result.summary;
+  const lines = [
+    "# wasmplane Cloudflare Containers smoke",
+    "",
+    `status: ${result.ok ? "ok" : "failed"}`,
+    `control URL: \`${summary.controlUrl}\``,
+    `project id: \`${summary.projectId}\``,
+    `artifact id: \`${summary.artifactId}\``,
+    `deployment id: \`${summary.deploymentId}\``,
+    `script name: \`${summary.scriptName}\``,
+    ...(summary.releaseId ? [`release id: \`${summary.releaseId}\``] : []),
+    `started at: \`${summary.startedAt}\``,
+    `finished at: \`${summary.finishedAt}\``,
+    `duration ms: ${summary.durationMs}`,
+    "",
+    "| check | result | status | elapsed ms | detail |",
+    "| --- | --- | --- | --- | --- |",
+    ...result.checks.map((check) =>
+      `| ${markdownCell(check.name)} | ${check.ok ? "ok" : "failed"} | ${check.status ?? ""} | ${
+        check.elapsedMs ?? ""
+      } | ${markdownCell(check.detail ?? "")} |`
+    ),
+    "",
+  ];
+  return lines.join("\n");
+}
+
+export async function writeCloudflareControlSmokeReports(
+  result: CloudflareControlSmokeResult,
+  output: { jsonOutput?: string; markdownOutput?: string },
+): Promise<void> {
+  if (output.jsonOutput) {
+    await writeTextFileCreatingParents(output.jsonOutput, `${JSON.stringify(result, null, 2)}\n`);
+  }
+  if (output.markdownOutput) {
+    await writeTextFileCreatingParents(output.markdownOutput, formatCloudflareControlSmokeMarkdown(result));
+  }
+}
+
+async function writeTextFileCreatingParents(path: string, content: string): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, content);
+}
+
+function markdownCell(value: string): string {
+  return value.replaceAll("|", "\\|").replaceAll("\n", " ");
+}
+
 async function main(): Promise<void> {
-  const result = await runCloudflareControlSmoke(parseCloudflareControlSmokeArgs(process.argv.slice(2)));
+  const input = parseCloudflareControlSmokeArgs(process.argv.slice(2));
+  const result = await runCloudflareControlSmoke(input);
   printResult(result);
+  await writeCloudflareControlSmokeReports(result, input);
   if (!result.ok) {
     process.exitCode = 1;
   }

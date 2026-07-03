@@ -15,6 +15,7 @@ The MVP follows the design memo in `/Users/mz/Downloads/wasi-edge-worker-platfor
 
 ```sh
 just test
+just release-check
 just coverage
 pnpm start
 just runtime
@@ -549,7 +550,9 @@ pnpm deploy
 
 WASMPLANE_CLOUDFLARE_CONTROL_URL=https://wasmplane-control-container-poc.<workers-subdomain>.workers.dev \
   WASMPLANE_CONTROL_PLANE_TOKEN=... \
-  just cloudflare-control-smoke
+  pnpm cloudflare-control-smoke -- \
+    --json-output reports/cloudflare-control-smoke.json \
+    --markdown-output reports/cloudflare-control-smoke.md
 ```
 
 AWS is closest to the current Fly shape: ECS/Fargate runs separate control-plane and runtime
@@ -572,7 +575,10 @@ written to the audit sink when API auth and audit logging are enabled. Release d
 from `GET /edge-workers/releases/:id`, and `DELETE /edge-workers/releases/:id?provider=1&force=1`
 soft-deletes the control-plane record after deleting the provider-side Worker script. This POC keeps
 WASIp3 execution delegated to Wasmtime runtime nodes; the generated Worker is control-plane-owned
-metadata, not an embedded runtime.
+metadata, not an embedded runtime. If provider-side deletion fails, the release is marked `failed`
+and a retryable operation is stored. Operators can inspect
+`GET /edge-workers/releases/:id/operations` and retry pending work with
+`POST /edge-workers/releases/operations/deliver`.
 
 The runtime supervisor code currently prepares deployments by resolving a route snapshot,
 materializing `file://`, `http://`, `https://`, or private `s3://` artifacts, verifying their
