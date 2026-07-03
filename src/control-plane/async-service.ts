@@ -191,7 +191,9 @@ export interface AsyncControlPlaneRepository {
   listProjectDeployPreviews(projectId: string): Promise<DeployPreview[]>;
   updateDeployPreview(preview: DeployPreview): Promise<DeployPreview>;
   createEdgeWorkerRelease(release: EdgeWorkerRelease): Promise<EdgeWorkerRelease>;
+  getEdgeWorkerRelease(id: string): Promise<EdgeWorkerRelease | undefined>;
   listProjectEdgeWorkerReleases(projectId: string): Promise<EdgeWorkerRelease[]>;
+  updateEdgeWorkerRelease(release: EdgeWorkerRelease): Promise<EdgeWorkerRelease>;
   createProject(project: Project): Promise<Project>;
   getProject(id: string): Promise<Project | undefined>;
   listOrganizationProjects(organizationId: string): Promise<Project[]>;
@@ -554,6 +556,16 @@ export interface CreateEdgeWorkerReleaseInput {
 
 export interface ListProjectEdgeWorkerReleasesInput {
   projectId: string;
+}
+
+export interface GetEdgeWorkerReleaseInput {
+  id: string;
+}
+
+export interface DeleteEdgeWorkerReleaseInput {
+  id: string;
+  deleteProvider?: boolean;
+  forceProviderDelete?: boolean;
 }
 
 export interface PointRouteInput {
@@ -1470,6 +1482,7 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
       deploymentId: deployment.id,
       provider,
       mode: result.mode,
+      status: "active",
       scriptName,
       scriptDigest: result.scriptDigest,
       scriptModule: result.scriptModule,
@@ -1482,11 +1495,55 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
     return repository.createEdgeWorkerRelease(release);
   }
 
+  async function getEdgeWorkerRelease(input: GetEdgeWorkerReleaseInput): Promise<EdgeWorkerRelease> {
+    return await requireEdgeWorkerRelease(repository, input.id);
+  }
+
   async function listProjectEdgeWorkerReleases(
     input: ListProjectEdgeWorkerReleasesInput,
   ): Promise<EdgeWorkerRelease[]> {
     await requireProject(repository, input.projectId);
     return repository.listProjectEdgeWorkerReleases(input.projectId);
+  }
+
+  async function deleteEdgeWorkerRelease(input: DeleteEdgeWorkerReleaseInput): Promise<EdgeWorkerRelease> {
+    const release = await requireEdgeWorkerRelease(repository, input.id);
+    if (release.status === "deleted") {
+      return release;
+    }
+    if (input.deleteProvider) {
+      const result = await edgeWorkerDeployer.delete?.({
+        releaseId: release.id,
+        scriptName: release.scriptName,
+        force: input.forceProviderDelete,
+      });
+      if (!result?.deleted) {
+        throw new ControlPlaneError("validation", "edge worker deployer did not confirm deletion");
+      }
+      if (result.provider !== release.provider) {
+        throw new ControlPlaneError(
+          "validation",
+          `edge worker deployer returned provider ${result.provider}, expected ${release.provider}`,
+        );
+      }
+      if (result.mode !== release.mode) {
+        throw new ControlPlaneError(
+          "validation",
+          `edge worker deployer returned mode ${result.mode}, expected ${release.mode}`,
+        );
+      }
+      if (result.scriptName !== release.scriptName) {
+        throw new ControlPlaneError(
+          "validation",
+          `edge worker deployer deleted script ${result.scriptName}, expected ${release.scriptName}`,
+        );
+      }
+    }
+    return repository.updateEdgeWorkerRelease({
+      ...release,
+      status: "deleted",
+      deletedAt: now(),
+    });
   }
 
   async function pointRoute(input: PointRouteInput): Promise<RoutePointer> {
@@ -1769,7 +1826,9 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
     deleteDurableObjectNamespace,
     createDeployment,
     createEdgeWorkerRelease,
+    getEdgeWorkerRelease,
     listProjectEdgeWorkerReleases,
+    deleteEdgeWorkerRelease,
     pointRoute,
     startRouteCanary,
     analyzeRouteCanary,
@@ -1981,6 +2040,17 @@ async function requireDeployPreview(
     throw new ControlPlaneError("not_found", `deploy preview ${id} was not found`);
   }
   return preview;
+}
+
+async function requireEdgeWorkerRelease(
+  repository: AsyncControlPlaneRepository,
+  id: string,
+): Promise<EdgeWorkerRelease> {
+  const release = await repository.getEdgeWorkerRelease(id);
+  if (!release) {
+    throw new ControlPlaneError("not_found", `edge worker release ${id} was not found`);
+  }
+  return release;
 }
 
 async function enforceRouteCustomDomain(

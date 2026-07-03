@@ -67,7 +67,9 @@ export interface ControlPlaneRepository {
   listProjectDeployPreviews(projectId: string): DeployPreview[];
   updateDeployPreview(preview: DeployPreview): DeployPreview;
   createEdgeWorkerRelease(release: EdgeWorkerRelease): EdgeWorkerRelease;
+  getEdgeWorkerRelease(id: string): EdgeWorkerRelease | undefined;
   listProjectEdgeWorkerReleases(projectId: string): EdgeWorkerRelease[];
+  updateEdgeWorkerRelease(release: EdgeWorkerRelease): EdgeWorkerRelease;
   createProject(project: Project): Project;
   getProject(id: string): Project | undefined;
   listOrganizationProjects(organizationId: string): Project[];
@@ -761,6 +763,7 @@ class SqliteControlPlaneRepository implements ControlPlaneRepository {
             deployment_id,
             provider,
             mode,
+            status,
             script_name,
             script_digest,
             script_module,
@@ -768,8 +771,9 @@ class SqliteControlPlaneRepository implements ControlPlaneRepository {
             version_id,
             external_deployment_id,
             url,
-            created_at
-          ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            created_at,
+            deleted_at
+          ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           release.id,
@@ -777,6 +781,7 @@ class SqliteControlPlaneRepository implements ControlPlaneRepository {
           release.deploymentId,
           release.provider,
           release.mode,
+          release.status,
           release.scriptName,
           release.scriptDigest,
           release.scriptModule,
@@ -785,6 +790,7 @@ class SqliteControlPlaneRepository implements ControlPlaneRepository {
           release.externalDeploymentId ?? null,
           release.url ?? null,
           release.createdAt,
+          release.deletedAt ?? null,
         );
       return release;
     } catch (error) {
@@ -792,11 +798,31 @@ class SqliteControlPlaneRepository implements ControlPlaneRepository {
     }
   }
 
+  getEdgeWorkerRelease(id: string): EdgeWorkerRelease | undefined {
+    const row = this.db.prepare("select * from edge_worker_releases where id = ?").get(id);
+    return row ? edgeWorkerReleaseFromRow(row) : undefined;
+  }
+
   listProjectEdgeWorkerReleases(projectId: string): EdgeWorkerRelease[] {
     return this.db
       .prepare("select * from edge_worker_releases where project_id = ? order by created_at desc, id desc")
       .all(projectId)
       .map(edgeWorkerReleaseFromRow);
+  }
+
+  updateEdgeWorkerRelease(release: EdgeWorkerRelease): EdgeWorkerRelease {
+    const result = this.db
+      .prepare(
+        `update edge_worker_releases set
+          status = ?,
+          deleted_at = ?
+        where id = ?`,
+      )
+      .run(release.status, release.deletedAt ?? null, release.id);
+    if (result.changes === 0) {
+      throw new ControlPlaneError("not_found", `edge worker release ${release.id} was not found`);
+    }
+    return this.getEdgeWorkerRelease(release.id) as EdgeWorkerRelease;
   }
 
   createProject(project: Project): Project {
@@ -1419,6 +1445,7 @@ function edgeWorkerReleaseFromRow(row: any): EdgeWorkerRelease {
     deploymentId: row.deployment_id,
     provider: row.provider,
     mode: row.mode,
+    status: row.status ?? "active",
     scriptName: row.script_name,
     scriptDigest: row.script_digest,
     scriptModule: row.script_module,
@@ -1427,6 +1454,7 @@ function edgeWorkerReleaseFromRow(row: any): EdgeWorkerRelease {
     ...(row.version_id ? { versionId: row.version_id } : {}),
     ...(row.external_deployment_id ? { externalDeploymentId: row.external_deployment_id } : {}),
     ...(row.url ? { url: row.url } : {}),
+    ...(row.deleted_at ? { deletedAt: row.deleted_at } : {}),
   };
 }
 
@@ -1944,6 +1972,7 @@ create table if not exists edge_worker_releases (
   deployment_id text not null,
   provider text not null,
   mode text not null,
+  status text not null default 'active',
   script_name text not null,
   script_digest text not null,
   script_module text not null,
@@ -1952,6 +1981,7 @@ create table if not exists edge_worker_releases (
   external_deployment_id text,
   url text,
   created_at text not null,
+  deleted_at text,
   foreign key (project_id) references projects(id),
   foreign key (deployment_id) references deployments(id)
 );
@@ -2410,6 +2440,7 @@ const migrations: SchemaMigration[] = [
           deployment_id text not null,
           provider text not null,
           mode text not null,
+          status text not null default 'active',
           script_name text not null,
           script_digest text not null,
           script_module text not null,
@@ -2418,6 +2449,7 @@ const migrations: SchemaMigration[] = [
           external_deployment_id text,
           url text,
           created_at text not null,
+          deleted_at text,
           foreign key (project_id) references projects(id),
           foreign key (deployment_id) references deployments(id)
         );
@@ -2425,6 +2457,13 @@ const migrations: SchemaMigration[] = [
         create index if not exists edge_worker_releases_project_idx
           on edge_worker_releases (project_id, created_at desc, id desc);
       `);
+    },
+  },
+  {
+    id: "202607030002_edge_worker_release_lifecycle",
+    apply(db) {
+      ensureColumn(db, "edge_worker_releases", "status", "text not null default 'active'");
+      ensureColumn(db, "edge_worker_releases", "deleted_at", "text");
     },
   },
 ];

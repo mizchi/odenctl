@@ -299,5 +299,8 @@ Production readiness tasks, in implementation order.
 - [x] Add an opt-in Cloudflare Workers script API deployer for generated control-plane release stubs.
 - [x] Persist edge worker releases in SQLite/Postgres instead of in-memory POC state.
 - [x] Gate live Cloudflare API deploys with scoped token policy, authorization, and audit history.
-- [ ] Verify Cloudflare Containers behavior for `/healthz`, local SQLite fallback, artifact upload persistence, cold start, logs, and sleep/wakeup.
-- [ ] Decide whether Cloudflare production mode uses Containers for runtime, or Workers/Durable Objects/R2/D1 as a separate native backend.
+- [x] Add edge worker release detail/delete lifecycle APIs and optional provider-side Worker deletion.
+- [x] Add a Cloudflare Containers smoke harness for `/healthz`, local SQLite fallback, control-plane writes, generated release persistence, cold start, and sleep/wakeup checks.
+- [x] Add OpenTofu fmt/validate checks for AWS and GCP scaffolds to CI.
+- [x] Decide whether Cloudflare production mode uses Containers for runtime, or Workers/Durable Objects/R2/D1 as a separate native backend.
+- [ ] Run the Cloudflare Containers smoke harness against the deployed Worker/container pair and capture logs/cold-start numbers.

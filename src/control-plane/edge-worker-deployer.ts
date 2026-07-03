@@ -22,6 +22,12 @@ export interface EdgeWorkerDeployInput extends RenderCloudflareWasmWorkerInput {
   scriptModule: string;
 }
 
+export interface EdgeWorkerDeleteInput {
+  releaseId: string;
+  scriptName: string;
+  force?: boolean;
+}
+
 export interface EdgeWorkerDeployResult {
   provider: "cloudflare-workers";
   mode: "mock" | "api";
@@ -33,8 +39,16 @@ export interface EdgeWorkerDeployResult {
   url?: string;
 }
 
+export interface EdgeWorkerDeleteResult {
+  provider: "cloudflare-workers";
+  mode: "mock" | "api";
+  scriptName: string;
+  deleted: true;
+}
+
 export interface EdgeWorkerDeployer {
   deploy(input: EdgeWorkerDeployInput): EdgeWorkerDeployResult | Promise<EdgeWorkerDeployResult>;
+  delete?(input: EdgeWorkerDeleteInput): EdgeWorkerDeleteResult | Promise<EdgeWorkerDeleteResult>;
 }
 
 export interface MockCloudflareWorkerDeployerOptions {
@@ -99,6 +113,14 @@ export function createMockCloudflareWorkerDeployer(
         url: workersDevUrl(input.scriptName, options.workersDevSubdomain),
       };
     },
+    delete(input) {
+      return {
+        provider: "cloudflare-workers",
+        mode: "mock",
+        scriptName: input.scriptName,
+        deleted: true,
+      };
+    },
   };
 }
 
@@ -141,6 +163,25 @@ export function createCloudflareWorkersApiDeployer(
         versionId: stringResult(result.version_id) ?? stringResult(result.version?.id) ?? stringResult(result.id),
         externalDeploymentId: stringResult(result.deployment_id) ?? stringResult(result.deployment?.id),
         url: workersDevUrl(input.scriptName, options.workersDevSubdomain),
+      };
+    },
+    async delete(input) {
+      const suffix = input.force ? "?force=true" : "";
+      const response = await clientFetch(
+        `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/workers/scripts/${
+          encodeURIComponent(input.scriptName)
+        }${suffix}`,
+        {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${apiToken}` },
+        },
+      );
+      await readCloudflarePayload(response);
+      return {
+        provider: "cloudflare-workers",
+        mode: "api",
+        scriptName: input.scriptName,
+        deleted: true,
       };
     },
   };

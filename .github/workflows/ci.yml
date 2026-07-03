@@ -37,6 +37,13 @@ jobs:
 
       - uses: extractions/setup-just@v3
 
+      - uses: opentofu/setup-opentofu@v1
+
+      - name: Validate OpenTofu infrastructure
+        run: |
+          just tofu-fmt-check
+          just tofu-validate
+
       - name: Install Wasm tooling
         run: |
           cargo install wasm-tools --version 1.245.1 --locked

@@ -535,6 +535,9 @@ tokens, and artifact-store credentials. They are intended as planable starting p
 production modules.
 
 ```sh
+just tofu-fmt-check
+just tofu-validate
+
 just aws-terraform-plan
 just gcp-terraform-plan
 
@@ -543,6 +546,10 @@ pnpm install
 pnpm wrangler login
 pnpm dev
 pnpm deploy
+
+WASMPLANE_CLOUDFLARE_CONTROL_URL=https://wasmplane-control-container-poc.<workers-subdomain>.workers.dev \
+  WASMPLANE_CONTROL_PLANE_TOKEN=... \
+  just cloudflare-control-smoke
 ```
 
 AWS is closest to the current Fly shape: ECS/Fargate runs separate control-plane and runtime
@@ -561,9 +568,11 @@ side effects. Set
 `WASMPLANE_EDGE_WORKER_DEPLOYER=cloudflare-api` with `WASMPLANE_CLOUDFLARE_ACCOUNT_ID` and
 `WASMPLANE_CLOUDFLARE_API_TOKEN` to upload the generated script through the Cloudflare Workers
 script API. Requests that create `mode: "api"` releases require the `publish` API scope and are
-written to the audit sink when API auth and audit logging are enabled. This POC keeps WASIp3
-execution delegated to Wasmtime runtime nodes; the generated Worker is control-plane-owned metadata,
-not an embedded runtime.
+written to the audit sink when API auth and audit logging are enabled. Release details are available
+from `GET /edge-workers/releases/:id`, and `DELETE /edge-workers/releases/:id?provider=1&force=1`
+soft-deletes the control-plane record after deleting the provider-side Worker script. This POC keeps
+WASIp3 execution delegated to Wasmtime runtime nodes; the generated Worker is control-plane-owned
+metadata, not an embedded runtime.
 
 The runtime supervisor code currently prepares deployments by resolving a route snapshot,
 materializing `file://`, `http://`, `https://`, or private `s3://` artifacts, verifying their

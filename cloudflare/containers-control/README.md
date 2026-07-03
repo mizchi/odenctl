@@ -24,6 +24,18 @@ curl https://wasmplane-control-container-poc.<workers-subdomain>.workers.dev/__p
 curl https://wasmplane-control-container-poc.<workers-subdomain>.workers.dev/healthz
 ```
 
+From the repository root, run the smoke harness against the deployed Worker/container pair:
+
+```sh
+WASMPLANE_CLOUDFLARE_CONTROL_URL=https://wasmplane-control-container-poc.<workers-subdomain>.workers.dev \
+  WASMPLANE_CONTROL_PLANE_TOKEN=... \
+  just cloudflare-control-smoke
+```
+
+The harness verifies the Worker edge health endpoint, container `/healthz` cold-start latency,
+local SQLite fallback through `/ops/config`, project/artifact/deployment writes, generated edge
+worker release persistence, and optional sleep/wakeup persistence with `--wake-delay-ms`.
+
 The default container config keeps edge-worker deployment in mock mode. It is enough to verify that
 the control plane can generate a Cloudflare Worker release record for a wasm deployment without
 mutating the Cloudflare account:
@@ -62,6 +74,8 @@ curl -sS -X POST "$BASE/edge-workers/releases" \
   -d '{"projectId":"prj_edge","deploymentId":"dep_edge","scriptName":"wasmplane-edge-demo"}'
 
 curl -sS "$BASE/projects/prj_edge/edge-worker-releases"
+curl -sS "$BASE/edge-workers/releases/ewr_..."
+curl -sS -X DELETE "$BASE/edge-workers/releases/ewr_...?provider=1&force=1"
 ```
 
 To upload the generated script for real, set these as Worker/container secrets before deploy:
@@ -94,7 +108,7 @@ WASIp3 execution remains on Wasmtime runtime nodes. Live `mode: "api"` release c
 - `WASMPLANE_API_TOKEN`, `DATABASE_URL`, and artifact credentials must be configured as Worker
   secrets before this is exposed.
 - Live Cloudflare Workers uploads still need a production token-rotation process and provider-side
-  rollback/delete operations before they are suitable for production.
+  rollback policy before they are suitable for production.
 - Runtime-node direct snapshot publishing is not solved here; this is control-plane-only.
 - The existing Dockerfile is `linux/amd64` compatible but should be measured for cold-start time and
   image size before using this as a production target.

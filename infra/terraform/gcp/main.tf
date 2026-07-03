@@ -33,7 +33,7 @@ resource "google_cloud_run_v2_service" "runtime" {
     }
 
     containers {
-      image = var.runtime_image
+      image   = var.runtime_image
       command = ["node", "--experimental-strip-types", "src/runtime/main.ts"]
 
       ports {
@@ -85,7 +85,7 @@ resource "google_cloud_run_v2_service" "runtime" {
         value = "1"
       }
       env {
-        name  = "WASMPLANE_CONTROL_PLANE_TOKEN"
+        name = "WASMPLANE_CONTROL_PLANE_TOKEN"
         value_source {
           secret_key_ref {
             secret  = var.api_token_secret_id
@@ -94,7 +94,7 @@ resource "google_cloud_run_v2_service" "runtime" {
         }
       }
       env {
-        name  = "WASMPLANE_RUNTIME_TOKEN"
+        name = "WASMPLANE_RUNTIME_TOKEN"
         value_source {
           secret_key_ref {
             secret  = var.runtime_token_secret_id
@@ -103,7 +103,7 @@ resource "google_cloud_run_v2_service" "runtime" {
         }
       }
       env {
-        name  = "WASMPLANE_ARTIFACT_ACCESS_KEY_ID"
+        name = "WASMPLANE_ARTIFACT_ACCESS_KEY_ID"
         value_source {
           secret_key_ref {
             secret  = var.artifact_access_key_id_secret_id
@@ -112,7 +112,7 @@ resource "google_cloud_run_v2_service" "runtime" {
         }
       }
       env {
-        name  = "WASMPLANE_ARTIFACT_SECRET_ACCESS_KEY"
+        name = "WASMPLANE_ARTIFACT_SECRET_ACCESS_KEY"
         value_source {
           secret_key_ref {
             secret  = var.artifact_secret_access_key_secret_id
@@ -139,7 +139,7 @@ resource "google_cloud_run_v2_service" "control" {
     }
 
     containers {
-      image = var.control_image
+      image   = var.control_image
       command = ["node", "--experimental-strip-types", "src/main.ts"]
 
       ports {
@@ -183,7 +183,7 @@ resource "google_cloud_run_v2_service" "control" {
         value = "1"
       }
       env {
-        name  = "DATABASE_URL"
+        name = "DATABASE_URL"
         value_source {
           secret_key_ref {
             secret  = var.database_url_secret_id
@@ -192,7 +192,7 @@ resource "google_cloud_run_v2_service" "control" {
         }
       }
       env {
-        name  = "WASMPLANE_API_TOKEN"
+        name = "WASMPLANE_API_TOKEN"
         value_source {
           secret_key_ref {
             secret  = var.api_token_secret_id
@@ -201,7 +201,7 @@ resource "google_cloud_run_v2_service" "control" {
         }
       }
       env {
-        name  = "WASMPLANE_RUNTIME_TOKEN"
+        name = "WASMPLANE_RUNTIME_TOKEN"
         value_source {
           secret_key_ref {
             secret  = var.runtime_token_secret_id
@@ -210,7 +210,7 @@ resource "google_cloud_run_v2_service" "control" {
         }
       }
       env {
-        name  = "WASMPLANE_ARTIFACT_ACCESS_KEY_ID"
+        name = "WASMPLANE_ARTIFACT_ACCESS_KEY_ID"
         value_source {
           secret_key_ref {
             secret  = var.artifact_access_key_id_secret_id
@@ -219,7 +219,7 @@ resource "google_cloud_run_v2_service" "control" {
         }
       }
       env {
-        name  = "WASMPLANE_ARTIFACT_SECRET_ACCESS_KEY"
+        name = "WASMPLANE_ARTIFACT_SECRET_ACCESS_KEY"
         value_source {
           secret_key_ref {
             secret  = var.artifact_secret_access_key_secret_id

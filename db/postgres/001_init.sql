@@ -222,6 +222,7 @@ create table if not exists edge_worker_releases (
   deployment_id text not null references deployments(id),
   provider text not null check (provider in ('cloudflare-workers')),
   mode text not null check (mode in ('mock', 'api')),
+  status text not null default 'active' check (status in ('active', 'deleted')),
   script_name text not null,
   script_digest text not null,
   script_module text not null,
@@ -229,7 +230,8 @@ create table if not exists edge_worker_releases (
   version_id text,
   external_deployment_id text,
   url text,
-  created_at text not null
+  created_at text not null,
+  deleted_at text
 );
 
 create table if not exists runtime_nodes (

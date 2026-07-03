@@ -752,6 +752,7 @@ export class PostgresControlPlaneRepository implements AsyncControlPlaneReposito
           deployment_id,
           provider,
           mode,
+          status,
           script_name,
           script_digest,
           script_module,
@@ -759,14 +760,16 @@ export class PostgresControlPlaneRepository implements AsyncControlPlaneReposito
           version_id,
           external_deployment_id,
           url,
-          created_at
-        ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13)`,
+          created_at,
+          deleted_at
+        ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13, $14, $15)`,
         [
           release.id,
           release.projectId,
           release.deploymentId,
           release.provider,
           release.mode,
+          release.status,
           release.scriptName,
           release.scriptDigest,
           release.scriptModule,
@@ -775,6 +778,7 @@ export class PostgresControlPlaneRepository implements AsyncControlPlaneReposito
           release.externalDeploymentId ?? null,
           release.url ?? null,
           release.createdAt,
+          release.deletedAt ?? null,
         ],
       );
       return release;
@@ -783,12 +787,32 @@ export class PostgresControlPlaneRepository implements AsyncControlPlaneReposito
     }
   }
 
+  async getEdgeWorkerRelease(id: string): Promise<EdgeWorkerRelease | undefined> {
+    const result = await this.pool.query("select * from edge_worker_releases where id = $1", [id]);
+    return result.rows[0] ? edgeWorkerReleaseFromRow(result.rows[0]) : undefined;
+  }
+
   async listProjectEdgeWorkerReleases(projectId: string): Promise<EdgeWorkerRelease[]> {
     const result = await this.pool.query(
       "select * from edge_worker_releases where project_id = $1 order by created_at desc, id desc",
       [projectId],
     );
     return result.rows.map(edgeWorkerReleaseFromRow);
+  }
+
+  async updateEdgeWorkerRelease(release: EdgeWorkerRelease): Promise<EdgeWorkerRelease> {
+    const result = await this.pool.query(
+      `update edge_worker_releases set
+        status = $1,
+        deleted_at = $2
+       where id = $3
+       returning *`,
+      [release.status, release.deletedAt ?? null, release.id],
+    );
+    if (result.rowCount === 0) {
+      throw new ControlPlaneError("not_found", `edge worker release ${release.id} was not found`);
+    }
+    return edgeWorkerReleaseFromRow(result.rows[0]);
   }
 
   async createProject(project: Project): Promise<Project> {
@@ -1355,6 +1379,7 @@ function edgeWorkerReleaseFromRow(row: any): EdgeWorkerRelease {
     deploymentId: row.deployment_id,
     provider: row.provider,
     mode: row.mode,
+    status: row.status ?? "active",
     scriptName: row.script_name,
     scriptDigest: row.script_digest,
     scriptModule: row.script_module,
@@ -1363,6 +1388,7 @@ function edgeWorkerReleaseFromRow(row: any): EdgeWorkerRelease {
     ...(row.version_id ? { versionId: row.version_id } : {}),
     ...(row.external_deployment_id ? { externalDeploymentId: row.external_deployment_id } : {}),
     ...(row.url ? { url: row.url } : {}),
+    ...(row.deleted_at ? { deletedAt: row.deleted_at } : {}),
   };
 }
 

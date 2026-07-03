@@ -104,7 +104,9 @@ export interface HttpAppOptions {
     deleteDurableObjectNamespace(input: any): MaybePromise<void>;
     createDeployment(input: any): MaybePromise<unknown>;
     createEdgeWorkerRelease(input: any): MaybePromise<unknown>;
+    getEdgeWorkerRelease(input: any): MaybePromise<unknown>;
     listProjectEdgeWorkerReleases(input: any): MaybePromise<unknown>;
+    deleteEdgeWorkerRelease(input: any): MaybePromise<unknown>;
     pointRoute(input: any): MaybePromise<unknown>;
     startRouteCanary(input: any): MaybePromise<unknown>;
     analyzeRouteCanary(input: any): MaybePromise<unknown>;
@@ -355,6 +357,23 @@ export function createHttpApp(options: HttpAppOptions) {
           200,
           await options.controlPlane.listProjectEdgeWorkerReleases({
             projectId: projectEdgeWorkerReleases.projectId,
+          }),
+        );
+        return;
+      }
+      const edgeWorkerRelease = edgeWorkerReleaseMatch(method, url.pathname);
+      if (edgeWorkerRelease && method === "GET") {
+        writeJson(response, 200, await options.controlPlane.getEdgeWorkerRelease({ id: edgeWorkerRelease.id }));
+        return;
+      }
+      if (edgeWorkerRelease && method === "DELETE") {
+        writeJson(
+          response,
+          200,
+          await options.controlPlane.deleteEdgeWorkerRelease({
+            id: edgeWorkerRelease.id,
+            deleteProvider: truthy(url.searchParams.get("provider") ?? undefined),
+            forceProviderDelete: truthy(url.searchParams.get("force") ?? undefined),
           }),
         );
         return;
@@ -1042,6 +1061,9 @@ function requiredScopeFor(method: string, pathname: string, body?: unknown): Api
   if (method === "POST" && pathname === "/edge-workers/releases" && bodyHasMode(body, "api")) {
     return "publish";
   }
+  if (method === "DELETE" && /^\/edge-workers\/releases\/[^/]+$/.test(pathname)) {
+    return "publish";
+  }
   if (
     (method === "POST" && pathname === "/snapshots/routes/publish") ||
     (method === "PUT" && pathname === "/replication/snapshots/routes")
@@ -1056,6 +1078,11 @@ function requiredScopeFor(method: string, pathname: string, body?: unknown): Api
 
 function bodyHasMode(body: unknown, mode: string): boolean {
   return typeof body === "object" && body !== null && "mode" in body && (body as any).mode === mode;
+}
+
+function truthy(value: string | undefined): boolean {
+  const normalized = value?.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes";
 }
 
 function installAuditHook(
@@ -1764,6 +1791,17 @@ function projectEdgeWorkerReleasesMatch(method: string, pathname: string): { pro
     return undefined;
   }
   return { projectId: decodeURIComponent(match[1]) };
+}
+
+function edgeWorkerReleaseMatch(method: string, pathname: string): { id: string } | undefined {
+  if (method !== "GET" && method !== "DELETE") {
+    return undefined;
+  }
+  const match = /^\/edge-workers\/releases\/([^/]+)$/.exec(pathname);
+  if (!match) {
+    return undefined;
+  }
+  return { id: decodeURIComponent(match[1]) };
 }
 
 function deployPreviewRollbackMatch(method: string, pathname: string): { id: string } | undefined {

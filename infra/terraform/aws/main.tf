@@ -227,10 +227,10 @@ resource "aws_ecs_task_definition" "control" {
 
   container_definitions = jsonencode([
     {
-      name      = "control"
-      image     = var.control_image
-      essential = true
-      command   = ["node", "--experimental-strip-types", "src/main.ts"]
+      name         = "control"
+      image        = var.control_image
+      essential    = true
+      command      = ["node", "--experimental-strip-types", "src/main.ts"]
       portMappings = [{ containerPort = 8080, protocol = "tcp" }]
       environment  = local.control_env
       secrets = [
@@ -265,10 +265,10 @@ resource "aws_ecs_task_definition" "runtime" {
 
   container_definitions = jsonencode([
     {
-      name      = "runtime"
-      image     = var.runtime_image
-      essential = true
-      command   = ["node", "--experimental-strip-types", "src/runtime/main.ts"]
+      name         = "runtime"
+      image        = var.runtime_image
+      essential    = true
+      command      = ["node", "--experimental-strip-types", "src/runtime/main.ts"]
       portMappings = [{ containerPort = 8080, protocol = "tcp" }]
       environment  = local.runtime_env
       secrets = [

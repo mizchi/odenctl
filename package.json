@@ -19,6 +19,7 @@
     "rust-daemon-bench": "node --experimental-strip-types src/rust-daemon-bench.ts",
     "ops-smoke": "node --experimental-strip-types src/ops-smoke.ts",
     "alarm-demo-smoke": "node --experimental-strip-types src/alarm-demo-smoke.ts",
+    "cloudflare-control-smoke": "node --experimental-strip-types src/cloudflare-control-smoke.ts",
     "fly-scale-eval": "node --experimental-strip-types src/fly-scale-eval.ts",
     "perf-check": "node --experimental-strip-types src/perf-regression.ts",
     "formal:route-placement": "node --experimental-strip-types formal/route-snapshot-placement.model.ts",

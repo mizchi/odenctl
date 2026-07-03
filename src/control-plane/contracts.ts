@@ -228,6 +228,7 @@ export interface Deployment {
 
 export type EdgeWorkerProvider = "cloudflare-workers";
 export type EdgeWorkerReleaseMode = "mock" | "api";
+export type EdgeWorkerReleaseStatus = "active" | "deleted";
 
 export interface EdgeWorkerRelease {
   id: string;
@@ -235,6 +236,7 @@ export interface EdgeWorkerRelease {
   deploymentId: string;
   provider: EdgeWorkerProvider;
   mode: EdgeWorkerReleaseMode;
+  status: EdgeWorkerReleaseStatus;
   scriptName: string;
   scriptDigest: string;
   scriptModule: string;
@@ -247,6 +249,7 @@ export interface EdgeWorkerRelease {
   versionId?: string;
   externalDeploymentId?: string;
   url?: string;
+  deletedAt?: string;
 }
 
 export interface RoutePointer {

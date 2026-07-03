@@ -473,6 +473,27 @@ Fly.io trial では:
 single-region estimate は README の cost estimator にまとめる。現状の前提では、最小というより
 ある程度アクセスがある前提の構成で、control/runtime/collector/Postgres を常時起動する。
 
+## ADR: Cloudflare Backend Strategy
+
+Decision: the control plane POC uses Cloudflare Containers. The production Wasmtime runtime stays on container-capable infrastructure such as Fly Machines, ECS/Fargate, GKE, EKS, or Cloud Run.
+The native Cloudflare backend is a separate target that can use Workers, Durable Objects, R2, D1, and
+Queues without pretending to be the same runtime-node architecture.
+
+理由:
+
+- Wasmtime + WASIp3 + `.cwasm` + pooling allocator は、long-lived runtime process と node-local
+  cache を前提にした方が性能と分離境界を説明しやすい
+- Cloudflare Workers の isolate は高密度だが、現行 wasmplane の Wasmtime host daemon をそのまま
+  Worker isolate 内に移す前提にはできない
+- Cloudflare Containers は既存 Docker image を動かせるため control-plane smoke や API lifecycle の
+  検証には向くが、container disk は production-persistent store として扱わない
+- Cloudflare-native backend を作る場合は、runtime node registry/snapshot publish をそのまま移植せず、
+  Durable Objects/R2/D1 を使う別 provider adapter として設計する
+
+この ADR により、Cloudflare Containers は control-plane compatibility と release-lifecycle POC の位置付けに
+固定する。production の Wasmtime runtime は、runtime node の direct addressability、warmup、drain、
+node-local `.cwasm` cache、OTEL/metrics を運用できる基盤を優先する。
+
 ## Current Limitations
 
 - WASIp3/component model 前提だが、guest toolchain と host ABI の安定性には追従が必要

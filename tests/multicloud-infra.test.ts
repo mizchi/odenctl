@@ -5,12 +5,21 @@ import { test } from "node:test";
 test("multi-cloud infra roadmap covers AWS, GCP, and Cloudflare Containers", async () => {
   const todo = await readFile("TODO.md", "utf8");
   const readme = await readFile("README.md", "utf8");
+  const justfile = await readFile("justfile", "utf8");
+  const workflow = await readFile(".github/workflows/ci.yml", "utf8");
 
   assert.match(todo, /## 37\. Multi-cloud infrastructure/);
   assert.match(todo, /AWS ECS\/Fargate/);
   assert.match(todo, /GCP Cloud Run/);
   assert.match(todo, /Cloudflare Containers control-plane POC/);
   assert.match(readme, /## Multi-cloud Deploy POC/);
+  assert.match(justfile, /^tofu-fmt-check:/m);
+  assert.match(justfile, /^tofu-validate:/m);
+  assert.match(await readFile("infra/terraform/aws/.terraform.lock.hcl", "utf8"), /registry\.opentofu\.org\/hashicorp\/aws/);
+  assert.match(await readFile("infra/terraform/gcp/.terraform.lock.hcl", "utf8"), /registry\.opentofu\.org\/hashicorp\/google/);
+  assert.match(workflow, /opentofu\/setup-opentofu/);
+  assert.match(workflow, /just tofu-fmt-check/);
+  assert.match(workflow, /just tofu-validate/);
 });
 
 test("AWS Terraform scaffold defines ECS control and runtime services", async () => {
@@ -55,4 +64,13 @@ test("Cloudflare Containers control-plane POC routes Worker requests to the cont
   assert.match(worker, /getContainer\(env\.CONTROL_CONTAINER/);
   assert.match(worker, /containerFetch\(request\)/);
   assert.match(readme, /wrangler deploy/);
+});
+
+test("Cloudflare backend decision is recorded as an ADR", async () => {
+  const design = await readFile("DESIGN.md", "utf8");
+
+  assert.match(design, /## ADR: Cloudflare Backend Strategy/);
+  assert.match(design, /control plane POC uses Cloudflare Containers/);
+  assert.match(design, /production Wasmtime runtime stays on container-capable infrastructure/);
+  assert.match(design, /native Cloudflare backend is a separate target/);
 });

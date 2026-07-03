@@ -474,6 +474,16 @@ export interface ListProjectEdgeWorkerReleasesInput {
   projectId: string;
 }
 
+export interface GetEdgeWorkerReleaseInput {
+  id: string;
+}
+
+export interface DeleteEdgeWorkerReleaseInput {
+  id: string;
+  deleteProvider?: boolean;
+  forceProviderDelete?: boolean;
+}
+
 export interface PointRouteInput {
   id?: string;
   projectId: string;
@@ -1356,6 +1366,7 @@ export function createControlPlane(options: ControlPlaneOptions) {
       deploymentId: deployment.id,
       provider,
       mode: result.mode,
+      status: "active",
       scriptName,
       scriptDigest: result.scriptDigest,
       scriptModule: result.scriptModule,
@@ -1368,11 +1379,55 @@ export function createControlPlane(options: ControlPlaneOptions) {
     return repository.createEdgeWorkerRelease(release);
   }
 
+  function getEdgeWorkerRelease(input: GetEdgeWorkerReleaseInput): EdgeWorkerRelease {
+    return requireEdgeWorkerRelease(repository, input.id);
+  }
+
   function listProjectEdgeWorkerReleases(
     input: ListProjectEdgeWorkerReleasesInput,
   ): EdgeWorkerRelease[] {
     requireProject(repository, input.projectId);
     return repository.listProjectEdgeWorkerReleases(input.projectId);
+  }
+
+  async function deleteEdgeWorkerRelease(input: DeleteEdgeWorkerReleaseInput): Promise<EdgeWorkerRelease> {
+    const release = requireEdgeWorkerRelease(repository, input.id);
+    if (release.status === "deleted") {
+      return release;
+    }
+    if (input.deleteProvider) {
+      const result = await edgeWorkerDeployer.delete?.({
+        releaseId: release.id,
+        scriptName: release.scriptName,
+        force: input.forceProviderDelete,
+      });
+      if (!result?.deleted) {
+        throw new ControlPlaneError("validation", "edge worker deployer did not confirm deletion");
+      }
+      if (result.provider !== release.provider) {
+        throw new ControlPlaneError(
+          "validation",
+          `edge worker deployer returned provider ${result.provider}, expected ${release.provider}`,
+        );
+      }
+      if (result.mode !== release.mode) {
+        throw new ControlPlaneError(
+          "validation",
+          `edge worker deployer returned mode ${result.mode}, expected ${release.mode}`,
+        );
+      }
+      if (result.scriptName !== release.scriptName) {
+        throw new ControlPlaneError(
+          "validation",
+          `edge worker deployer deleted script ${result.scriptName}, expected ${release.scriptName}`,
+        );
+      }
+    }
+    return repository.updateEdgeWorkerRelease({
+      ...release,
+      status: "deleted",
+      deletedAt: now(),
+    });
   }
 
   function pointRoute(input: PointRouteInput): RoutePointer {
@@ -1649,7 +1704,9 @@ export function createControlPlane(options: ControlPlaneOptions) {
     deleteDurableObjectNamespace,
     createDeployment,
     createEdgeWorkerRelease,
+    getEdgeWorkerRelease,
     listProjectEdgeWorkerReleases,
+    deleteEdgeWorkerRelease,
     pointRoute,
     startRouteCanary,
     analyzeRouteCanary,
@@ -1852,6 +1909,14 @@ function requireDeployPreview(repository: ControlPlaneRepository, id: string): D
     throw new ControlPlaneError("not_found", `deploy preview ${id} was not found`);
   }
   return preview;
+}
+
+function requireEdgeWorkerRelease(repository: ControlPlaneRepository, id: string): EdgeWorkerRelease {
+  const release = repository.getEdgeWorkerRelease(id);
+  if (!release) {
+    throw new ControlPlaneError("not_found", `edge worker release ${id} was not found`);
+  }
+  return release;
 }
 
 function enforceRouteCustomDomain(

@@ -97,6 +97,14 @@ test(
           secrets: [],
         },
       });
+      const edgeRelease = await control.createEdgeWorkerRelease({
+        id: `ewr_${suffix}`,
+        projectId: project.id,
+        deploymentId: deployment.id,
+        provider: "cloudflare-workers",
+        mode: "mock",
+        scriptName: `wasmplane-pg-${suffix}`,
+      });
       await control.pointRoute({
         projectId: project.id,
         host: `${suffix}.example.dev`,
@@ -151,6 +159,20 @@ test(
       assert.equal(
         (await control.listProjectDeployPreviews({ projectId: project.id }))[0]?.id,
         preview.id,
+      );
+      assert.equal(
+        (await control.getEdgeWorkerRelease({ id: edgeRelease.id })).status,
+        "active",
+      );
+      const deletedEdgeRelease = await control.deleteEdgeWorkerRelease({
+        id: edgeRelease.id,
+        deleteProvider: true,
+      });
+      assert.equal(deletedEdgeRelease.status, "deleted");
+      assert.equal(deletedEdgeRelease.deletedAt, fixedNow());
+      assert.equal(
+        (await control.listProjectEdgeWorkerReleases({ projectId: project.id }))[0]?.status,
+        "deleted",
       );
       assert.equal((await control.rollbackDeployPreview({ id: preview.id })).status, "rolled_back");
     } finally {

@@ -157,6 +157,15 @@ fly-scale-eval:
 fly-scale-eval-execute:
     pnpm fly-scale-eval -- --execute
 
+tofu-fmt-check:
+    tofu fmt -check -recursive infra/terraform
+
+tofu-validate:
+    tofu -chdir=infra/terraform/aws init -backend=false
+    tofu -chdir=infra/terraform/aws validate
+    tofu -chdir=infra/terraform/gcp init -backend=false
+    tofu -chdir=infra/terraform/gcp validate
+
 aws-terraform-plan:
     terraform -chdir=infra/terraform/aws init
     terraform -chdir=infra/terraform/aws plan
@@ -170,6 +179,9 @@ cloudflare-control-dev:
 
 cloudflare-control-deploy:
     cd cloudflare/containers-control && pnpm deploy
+
+cloudflare-control-smoke:
+    pnpm cloudflare-control-smoke
 
 dev:
     pnpm start

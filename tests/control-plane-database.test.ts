@@ -90,6 +90,8 @@ test("Postgres schema covers control-plane tables without SQLite-only syntax", a
   assert.match(sql, /create index if not exists edge_worker_releases_project_idx/);
   assert.match(sql, /statement_json jsonb not null/);
   assert.match(sql, /artifact_json jsonb not null/);
+  assert.match(sql, /status text not null default 'active' check \(status in \('active', 'deleted'\)\)/);
+  assert.match(sql, /deleted_at text/);
   assert.match(sql, /content_digest text not null/);
   assert.match(sql, /unique \(organization_id, period_key\)/);
   assert.match(sql, /payload_json jsonb not null/);

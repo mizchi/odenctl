@@ -25,6 +25,7 @@ test("project tooling keeps Wasm E2E portable", async () => {
   assert.match(justfile, /^fly-alarm-demo:/m);
   assert.match(justfile, /^fly-scale-eval:/m);
   assert.match(justfile, /^fly-scale-eval-execute:/m);
+  assert.match(justfile, /^cloudflare-control-smoke:/m);
   assert.match(justfile, /^rust-daemon-bench:/m);
   assert.match(justfile, /^coverage: node-coverage rust-coverage/m);
   assert.match(justfile, /^node-coverage:/m);
@@ -33,6 +34,7 @@ test("project tooling keeps Wasm E2E portable", async () => {
   assert.doesNotMatch(justfile, /\/Users\//);
   assert.match(packageJson.scripts["ops-smoke"], /src\/ops-smoke\.ts/);
   assert.match(packageJson.scripts["alarm-demo-smoke"], /src\/alarm-demo-smoke\.ts/);
+  assert.match(packageJson.scripts["cloudflare-control-smoke"], /src\/cloudflare-control-smoke\.ts/);
   assert.match(packageJson.scripts["fly-scale-eval"], /src\/fly-scale-eval\.ts/);
   assert.match(packageJson.scripts["rust-daemon-bench"], /src\/rust-daemon-bench\.ts/);
   assert.match(packageJson.scripts.coverage, /--experimental-test-coverage/);
@@ -60,6 +62,7 @@ test("project tooling keeps Wasm E2E portable", async () => {
   assert.match(readme, /WASMPLANE_DURABLE_OBJECT_ALARM_WEBHOOK_URL/);
   assert.match(readme, /just fly-alarm-demo/);
   assert.match(readme, /just fly-scale-eval/);
+  assert.match(readme, /just cloudflare-control-smoke/);
   assert.match(readme, /just rust-daemon-bench/);
   assert.match(readme, /just fly-smoke/);
   assert.match(readme, /just coverage/);
