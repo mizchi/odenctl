@@ -555,6 +555,15 @@ WASMPLANE_CLOUDFLARE_CONTROL_URL=https://wasmplane-control-container-poc.<worker
     --markdown-output reports/cloudflare-control-smoke.md
 ```
 
+Latest deployed Cloudflare Containers smoke was run on July 3, 2026 UTC against
+`https://wasmplane-control-container-poc.mizchi.workers.dev`. The initial smoke completed in
+2958ms with container health at 1439ms, control-plane writes, generated edge-worker release
+manifest/list, and release delete all returning success. The sleep/wakeup run waited about 11
+minutes, then returned container health in 58ms and post-wakeup health in 135ms while preserving the
+generated release record. Raw JSON/Markdown reports are written under `reports/` and ignored by Git;
+keep only this summary in the repository unless a report is intentionally promoted to a release
+artifact.
+
 AWS is closest to the current Fly shape: ECS/Fargate runs separate control-plane and runtime
 services behind an ALB, with S3 for artifacts. GCP Cloud Run can run the same containers, but it
 does not expose stable per-instance runtime addresses, so the scaffold uses a single runtime service
@@ -990,6 +999,14 @@ just sample-rust-moonbit-release
 The release recipe uploads `examples/rust-moonbit-release/target/rust-moonbit-release.component.wasm`,
 publishes a route for `rust-moonbit.sample.wasmplane.local`, and checks the runtime response with a
 `Host` header. A successful response contains `moonbit=42`.
+
+## Rust + MoonBit CI policy
+
+The default CI should keep the structural checks in `tests/project-files.test.ts` but the full build
+smoke stays out of default CI for now because it requires MoonBit, `wit-bindgen`, `wasm-tools`, the
+JCO WASI adapter, and a Rust wasm target. Run `just sample-rust-moonbit-smoke` locally or in a
+release gate before publishing. The sample still uses deprecated `wasm-tools compose`; track the
+move to `wac` in `TODO.md` before making the composed build a required CI job.
 
 Canary rollout can be driven through the control-plane API by first pointing a route at the stable
 deployment, then calling `POST /routes/canary` with a candidate deployment and weight. Rollback uses

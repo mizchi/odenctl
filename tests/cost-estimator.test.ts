@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  defaultCloudflareContainersPocCostInput,
   defaultProductionCostInput,
+  estimateCloudflareContainersMonthlyCost,
   estimateWasmplaneMonthlyCost,
   formatCostEstimateMarkdown,
 } from "../src/cost-estimator.ts";
@@ -45,4 +47,80 @@ test("cost estimate markdown includes assumptions and line items", () => {
   assert.match(markdown, /total monthly USD/);
   assert.match(markdown, /\| fly\.runtime\.machine \| 1 x performance-1x 2GB in nrt \| \$40\.54 \|/);
   assert.match(markdown, /\| cloudflare\.r2 \| within free tier \| \$0\.00 \|/);
+});
+
+test("Cloudflare Containers POC estimate stays at the paid plan floor for smoke usage", () => {
+  const estimate = estimateCloudflareContainersMonthlyCost(defaultCloudflareContainersPocCostInput());
+
+  assert.equal(estimate.totalMonthlyUsd, 5);
+  assert.deepEqual(
+    estimate.items.map((item) => [item.name, item.monthlyUsd]),
+    [
+      ["cloudflare.workers.paid_plan", 5],
+      ["cloudflare.containers.memory", 0],
+      ["cloudflare.containers.cpu", 0],
+      ["cloudflare.containers.disk", 0],
+      ["cloudflare.workers.requests", 0],
+      ["cloudflare.workers.cpu", 0],
+      ["cloudflare.durable_objects.requests", 0],
+      ["cloudflare.durable_objects.duration", 0],
+      ["cloudflare.workers.logs", 0],
+      ["cloudflare.containers.egress", 0],
+    ],
+  );
+});
+
+test("Cloudflare Containers estimate prices an always-on lite control plane", () => {
+  const estimate = estimateCloudflareContainersMonthlyCost({
+    ...defaultCloudflareContainersPocCostInput(),
+    activeHoursPerMonth: 720,
+    averageCpuUtilization: 0.2,
+    workerRequests: 1_000_000,
+    workerCpuMs: 3_000_000,
+    durableObjectRequests: 1_000_000,
+    logEvents: 1_000_000,
+    egressGb: 50,
+  });
+
+  assert.equal(estimate.totalMonthlyUsd, 6.91);
+  assert.deepEqual(
+    estimate.items
+      .filter((item) => item.monthlyUsd > 0)
+      .map((item) => [item.name, item.monthlyUsd]),
+    [
+      ["cloudflare.workers.paid_plan", 5],
+      ["cloudflare.containers.memory", 1.4],
+      ["cloudflare.containers.cpu", 0.2],
+      ["cloudflare.containers.disk", 0.31],
+    ],
+  );
+});
+
+test("Cloudflare Containers estimate includes multi-instance DO, logs, request, and egress overages", () => {
+  const estimate = estimateCloudflareContainersMonthlyCost({
+    ...defaultCloudflareContainersPocCostInput(),
+    instances: 10,
+    activeHoursPerMonth: 720,
+    averageCpuUtilization: 0.2,
+    workerRequests: 50_000_000,
+    workerCpuMs: 100_000_000,
+    durableObjectRequests: 50_000_000,
+    logEvents: 50_000_000,
+    egressGb: 700,
+  });
+
+  assert.equal(estimate.totalMonthlyUsd, 112.84);
+});
+
+test("Cloudflare Containers estimate markdown labels instance assumptions", () => {
+  const markdown = formatCostEstimateMarkdown(
+    estimateCloudflareContainersMonthlyCost({
+      ...defaultCloudflareContainersPocCostInput(),
+      activeHoursPerMonth: 720,
+      averageCpuUtilization: 0.2,
+    }),
+  );
+
+  assert.match(markdown, /\| cloudflare\.containers\.memory \| 1 x lite, 720h, 256MiB \| \$1\.40 \|/);
+  assert.match(markdown, /\| cloudflare\.containers\.cpu \| 1 x lite, 20% average CPU while active \| \$0\.20 \|/);
 });

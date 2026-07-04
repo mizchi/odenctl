@@ -306,4 +306,8 @@ Production readiness tasks, in implementation order.
 - [x] Add a local `just release-check` SRE gate for tests, Rust tests, OpenTofu validation, and diff hygiene.
 - [x] Add OpenTofu fmt/validate checks for AWS and GCP scaffolds to CI.
 - [x] Decide whether Cloudflare production mode uses Containers for runtime, or Workers/Durable Objects/R2/D1 as a separate native backend.
-- [ ] Run the Cloudflare Containers smoke harness against the deployed Worker/container pair and capture logs/cold-start numbers.
+- [x] Run the Cloudflare Containers smoke harness against the deployed Worker/container pair and capture logs/cold-start numbers.
+
+## 38. Component composition tooling
+
+- [ ] Replace deprecated `wasm-tools compose` with `wac` for the Rust + MoonBit release sample.

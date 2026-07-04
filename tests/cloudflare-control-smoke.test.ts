@@ -120,6 +120,7 @@ test("Cloudflare control smoke verifies health, local SQLite, release creation, 
   assert.equal(result.ok, true);
   assert.equal(result.checks.every((check) => check.ok), true);
   assert.equal(result.checks.find((check) => check.name === "container health")?.elapsedMs, 125);
+  assert.equal(result.checks.find((check) => check.name === "post-wakeup health")?.elapsedMs, 125);
   assert.equal(result.checks.find((check) => check.name === "local SQLite fallback")?.ok, true);
   assert.equal(result.checks.find((check) => check.name === "post-wakeup release persistence")?.ok, true);
   assert.equal(result.checks.find((check) => check.name === "edge release delete")?.ok, true);

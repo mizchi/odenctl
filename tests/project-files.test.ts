@@ -133,3 +133,22 @@ test("Rust and MoonBit release sample composes a runtime worker", async () => {
   assert.match(moonbitModule, /"name": "myedge\/runtime"/);
   assert.match(moonbitPing, /pub fn ping\(value : UInt\) -> UInt/);
 });
+
+test("project docs track Cloudflare smoke results and composition CI policy", async () => {
+  const readme = await readFile("README.md", "utf8");
+  const todo = await readFile("TODO.md", "utf8");
+  const gitignore = await readFile(".gitignore", "utf8");
+
+  assert.match(gitignore, /^reports\/$/m);
+  assert.match(
+    todo,
+    /- \[x\] Run the Cloudflare Containers smoke harness against the deployed Worker\/container pair and capture logs\/cold-start numbers\./,
+  );
+  assert.match(todo, /Replace deprecated `wasm-tools compose` with `wac`/);
+  assert.match(readme, /Latest deployed Cloudflare Containers smoke/);
+  assert.match(readme, /container health.*1439ms/);
+  assert.match(readme, /post-wakeup health.*135ms/);
+  assert.match(readme, /## Rust \+ MoonBit CI policy/);
+  assert.match(readme, /full build\s+smoke stays out of default CI/);
+  assert.match(readme, /`wac`/);
+});

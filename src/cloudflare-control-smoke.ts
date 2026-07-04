@@ -223,11 +223,13 @@ export async function runCloudflareControlSmoke(
 
   if (input.wakeDelayMs > 0) {
     await sleepImpl(input.wakeDelayMs);
-    checks.push(await checkJson(
+    checks.push(await checkTimedJson(
       fetchImpl,
       "post-wakeup health",
       `${input.controlUrl}/healthz`,
       undefined,
+      nowMs,
+      input.maxContainerHealthMs,
       (body) => body?.ok === true,
     ));
     checks.push((await readJsonCheck(
