@@ -149,13 +149,23 @@ const defaultLimits: RuntimeLimits = {
   hostCalls: 100,
 };
 
+class HttpRequestError extends Error {
+  readonly status: number;
+  readonly bodyText: string;
+
+  constructor(message: string, status: number, bodyText: string) {
+    super(message);
+    this.status = status;
+    this.bodyText = bodyText;
+  }
+}
+
 export async function deployComponent(input: DeployComponentInput): Promise<DeployComponentResult> {
   const fetchImpl = input.fetch ?? fetch;
   const bytes = await readFile(input.componentPath);
   const digest = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
   const suffix = digest.slice("sha256:".length, "sha256:".length + 16);
   const artifactId = input.artifactId ?? `art_${suffix}`;
-  const deploymentId = input.deploymentId ?? `dep_${suffix}`;
   const routeId = input.routeId;
   const limits = { ...defaultLimits, ...(input.limits ?? {}) };
   const runtime: RuntimeSpec = {
@@ -175,6 +185,15 @@ export async function deployComponent(input: DeployComponentInput): Promise<Depl
     arbitrarySockets: false,
     processSpawn: false,
   };
+  const deterministicDeploymentId = `dep_${hashSuffix({
+    artifactId,
+    capabilities,
+    limits,
+    projectId: input.projectId,
+    runtime,
+    world: MVP_WORKER_WORLD,
+  })}`;
+  const deploymentId = input.deploymentId ?? deterministicDeploymentId;
   const currentSnapshot = input.diff
     ? await getJson(fetchImpl, input.controlPlaneUrl, "/snapshots/routes", input.token) as RouteSnapshot
     : undefined;
@@ -184,7 +203,7 @@ export async function deployComponent(input: DeployComponentInput): Promise<Depl
     projectId: input.projectId,
     bytesBase64: bytes.toString("base64"),
   });
-  const deployment = await postJson(fetchImpl, input.controlPlaneUrl, "/deployments", input.token, {
+  const deploymentRequest = {
     id: deploymentId,
     projectId: input.projectId,
     artifactId: artifact.id,
@@ -192,7 +211,8 @@ export async function deployComponent(input: DeployComponentInput): Promise<Depl
     runtime,
     limits,
     capabilities,
-  });
+  };
+  const deployment = await createDeployment(fetchImpl, input, deploymentRequest, input.deploymentId === undefined);
   const route = await putJson(fetchImpl, input.controlPlaneUrl, "/routes", input.token, {
     ...(routeId ? { id: routeId } : {}),
     projectId: input.projectId,
@@ -229,6 +249,26 @@ export async function deployComponent(input: DeployComponentInput): Promise<Depl
     : undefined;
 
   return { artifact, deployment, route, publish, diff };
+}
+
+async function createDeployment(
+  fetchImpl: FetchFunction,
+  input: Pick<DeployComponentInput, "controlPlaneUrl" | "token">,
+  deployment: any,
+  idempotentConflict: boolean,
+) {
+  try {
+    return await postJson(fetchImpl, input.controlPlaneUrl, "/deployments", input.token, deployment);
+  } catch (error) {
+    if (idempotentConflict && error instanceof HttpRequestError && error.status === 409) {
+      return {
+        ...deployment,
+        worldVersion: MVP_WORKER_WORLD_VERSION,
+        reused: true,
+      };
+    }
+    throw error;
+  }
 }
 
 export async function runDevCommand(input: DevCommandInput): Promise<DevCommandResult> {
@@ -793,9 +833,26 @@ async function requestJson(
   });
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(`${method} ${path} failed with ${response.status}: ${text}`);
+    throw new HttpRequestError(`${method} ${path} failed with ${response.status}: ${text}`, response.status, text);
   }
   return response.json();
+}
+
+function hashSuffix(value: unknown): string {
+  return createHash("sha256").update(stableJson(value)).digest("hex").slice(0, 16);
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableJson(item)).join(",")}]`;
+  }
+  if (value && typeof value === "object") {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
 }
 
 async function readRuntimeLogs(

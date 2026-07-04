@@ -18,6 +18,7 @@ import { registerRuntimeNode, sendRuntimeHeartbeat } from "../src/runtime/heartb
 import { signRuntimeIdentityHeaders } from "../src/runtime/identity.ts";
 import { createEnvSecretStore, createRepositorySecretStore } from "../src/runtime/secrets.ts";
 import { createRuntimeSupervisor } from "../src/runtime/supervisor.ts";
+import { proxyWasip3HostDaemonWorkerRequest } from "../src/runtime/wasip3-host.ts";
 
 test("runtime node binds IPv6 wildcard as dual-stack for Fly private networking", () => {
   assert.deepEqual(runtimeNodeHttpListenOptions({ port: 8080, host: "::" }), {
@@ -587,6 +588,25 @@ test("runtime node can proxy matched worker requests through host daemon routes"
   } finally {
     await app.close();
   }
+});
+
+test("host daemon worker proxy forwards host as x-forwarded-host", async () => {
+  let proxiedHeaders = new Headers();
+  const response = await proxyWasip3HostDaemonWorkerRequest({
+    url: "http://127.0.0.1:8790",
+    fetch: async (_url, init) => {
+      proxiedHeaders = new Headers(init?.headers);
+      return new Response("ok", { status: 200 });
+    },
+  }, {
+    method: "GET",
+    path: "/sample",
+    headers: [{ name: "host", value: "rust-moonbit.sample.wasmplane.local" }],
+    body: new Uint8Array(),
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(proxiedHeaders.get("x-forwarded-host"), "rust-moonbit.sample.wasmplane.local");
 });
 
 test("runtime node does not proxy worker paths that collide with host daemon management endpoints", async () => {

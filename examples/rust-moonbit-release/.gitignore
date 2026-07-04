@@ -1,0 +1,5 @@
+target/
+rust-worker/target/
+moonbit-ping/_build/
+moonbit-ping/gen/
+moonbit-ping/world/

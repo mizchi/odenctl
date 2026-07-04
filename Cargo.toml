@@ -1,6 +1,11 @@
 [workspace]
 members = ["crates/wasip3-host"]
-exclude = ["examples/hello-worker", "examples/reset-worker", "examples/rust-interop"]
+exclude = [
+  "examples/hello-worker",
+  "examples/reset-worker",
+  "examples/rust-interop",
+  "examples/rust-moonbit-release/rust-worker",
+]
 resolver = "3"
 
 [workspace.package]

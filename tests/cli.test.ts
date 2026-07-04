@@ -121,6 +121,63 @@ test("CLI deploy flow uploads component, creates deployment, points route, and p
   assert.equal(result.publish.ok, true);
 });
 
+test("CLI deploy treats deterministic deployment conflicts as idempotent", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "wasmplane-cli-deploy-conflict-"));
+  const componentPath = join(dir, "worker.component.wasm");
+  const componentBytes = Buffer.from("component bytes");
+  await writeFile(componentPath, componentBytes);
+  const calls: Array<{ path: string; method: string; body: any }> = [];
+
+  const result = await deployComponent({
+    controlPlaneUrl: "http://control-plane.local",
+    projectId: "prj_hello",
+    componentPath,
+    host: "hello.example.dev",
+    pathPrefix: "/",
+    limits: { wallMs: 2500 },
+    publish: true,
+    fetch: async (url, init) => {
+      const parsed = new URL(url);
+      const body = init?.body ? JSON.parse(init.body) : {};
+      calls.push({ path: parsed.pathname, method: init?.method ?? "GET", body });
+      if (parsed.pathname === "/artifacts/local") {
+        return jsonResponse(201, {
+          id: body.id,
+          projectId: body.projectId,
+          digest: `sha256:${createHash("sha256").update(componentBytes).digest("hex")}`,
+          location: "file:///tmp/artifact.component.wasm",
+          sizeBytes: componentBytes.byteLength,
+        });
+      }
+      if (parsed.pathname === "/deployments") {
+        return jsonResponse(409, { error: { code: "conflict", message: `deployment ${body.id} already exists` } });
+      }
+      if (parsed.pathname === "/routes") {
+        return jsonResponse(200, { id: "rte_cli", projectId: body.projectId, deploymentId: body.deploymentId });
+      }
+      if (parsed.pathname === "/snapshots/routes/publish") {
+        return jsonResponse(200, { ok: true, targets: [] });
+      }
+      return jsonResponse(404, { error: { code: "not_found" } });
+    },
+  });
+
+  assert.deepEqual(
+    calls.map((call) => [call.method, call.path]),
+    [
+      ["POST", "/artifacts/local"],
+      ["POST", "/deployments"],
+      ["PUT", "/routes"],
+      ["POST", "/snapshots/routes/publish"],
+    ],
+  );
+  assert.match(calls[1]?.body.id, /^dep_[0-9a-f]{16}$/);
+  assert.notEqual(calls[1]?.body.id, calls[0]?.body.id.replace(/^art_/, "dep_"));
+  assert.equal(result.deployment.id, calls[1]?.body.id);
+  assert.equal(result.route.deploymentId, calls[1]?.body.id);
+  assert.equal(result.publish.ok, true);
+});
+
 test("CLI deploy args parse capability bindings and limit overrides", () => {
   const input = parseDeployArgs(
     [

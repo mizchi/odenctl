@@ -1,0 +1,13 @@
+[package]
+name = "rust-moonbit-release-worker"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+wit-bindgen = { version = "0.51.0", features = ["async", "bitflags"] }
+
+[lib]
+crate-type = ["cdylib"]
+
+[package.metadata.component]
+package = "myedge:rust-moonbit-release-worker"

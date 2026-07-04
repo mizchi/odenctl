@@ -455,10 +455,21 @@ function daemonErrorMessage(text: string, status: number): string {
 
 function requestHeadersInit(headers: RuntimeHeader[]): Headers {
   const result = new Headers();
+  let host: string | undefined;
+  let hasForwardedHost = false;
   for (const header of headers) {
+    if (header.name.toLowerCase() === "host" && !host) {
+      host = header.value;
+    }
+    if (header.name.toLowerCase() === "x-forwarded-host") {
+      hasForwardedHost = true;
+    }
     if (!hopByHopHeader(header.name)) {
       result.append(header.name, header.value);
     }
+  }
+  if (!hasForwardedHost && host) {
+    result.set("x-forwarded-host", host);
   }
   return result;
 }

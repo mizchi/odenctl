@@ -6,10 +6,21 @@ guest_component := "examples/hello-worker/target/wasm32-wasip1/debug/hello_worke
 rust_interop_wasm := "examples/rust-interop/target/wasm32-wasip1/debug/rust_interop.wasm"
 rust_interop_component := "examples/rust-interop/target/wasm32-wasip1/debug/rust_interop.component.wasm"
 moonbit_interop_component := "examples/moonbit-interop/target/moonbit-interop.component.wasm"
+sample_rust_moonbit_dir := "examples/rust-moonbit-release"
+sample_rust_moonbit_rust_wasm := sample_rust_moonbit_dir + "/rust-worker/target/wasm32-wasip1/release/rust_moonbit_release_worker.wasm"
+sample_rust_moonbit_rust_component := sample_rust_moonbit_dir + "/target/rust-worker.component.wasm"
+sample_rust_moonbit_moonbit_core := sample_rust_moonbit_dir + "/moonbit-ping/_build/wasm/release/build/gen/gen.wasm"
+sample_rust_moonbit_moonbit_embedded := sample_rust_moonbit_dir + "/target/moonbit-ping.embedded.wasm"
+sample_rust_moonbit_moonbit_component := sample_rust_moonbit_dir + "/target/moonbit-ping.wasm"
+sample_rust_moonbit_component := sample_rust_moonbit_dir + "/target/rust-moonbit-release.component.wasm"
 fly_control_app := env_var_or_default("FLY_CONTROL_APP", "mz-wasmplane-control")
 fly_runtime_app := env_var_or_default("FLY_RUNTIME_APP", "mz-wasmplane-runtime")
 fly_collector_app := env_var_or_default("FLY_COLLECTOR_APP", "mz-wasmplane-otel-collector")
 fly_region := env_var_or_default("FLY_REGION", "nrt")
+fly_control_url := env_var_or_default("WASMPLANE_CONTROL_PLANE_URL", "https://mz-wasmplane-control.fly.dev")
+fly_runtime_url := env_var_or_default("WASMPLANE_RUNTIME_URL", "https://mz-wasmplane-runtime.fly.dev")
+sample_rust_moonbit_project := env_var_or_default("WASMPLANE_SAMPLE_PROJECT_ID", "prj_rust_moonbit_release")
+sample_rust_moonbit_host := env_var_or_default("WASMPLANE_SAMPLE_HOST", "rust-moonbit.sample.wasmplane.local")
 perf_iterations := env_var_or_default("WASMPLANE_PERF_ITERATIONS", "20")
 perf_warmup := env_var_or_default("WASMPLANE_PERF_WARMUP", "2")
 perf_concurrency := env_var_or_default("WASMPLANE_PERF_CONCURRENCY", "1,4")
@@ -83,6 +94,41 @@ interop-moonbit-build:
 interop-smoke: interop-rust-build interop-moonbit-build
     wasmtime run --invoke 'ping("hello-rust")' "{{ rust_interop_component }}" | grep '"hello-rust"'
     wasmtime run --invoke 'ping("hello-moonbit")' "{{ moonbit_interop_component }}" | grep '"hello-moonbit"'
+
+sample-rust-moonbit-rust-bindings:
+    wit-bindgen rust "{{ sample_rust_moonbit_dir }}/wit/worker.wit" --world worker --out-dir /tmp/wasmplane-rust-moonbit-worker-wbg
+    cp /tmp/wasmplane-rust-moonbit-worker-wbg/worker.rs "{{ sample_rust_moonbit_dir }}/rust-worker/src/bindings.rs"
+
+sample-rust-moonbit-rust-build: sample-rust-moonbit-rust-bindings
+    RUSTC=$(rustup which rustc --toolchain stable) rustup run stable cargo build --manifest-path "{{ sample_rust_moonbit_dir }}/rust-worker/Cargo.toml" --target wasm32-wasip1 --release
+    test -f "{{ wasi_adapter }}"
+    mkdir -p "{{ sample_rust_moonbit_dir }}/target"
+    wasm-tools component new "{{ sample_rust_moonbit_rust_wasm }}" --adapt "{{ wasi_adapter }}" -o "{{ sample_rust_moonbit_rust_component }}"
+    wasm-tools component wit "{{ sample_rust_moonbit_rust_component }}" >/dev/null
+
+sample-rust-moonbit-moonbit-bindings:
+    cd "{{ sample_rust_moonbit_dir }}/moonbit-ping" && wit-bindgen moonbit ../wit/ping.wit --world ping-world --out-dir . --derive-show --derive-eq
+    cp "{{ sample_rust_moonbit_dir }}/moonbit-ping/src/ping.mbt" "{{ sample_rust_moonbit_dir }}/moonbit-ping/gen/interface/myedge/runtime/bridge/stub.mbt"
+
+sample-rust-moonbit-moonbit-build: sample-rust-moonbit-moonbit-bindings
+    cd "{{ sample_rust_moonbit_dir }}/moonbit-ping" && moon build --target wasm --release
+    mkdir -p "{{ sample_rust_moonbit_dir }}/target"
+    wasm-tools component embed "{{ sample_rust_moonbit_dir }}/wit/ping.wit" "{{ sample_rust_moonbit_moonbit_core }}" --encoding utf16 --output "{{ sample_rust_moonbit_moonbit_embedded }}"
+    wasm-tools component new "{{ sample_rust_moonbit_moonbit_embedded }}" --output "{{ sample_rust_moonbit_moonbit_component }}"
+    wasm-tools component wit "{{ sample_rust_moonbit_moonbit_component }}" >/dev/null
+
+sample-rust-moonbit-build: sample-rust-moonbit-rust-build sample-rust-moonbit-moonbit-build
+    wasm-tools compose "{{ sample_rust_moonbit_rust_component }}" -d "{{ sample_rust_moonbit_moonbit_component }}" -o "{{ sample_rust_moonbit_component }}"
+    wasm-tools component wit "{{ sample_rust_moonbit_component }}" >/dev/null
+
+sample-rust-moonbit-smoke: rust-build sample-rust-moonbit-build
+    target/debug/wasmplane-wasip3-host compile --component "{{ sample_rust_moonbit_component }}" --out "{{ sample_rust_moonbit_dir }}/target/rust-moonbit-release.cwasm"
+    target/debug/wasmplane-wasip3-host invoke --component "{{ sample_rust_moonbit_component }}" --method GET --uri "https://{{ sample_rust_moonbit_host }}/sample" --body '' --cpu-ms 1000 --wall-ms 5000 --memory-mb 128 | grep 'moonbit=42'
+
+sample-rust-moonbit-release: sample-rust-moonbit-build
+    body=$(mktemp); http_status=$(curl -sS -o "$body" -w "%{http_code}" -X POST "{{ fly_control_url }}/projects" -H "authorization: Bearer $WASMPLANE_CONTROL_PLANE_TOKEN" -H "content-type: application/json" -d '{"id":"{{ sample_rust_moonbit_project }}","name":"Rust MoonBit release sample"}'); if [[ "$http_status" != "201" && "$http_status" != "409" ]]; then cat "$body"; exit 1; fi
+    pnpm wasmplane deploy --control-plane-url "{{ fly_control_url }}" --project-id "{{ sample_rust_moonbit_project }}" --component "{{ sample_rust_moonbit_component }}" --host "{{ sample_rust_moonbit_host }}" --path-prefix / --limit cpuMs=1000 --limit wallMs=5000 --limit memoryMb=128 --diff
+    for attempt in {1..30}; do body=$(mktemp); http_status=$(curl -sS -o "$body" -w "%{http_code}" -H "Host: {{ sample_rust_moonbit_host }}" "{{ fly_runtime_url }}/sample" || true); if [[ "$http_status" == "200" ]] && grep -q 'moonbit=42' "$body"; then cat "$body"; exit 0; fi; if [[ "$attempt" == "30" ]]; then echo "runtime smoke failed after $attempt attempts: status=$http_status"; cat "$body"; exit 1; fi; sleep 2; done
 
 bench: rust-build guest-build
     pnpm bench all --component "{{ guest_component }}" --host-bin target/debug/wasmplane-wasip3-host --iterations 30 --warmup 3 --concurrency 1,2,4

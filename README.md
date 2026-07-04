@@ -765,6 +765,7 @@ Run the built-in estimator for the current single-region production shape:
 
 ```sh
 pnpm cost
+pnpm cost cloudflare-containers
 ```
 
 The default estimate assumes:
@@ -781,6 +782,13 @@ With those assumptions the estimator reports about `$95.27/month`. Scaling the r
 and using 100GB R2 storage, 5M Class A ops, 20M Class B ops, and 100GB Fly public egress reports
 about `$241.84/month`. Prices are intentionally data constants in `src/cost-estimator.ts` so they
 can be updated when provider pricing changes.
+
+The Cloudflare Containers estimate models the current control-plane POC as 1 x `lite` container
+behind a Worker and Durable Object. Smoke-test scale stays at the Workers Paid plan floor of about
+`$5.00/month`. If the `lite` container is kept effectively always-on for 720 hours/month at 20%
+average CPU while active, the estimate is about `$6.91/month` before external Postgres/R2 usage.
+Scaling that shape to many concurrently active container instances adds Durable Object duration,
+logs, request, and egress overages.
 
 Cluster emulation starts multiple in-process runtime nodes, publishes route snapshots to every node,
 switches from a blue deployment to a green deployment, waits until each node returns the new
@@ -953,6 +961,36 @@ pnpm wasmplane dev \
 `http://127.0.0.1:8788` for the runtime. It validates through `wasmplane-wasip3-host compile`
 unless `--no-validate` is passed, publishes to `PUT /__runtime/snapshots/routes`, and reads
 `GET /__runtime/logs?projectId=...&deploymentId=...` unless `--no-tail-logs` is passed.
+
+## Rust + MoonBit release sample
+
+`examples/rust-moonbit-release` contains a real deployable sample that composes two Component Model
+projects into one wasmplane runtime worker:
+
+- Rust `rust-worker` exports the HTTP `handle` function for `myedge:runtime/worker@0.1.0`
+- MoonBit `moonbit-ping` exports `ping(value) -> value + 7`
+- `wasm-tools compose` links MoonBit into the Rust worker so the deployed response proves the
+  cross-language call path
+
+Build and validate locally:
+
+```sh
+just sample-rust-moonbit-smoke
+```
+
+Release to the deployed Fly control/runtime pair:
+
+```sh
+WASMPLANE_CONTROL_PLANE_URL=https://mz-wasmplane-control.fly.dev \
+WASMPLANE_RUNTIME_URL=https://mz-wasmplane-runtime.fly.dev \
+WASMPLANE_CONTROL_PLANE_TOKEN=... \
+just sample-rust-moonbit-release
+```
+
+The release recipe uploads `examples/rust-moonbit-release/target/rust-moonbit-release.component.wasm`,
+publishes a route for `rust-moonbit.sample.wasmplane.local`, and checks the runtime response with a
+`Host` header. A successful response contains `moonbit=42`.
+
 Canary rollout can be driven through the control-plane API by first pointing a route at the stable
 deployment, then calling `POST /routes/canary` with a candidate deployment and weight. Rollback uses
 `POST /routes/rollback` and returns the route to the stable target with 100% weight. Automatic

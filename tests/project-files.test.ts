@@ -102,3 +102,34 @@ test("Rust and MoonBit interop examples share a WASI p3 component contract", asy
   assert.match(cargoToml, /examples\/rust-interop/);
   assert.match(readme, /## Rust and MoonBit WASI p3 interop/);
 });
+
+test("Rust and MoonBit release sample composes a runtime worker", async () => {
+  const justfile = await readFile("justfile", "utf8");
+  const cargoToml = await readFile("Cargo.toml", "utf8");
+  const readme = await readFile("README.md", "utf8");
+  const sampleReadme = await readFile("examples/rust-moonbit-release/README.md", "utf8");
+  const workerWit = await readFile("examples/rust-moonbit-release/wit/worker.wit", "utf8");
+  const pingWit = await readFile("examples/rust-moonbit-release/wit/ping.wit", "utf8");
+  const rustCargo = await readFile("examples/rust-moonbit-release/rust-worker/Cargo.toml", "utf8");
+  const rustLib = await readFile("examples/rust-moonbit-release/rust-worker/src/lib.rs", "utf8");
+  const moonbitModule = await readFile("examples/rust-moonbit-release/moonbit-ping/moon.mod.json", "utf8");
+  const moonbitPing = await readFile("examples/rust-moonbit-release/moonbit-ping/src/ping.mbt", "utf8");
+
+  assert.match(justfile, /^sample-rust-moonbit-build:/m);
+  assert.match(justfile, /^sample-rust-moonbit-smoke:/m);
+  assert.match(justfile, /^sample-rust-moonbit-release:/m);
+  assert.match(justfile, /runtime smoke failed after/);
+  assert.match(cargoToml, /examples\/rust-moonbit-release\/rust-worker/);
+  assert.match(readme, /## Rust \+ MoonBit release sample/);
+  assert.match(sampleReadme, /wasm-tools compose/);
+  assert.match(workerWit, /interface bridge/);
+  assert.match(workerWit, /import bridge/);
+  assert.match(workerWit, /export handle: async func\(req: request\) -> response/);
+  assert.match(pingWit, /world ping-world/);
+  assert.match(pingWit, /ping: func\(value: u32\) -> u32/);
+  assert.match(pingWit, /export bridge/);
+  assert.match(rustCargo, /name = "rust-moonbit-release-worker"/);
+  assert.match(rustLib, /bridge::ping\(35\)/);
+  assert.match(moonbitModule, /"name": "myedge\/runtime"/);
+  assert.match(moonbitPing, /pub fn ping\(value : UInt\) -> UInt/);
+});
