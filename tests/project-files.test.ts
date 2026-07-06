@@ -61,6 +61,8 @@ test("project tooling keeps Wasm E2E portable", async () => {
     );
   }
   assert.match(workflow, /cache: pnpm/);
+  assert.match(workflow, /opentofu\/setup-opentofu@v2/);
+  assert.doesNotMatch(workflow, /opentofu\/setup-opentofu@v1/);
   assert.match(workflow, /pnpm install --frozen-lockfile/);
   assert.match(workflow, /rustup target add wasm32-wasip1/);
   assert.match(workflow, /just test/);

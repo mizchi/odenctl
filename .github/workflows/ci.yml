@@ -51,7 +51,7 @@ jobs:
 
       - uses: extractions/setup-just@v4
 
-      - uses: opentofu/setup-opentofu@v1
+      - uses: opentofu/setup-opentofu@v2
 
       - name: Validate OpenTofu infrastructure
         run: |
