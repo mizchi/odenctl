@@ -39,10 +39,20 @@ test:
 
 release-check:
     git diff --check
+    just actions-pin-check
     pnpm test
     cargo test --workspace
     just tofu-fmt-check
     just tofu-validate
+
+actions-pin-check:
+    pnpm actions-pin-check
+
+actions-pin-verify:
+    pnpm actions-pin-verify
+
+actions-pin-update:
+    pnpm actions-pin-update
 
 formal-check:
     pnpm formal:route-placement

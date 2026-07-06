@@ -25,6 +25,10 @@ test("project tooling keeps Wasm E2E portable", async () => {
   assert.match(justfile, /^db-migrate-apply:/m);
   assert.match(justfile, /^release-check:/m);
   assert.match(justfile, /just tofu-validate/);
+  assert.match(justfile, /just actions-pin-check/);
+  assert.match(justfile, /^actions-pin-check:/m);
+  assert.match(justfile, /^actions-pin-verify:/m);
+  assert.match(justfile, /^actions-pin-update:/m);
   assert.match(justfile, /^volume-sqlite-bench:/m);
   assert.match(justfile, /^fly-volume-sqlite-bench:/m);
   assert.match(justfile, /fly_control_app := env_var_or_default\("FLY_CONTROL_APP", "mz-wasmplane-control"\)/);
@@ -47,12 +51,15 @@ test("project tooling keeps Wasm E2E portable", async () => {
   assert.match(packageJson.scripts["cloudflare-control-smoke"], /src\/cloudflare-control-smoke\.ts/);
   assert.match(packageJson.scripts["fly-scale-eval"], /src\/fly-scale-eval\.ts/);
   assert.match(packageJson.scripts["rust-daemon-bench"], /src\/rust-daemon-bench\.ts/);
+  assert.match(packageJson.scripts["actions-pin-check"], /src\/workflow-action-pins\.ts check/);
+  assert.match(packageJson.scripts["actions-pin-verify"], /src\/workflow-action-pins\.ts check --verify-remote/);
+  assert.match(packageJson.scripts["actions-pin-update"], /src\/workflow-action-pins\.ts update --write/);
   assert.match(packageJson.scripts.coverage, /--experimental-test-coverage/);
   assert.match(packageJson.scripts["volume-sqlite-bench"], /src\/volume-sqlite-bench\.ts/);
   assert.equal(packageJson.devDependencies["@bytecodealliance/jco"], "1.15.4");
   const pinnedCommonActions = [
     ["actions/checkout", "9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0", "v7"],
-    ["pnpm/action-setup", "b0f76dfb45f55f8421693e4803ac7bb65143bd34", "v6"],
+    ["pnpm/action-setup", "0ebf47130e4866e96fce0953f49152a61190b271", "v6"],
     ["actions/setup-node", "48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e", "v6"],
     ["extractions/setup-just", "53165ef7e734c5c07cb06b3c8e7b647c5aa16db3", "v4"],
     ["actions/upload-artifact", "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a", "v7"],

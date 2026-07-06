@@ -23,6 +23,9 @@
     "fly-scale-eval": "node --experimental-strip-types src/fly-scale-eval.ts",
     "perf-check": "node --experimental-strip-types src/perf-regression.ts",
     "wac-migration-report": "node --experimental-strip-types src/wac-migration-report.ts",
+    "actions-pin-check": "node --experimental-strip-types src/workflow-action-pins.ts check",
+    "actions-pin-verify": "node --experimental-strip-types src/workflow-action-pins.ts check --verify-remote",
+    "actions-pin-update": "node --experimental-strip-types src/workflow-action-pins.ts update --write",
     "formal:route-placement": "node --experimental-strip-types formal/route-snapshot-placement.model.ts",
     "formal:capability-isolation": "node --experimental-strip-types formal/capability-isolation.model.ts"
   },
