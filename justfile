@@ -1,4 +1,4 @@
-set shell := ["zsh", "-cu"]
+set shell := ["bash", "-cu"]
 
 wac_git_url := env_var_or_default("WASMPLANE_WAC_GIT_URL", "https://github.com/mizchi/wac")
 wac_git_ref_arg := env_var_or_default("WASMPLANE_WAC_GIT_REF_ARG", "--tag wasmplane-wac-0.10.1-p1")

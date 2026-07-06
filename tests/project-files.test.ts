@@ -14,6 +14,8 @@ test("project tooling keeps Wasm E2E portable", async () => {
   const readme = await readFile("README.md", "utf8");
   await readFile("pnpm-lock.yaml", "utf8");
 
+  assert.match(justfile, /^set shell := \["bash", "-cu"\]/m);
+  assert.doesNotMatch(justfile, /^set shell := \["zsh"/m);
   assert.match(justfile, /node_modules\/@bytecodealliance\/jco\/lib\/wasi_snapshot_preview1\.reactor\.wasm/);
   assert.match(justfile, /^db-migrate-check:/m);
   assert.match(justfile, /^db-migrate-apply:/m);
