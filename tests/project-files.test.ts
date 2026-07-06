@@ -7,6 +7,7 @@ test("project tooling keeps Wasm E2E portable", async () => {
   const packageJson = JSON.parse(await readFile("package.json", "utf8"));
   const workflow = await readFile(".github/workflows/ci.yml", "utf8");
   const ciTestJob = workflow.slice(workflow.indexOf("  test:"), workflow.indexOf("  wac-migration-report:"));
+  const ciWacJob = workflow.slice(workflow.indexOf("  wac-migration-report:"));
   const rustMoonbitWorkflow = await readFile(".github/workflows/rust-moonbit-smoke.yml", "utf8");
   const rustMoonbitReleaseWorkflow = await readFile(".github/workflows/rust-moonbit-release.yml", "utf8");
   const perfWorkflow = await readFile(".github/workflows/perf.yml", "utf8");
@@ -64,11 +65,24 @@ test("project tooling keeps Wasm E2E portable", async () => {
   for (const githubWorkflow of [workflow, rustMoonbitWorkflow, rustMoonbitReleaseWorkflow, perfWorkflow]) {
     assert.match(githubWorkflow, /name: Cache Rust build artifacts/);
     assert.match(githubWorkflow, /actions\/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5\.0\.5/);
-    assert.match(githubWorkflow, /~\/\.cargo\/bin\/wac/);
     assert.match(githubWorkflow, /~\/\.cargo\/registry\/cache/);
     assert.match(githubWorkflow, /~\/\.cargo\/git\/db/);
     assert.match(githubWorkflow, /examples\/\*\*\/target/);
     assert.match(githubWorkflow, /hashFiles\('Cargo\.lock', '\*\*\/Cargo\.lock', '\*\*\/Cargo\.toml', 'justfile'\)/);
+  }
+  for (const wacWorkflow of [ciWacJob, rustMoonbitWorkflow, rustMoonbitReleaseWorkflow]) {
+    assert.match(wacWorkflow, /~\/\.cargo\/bin\/wac/);
+    assert.match(
+      wacWorkflow,
+      /\$\{\{ runner\.os \}\}-rust-wac-\$\{\{ hashFiles\('Cargo\.lock', '\*\*\/Cargo\.lock', '\*\*\/Cargo\.toml', 'justfile'\) \}\}/,
+    );
+  }
+  for (const nonWacWorkflow of [ciTestJob, perfWorkflow]) {
+    assert.doesNotMatch(nonWacWorkflow, /~\/\.cargo\/bin\/wac/);
+    assert.match(
+      nonWacWorkflow,
+      /\$\{\{ runner\.os \}\}-rust-wasmplane-\$\{\{ github\.job \}\}-\$\{\{ hashFiles\('Cargo\.lock', '\*\*\/Cargo\.lock', '\*\*\/Cargo\.toml', 'justfile'\) \}\}/,
+    );
   }
   assert.match(workflow, /just wac-install/);
   assert.match(workflow, /just sample-rust-moonbit-wac-status/);

@@ -73,9 +73,9 @@ jobs:
             ~/.cargo/git/db
             target
             examples/**/target
-          key: ${{ runner.os }}-rust-wasmplane-${{ hashFiles('Cargo.lock', '**/Cargo.lock', '**/Cargo.toml', 'justfile') }}
+          key: ${{ runner.os }}-rust-wac-${{ hashFiles('Cargo.lock', '**/Cargo.lock', '**/Cargo.toml', 'justfile') }}
           restore-keys: |
-            ${{ runner.os }}-rust-wasmplane-
+            ${{ runner.os }}-rust-wac-
 
       - uses: extractions/setup-just@v3
 
