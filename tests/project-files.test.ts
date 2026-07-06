@@ -9,6 +9,7 @@ test("project tooling keeps Wasm E2E portable", async () => {
   const ciTestJob = workflow.slice(workflow.indexOf("  test:"), workflow.indexOf("  wac-migration-report:"));
   const rustMoonbitWorkflow = await readFile(".github/workflows/rust-moonbit-smoke.yml", "utf8");
   const rustMoonbitReleaseWorkflow = await readFile(".github/workflows/rust-moonbit-release.yml", "utf8");
+  const perfWorkflow = await readFile(".github/workflows/perf.yml", "utf8");
   const flyControl = await readFile("fly.control.toml", "utf8");
   const flyRuntime = await readFile("fly.runtime.toml", "utf8");
   const flyCollector = await readFile("fly.collector.toml", "utf8");
@@ -60,9 +61,22 @@ test("project tooling keeps Wasm E2E portable", async () => {
   assert.match(ciTestJob, /bytecodealliance\/actions\/wasmtime\/setup@v1/);
   assert.doesNotMatch(workflow, /cargo install wasm-tools/);
   assert.doesNotMatch(workflow, /cargo install wit-bindgen-cli/);
+  for (const githubWorkflow of [workflow, rustMoonbitWorkflow, rustMoonbitReleaseWorkflow, perfWorkflow]) {
+    assert.match(githubWorkflow, /name: Cache Rust build artifacts/);
+    assert.match(githubWorkflow, /actions\/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5\.0\.5/);
+    assert.match(githubWorkflow, /~\/\.cargo\/bin\/wac/);
+    assert.match(githubWorkflow, /~\/\.cargo\/registry\/cache/);
+    assert.match(githubWorkflow, /~\/\.cargo\/git\/db/);
+    assert.match(githubWorkflow, /examples\/\*\*\/target/);
+    assert.match(githubWorkflow, /hashFiles\('Cargo\.lock', '\*\*\/Cargo\.lock', '\*\*\/Cargo\.toml', 'justfile'\)/);
+  }
   assert.match(workflow, /just wac-install/);
   assert.match(workflow, /just sample-rust-moonbit-wac-status/);
   assert.match(workflow, /wasmplane-wac-migration/);
+  assert.match(perfWorkflow, /bytecodealliance\/actions\/wasm-tools\/setup@v1/);
+  assert.match(perfWorkflow, /bytecodealliance\/actions\/wit-bindgen\/setup@v1/);
+  assert.doesNotMatch(perfWorkflow, /cargo install wasm-tools/);
+  assert.doesNotMatch(perfWorkflow, /cargo install wit-bindgen-cli/);
   assert.match(rustMoonbitWorkflow, /workflow_dispatch:/);
   assert.match(rustMoonbitWorkflow, /just wac-install/);
   assert.match(rustMoonbitWorkflow, /just sample-rust-moonbit-smoke/);

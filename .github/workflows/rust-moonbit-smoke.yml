@@ -32,6 +32,20 @@ jobs:
           rustup toolchain install stable --profile minimal
           rustup target add wasm32-wasip1 --toolchain stable
 
+      - name: Cache Rust build artifacts
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ~/.cargo/bin/wac
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+            examples/**/target
+          key: ${{ runner.os }}-rust-wasmplane-${{ hashFiles('Cargo.lock', '**/Cargo.lock', '**/Cargo.toml', 'justfile') }}
+          restore-keys: |
+            ${{ runner.os }}-rust-wasmplane-
+
       - uses: extractions/setup-just@v3
 
       - name: Setup MoonBit
