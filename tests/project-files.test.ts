@@ -6,6 +6,7 @@ test("project tooling keeps Wasm E2E portable", async () => {
   const justfile = await readFile("justfile", "utf8");
   const packageJson = JSON.parse(await readFile("package.json", "utf8"));
   const workflow = await readFile(".github/workflows/ci.yml", "utf8");
+  const rustMoonbitWorkflow = await readFile(".github/workflows/rust-moonbit-smoke.yml", "utf8");
   const flyControl = await readFile("fly.control.toml", "utf8");
   const flyRuntime = await readFile("fly.runtime.toml", "utf8");
   const flyCollector = await readFile("fly.collector.toml", "utf8");
@@ -54,6 +55,10 @@ test("project tooling keeps Wasm E2E portable", async () => {
   assert.match(workflow, /just wac-install/);
   assert.match(workflow, /just sample-rust-moonbit-wac-status/);
   assert.match(workflow, /wasmplane-wac-migration/);
+  assert.match(rustMoonbitWorkflow, /workflow_dispatch:/);
+  assert.match(rustMoonbitWorkflow, /just wac-install/);
+  assert.match(rustMoonbitWorkflow, /just sample-rust-moonbit-smoke/);
+  assert.match(rustMoonbitWorkflow, /wasmplane-rust-moonbit-smoke/);
   assert.match(flyControl, /app = "mz-wasmplane-control"/);
   assert.match(flyControl, /WASMPLANE_SNAPSHOT_PUBLISH_INTERVAL_MS = "5000"/);
   assert.match(flyControl, /WASMPLANE_VOLUME_SQLITE_ROOT = "\/data\/sqlite"/);
@@ -128,7 +133,9 @@ test("Rust and MoonBit release sample composes a runtime worker", async () => {
   assert.match(justfile, /^sample-rust-moonbit-build:/m);
   assert.match(justfile, /^sample-rust-moonbit-compose-build:/m);
   assert.match(justfile, /^sample-rust-moonbit-smoke:/m);
-  assert.match(justfile, /^sample-rust-moonbit-release:/m);
+  assert.match(justfile, /^sample-rust-moonbit-release-preflight:/m);
+  assert.match(justfile, /sample-rust-moonbit-release: sample-rust-moonbit-release-preflight sample-rust-moonbit-build/);
+  assert.match(justfile, /WASMPLANE_CONTROL_PLANE_TOKEN is required/);
   assert.match(justfile, /^wac-install:/m);
   assert.match(justfile, /wac_git_url := env_var_or_default\("WASMPLANE_WAC_GIT_URL", "https:\/\/github\.com\/mizchi\/wac"\)/);
   assert.match(justfile, /wac_git_ref_arg := env_var_or_default\("WASMPLANE_WAC_GIT_REF_ARG", "--tag wasmplane-wac-0\.10\.1-p1"\)/);

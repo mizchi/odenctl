@@ -164,7 +164,14 @@ sample-rust-moonbit-smoke: rust-build sample-rust-moonbit-build
     target/debug/wasmplane-wasip3-host compile --component "{{ sample_rust_moonbit_component }}" --out "{{ sample_rust_moonbit_dir }}/target/rust-moonbit-release.cwasm"
     target/debug/wasmplane-wasip3-host invoke --component "{{ sample_rust_moonbit_component }}" --method GET --uri "https://{{ sample_rust_moonbit_host }}/sample" --body '' --cpu-ms 1000 --wall-ms 5000 --memory-mb 128 | grep 'moonbit=42'
 
-sample-rust-moonbit-release: sample-rust-moonbit-build
+sample-rust-moonbit-release-preflight:
+    test -n "${WASMPLANE_CONTROL_PLANE_TOKEN:-}" || (echo "WASMPLANE_CONTROL_PLANE_TOKEN is required" >&2; exit 1)
+    wac --version
+    wasm-tools --version >/dev/null
+    wit-bindgen --version >/dev/null
+    wasmtime --version >/dev/null
+
+sample-rust-moonbit-release: sample-rust-moonbit-release-preflight sample-rust-moonbit-build
     body=$(mktemp); http_status=$(curl -sS -o "$body" -w "%{http_code}" -X POST "{{ fly_control_url }}/projects" -H "authorization: Bearer $WASMPLANE_CONTROL_PLANE_TOKEN" -H "content-type: application/json" -d '{"id":"{{ sample_rust_moonbit_project }}","name":"Rust MoonBit release sample"}'); if [[ "$http_status" != "201" && "$http_status" != "409" ]]; then cat "$body"; exit 1; fi
     pnpm wasmplane deploy --control-plane-url "{{ fly_control_url }}" --project-id "{{ sample_rust_moonbit_project }}" --component "{{ sample_rust_moonbit_component }}" --host "{{ sample_rust_moonbit_host }}" --path-prefix / --limit cpuMs=1000 --limit wallMs=5000 --limit memoryMb=128 --diff
     for attempt in {1..30}; do body=$(mktemp); http_status=$(curl -sS -o "$body" -w "%{http_code}" -H "Host: {{ sample_rust_moonbit_host }}" "{{ fly_runtime_url }}/sample" || true); if [[ "$http_status" == "200" ]] && grep -q 'moonbit=42' "$body"; then cat "$body"; exit 0; fi; if [[ "$attempt" == "30" ]]; then echo "runtime smoke failed after $attempt attempts: status=$http_status"; cat "$body"; exit 1; fi; sleep 2; done

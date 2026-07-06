@@ -996,7 +996,7 @@ WASMPLANE_CONTROL_PLANE_TOKEN=... \
 just sample-rust-moonbit-release
 ```
 
-The release recipe uploads `examples/rust-moonbit-release/target/rust-moonbit-release.component.wasm`,
+The release recipe runs `sample-rust-moonbit-release-preflight`, uploads `examples/rust-moonbit-release/target/rust-moonbit-release.component.wasm`,
 publishes a route for `rust-moonbit.sample.wasmplane.local`, and checks the runtime response with a
 `Host` header. A successful response contains `moonbit=42`.
 
@@ -1021,6 +1021,8 @@ classified as `blocked`.
 
 `just sample-rust-moonbit-compose-build` is kept as a rollback fallback for comparing the previous
 deprecated `wasm-tools compose` output, but release and smoke paths use forked WAC.
+The `Rust MoonBit Smoke` workflow can be triggered manually from GitHub Actions to run the full
+local smoke in CI without adding MoonBit/WAC to every default test run.
 
 Canary rollout can be driven through the control-plane API by first pointing a route at the stable
 deployment, then calling `POST /routes/canary` with a candidate deployment and weight. Rollback uses

@@ -52,6 +52,6 @@ WASMPLANE_CONTROL_PLANE_TOKEN=... \
 just sample-rust-moonbit-release
 ```
 
-The release recipe uploads the composed component, creates a deployment, points a route at
+The release recipe first runs `sample-rust-moonbit-release-preflight`, then uploads the composed component, creates a deployment, points a route at
 `rust-moonbit.sample.wasmplane.local`, publishes the route snapshot, and checks the deployed runtime
 with a `Host` header.
