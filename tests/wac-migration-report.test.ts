@@ -69,6 +69,7 @@ test("WAC migration report marks runtime worker ready after successful probe", (
   assert.equal(report.status, "ready");
   assert.equal(report.runtimeWorker.status, "ready");
   assert.equal(report.defaultBuildCanSwitch, true);
+  assert.match(report.wacSource, /github\.com\/mizchi\/wac\/tree\/8d38844/);
 });
 
 test("WAC migration report fails when the WAC canary fails", () => {
@@ -105,6 +106,7 @@ test("WAC migration markdown summarizes status and issue", () => {
 
   assert.match(markdown, /status: blocked/);
   assert.match(markdown, /WAC upstream issue #180/);
+  assert.match(markdown, /mizchi\/wac@8d38844/);
   assert.match(markdown, /runtime worker WIT/);
   assert.match(markdown, /async export: yes/);
   assert.match(markdown, /resources: yes/);

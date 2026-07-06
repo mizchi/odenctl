@@ -6,16 +6,13 @@ This sample builds one deployable wasmplane worker from two Component Model proj
 - `moonbit-ping`: MoonBit provider that exports `ping(value) -> value + 7`
 
 The Rust worker imports `ping`, calls it from the HTTP handler, then the build links the MoonBit
-component into the final worker component.
-
-The default build still uses `wasm-tools compose` because `wac currently panics` on this WASIp3
-async/resource-heavy worker world. `just sample-rust-moonbit-wac-probe` records the intended
-`wac plug <socket> --plug <provider>` migration command so the sample can be retested when WAC
-catches up.
+component into the final worker component with the `mizchi/wac` fork. The fork contains the resource
+aliasing fix needed for this WASIp3 async/resource-heavy worker world.
 
 ## Build
 
 ```sh
+just wac-install
 just sample-rust-moonbit-build
 ```
 
@@ -33,6 +30,9 @@ just sample-rust-moonbit-smoke
 
 This compiles the composed component through `wasmplane-wasip3-host` and invokes the worker handler.
 
+`just sample-rust-moonbit-compose-build` is kept as a rollback fallback for comparing the previous
+deprecated `wasm-tools compose` output.
+
 ## WAC canary
 
 ```sh
@@ -40,8 +40,8 @@ just sample-rust-moonbit-wac-smoke
 ```
 
 This builds a smaller Rust socket component from `wit/wac-caller.wit`, plugs the existing MoonBit
-`bridge` provider into it with `wac plug`, and invokes `answer()`. It avoids the WASIp3 async HTTP
-worker world so the WAC toolchain can be tested independently from the current upstream blocker.
+`bridge` provider into it with `wac plug`, and invokes `answer()`. It gives a cheap WAC toolchain
+canary before running the full WASIp3 async HTTP worker composition.
 
 ## Real release smoke
 

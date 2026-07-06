@@ -1,5 +1,7 @@
 set shell := ["zsh", "-cu"]
 
+wac_git_url := env_var_or_default("WASMPLANE_WAC_GIT_URL", "https://github.com/mizchi/wac")
+wac_git_ref_arg := env_var_or_default("WASMPLANE_WAC_GIT_REF_ARG", "--rev 8d38844")
 wasi_adapter := env_var_or_default("WASI_PREVIEW1_ADAPTER", "node_modules/@bytecodealliance/jco/lib/wasi_snapshot_preview1.reactor.wasm")
 guest_wasm := "examples/hello-worker/target/wasm32-wasip1/debug/hello_worker.wasm"
 guest_component := "examples/hello-worker/target/wasm32-wasip1/debug/hello_worker.component.wasm"
@@ -68,6 +70,9 @@ rust-test:
 rust-build:
     cargo build -p wasmplane-wasip3-host
 
+wac-install:
+    cargo install --git "{{ wac_git_url }}" {{ wac_git_ref_arg }} --locked wac-cli
+
 guest-bindings:
     wit-bindgen rust examples/hello-worker/wit --world worker --out-dir /tmp/wasmplane-wbg --async all
     cp /tmp/wasmplane-wbg/worker.rs examples/hello-worker/src/bindings.rs
@@ -121,6 +126,11 @@ sample-rust-moonbit-moonbit-build: sample-rust-moonbit-moonbit-bindings
     wasm-tools component wit "{{ sample_rust_moonbit_moonbit_component }}" >/dev/null
 
 sample-rust-moonbit-build: sample-rust-moonbit-rust-build sample-rust-moonbit-moonbit-build
+    wac plug "{{ sample_rust_moonbit_rust_component }}" --plug "{{ sample_rust_moonbit_moonbit_component }}" -o "{{ sample_rust_moonbit_component }}"
+    wasm-tools component wit "{{ sample_rust_moonbit_component }}" >/dev/null
+    wasm-tools validate --features cm-async "{{ sample_rust_moonbit_component }}"
+
+sample-rust-moonbit-compose-build: sample-rust-moonbit-rust-build sample-rust-moonbit-moonbit-build
     wasm-tools compose "{{ sample_rust_moonbit_rust_component }}" -d "{{ sample_rust_moonbit_moonbit_component }}" -o "{{ sample_rust_moonbit_component }}"
     wasm-tools component wit "{{ sample_rust_moonbit_component }}" >/dev/null
 
@@ -148,6 +158,7 @@ sample-rust-moonbit-wac-status output="reports/wac-migration.md" format="markdow
 sample-rust-moonbit-wac-probe: sample-rust-moonbit-rust-build sample-rust-moonbit-moonbit-build
     wac plug "{{ sample_rust_moonbit_rust_component }}" --plug "{{ sample_rust_moonbit_moonbit_component }}" -o "{{ sample_rust_moonbit_dir }}/target/rust-moonbit-release.wac-probe.component.wasm"
     wasm-tools component wit "{{ sample_rust_moonbit_dir }}/target/rust-moonbit-release.wac-probe.component.wasm" >/dev/null
+    wasm-tools validate --features cm-async "{{ sample_rust_moonbit_dir }}/target/rust-moonbit-release.wac-probe.component.wasm"
 
 sample-rust-moonbit-smoke: rust-build sample-rust-moonbit-build
     target/debug/wasmplane-wasip3-host compile --component "{{ sample_rust_moonbit_component }}" --out "{{ sample_rust_moonbit_dir }}/target/rust-moonbit-release.cwasm"

@@ -51,7 +51,7 @@ test("project tooling keeps Wasm E2E portable", async () => {
   assert.match(workflow, /wac-migration-report:/);
   assert.match(workflow, /hustcer\/setup-moonbit@v1/);
   assert.match(workflow, /bytecodealliance\/actions\/wasmtime\/setup@v1/);
-  assert.match(workflow, /cargo install wac-cli --version 0\.10\.1 --locked/);
+  assert.match(workflow, /just wac-install/);
   assert.match(workflow, /just sample-rust-moonbit-wac-status/);
   assert.match(workflow, /wasmplane-wac-migration/);
   assert.match(flyControl, /app = "mz-wasmplane-control"/);
@@ -126,20 +126,26 @@ test("Rust and MoonBit release sample composes a runtime worker", async () => {
   const moonbitPing = await readFile("examples/rust-moonbit-release/moonbit-ping/src/ping.mbt", "utf8");
 
   assert.match(justfile, /^sample-rust-moonbit-build:/m);
+  assert.match(justfile, /^sample-rust-moonbit-compose-build:/m);
   assert.match(justfile, /^sample-rust-moonbit-smoke:/m);
   assert.match(justfile, /^sample-rust-moonbit-release:/m);
+  assert.match(justfile, /^wac-install:/m);
+  assert.match(justfile, /wac_git_url := env_var_or_default\("WASMPLANE_WAC_GIT_URL", "https:\/\/github\.com\/mizchi\/wac"\)/);
+  assert.match(justfile, /wac_git_ref_arg := env_var_or_default\("WASMPLANE_WAC_GIT_REF_ARG", "--rev 8d38844"\)/);
   assert.match(justfile, /^sample-rust-moonbit-wac-build:/m);
   assert.match(justfile, /^sample-rust-moonbit-wac-smoke:/m);
   assert.match(justfile, /^sample-rust-moonbit-wac-status /m);
   assert.match(justfile, /^sample-rust-moonbit-wac-probe:/m);
   assert.match(justfile, /wac plug .* --plug/);
+  assert.match(justfile, /sample-rust-moonbit-compose-build:[\s\S]*wasm-tools compose/);
   assert.match(packageJson, /"wac-migration-report": "node --experimental-strip-types src\/wac-migration-report\.ts"/);
   assert.match(justfile, /runtime smoke failed after/);
   assert.match(cargoToml, /examples\/rust-moonbit-release\/rust-worker/);
   assert.match(cargoToml, /examples\/rust-moonbit-release\/rust-wac-caller/);
   assert.match(readme, /## Rust \+ MoonBit release sample/);
   assert.match(sampleReadme, /just sample-rust-moonbit-wac-smoke/);
-  assert.match(sampleReadme, /wac currently panics/);
+  assert.match(sampleReadme, /mizchi\/wac/);
+  assert.doesNotMatch(sampleReadme, /wac currently panics/);
   assert.match(workerWit, /interface bridge/);
   assert.match(workerWit, /import bridge/);
   assert.match(workerWit, /export handle: async func\(req: request\) -> response/);
@@ -170,8 +176,8 @@ test("project docs track Cloudflare smoke results and composition CI policy", as
   assert.match(todo, /Add a WAC canary that composes the Rust socket component with the MoonBit provider/);
   assert.match(todo, /Add a WAC migration status report/);
   assert.match(todo, /Add static runtime worker WIT diagnostics/);
-  assert.match(todo, /Replace deprecated `wasm-tools compose` with `wac` once WAC supports the WASIp3 async worker world/);
-  assert.match(todo, /bytecodealliance\/wac\/issues\/180/);
+  assert.match(todo, /Replace deprecated `wasm-tools compose` with forked `wac` for the WASIp3 async worker world/);
+  assert.match(todo, /mizchi\/wac/);
   assert.match(readme, /Latest deployed Cloudflare Containers smoke/);
   assert.match(readme, /container health.*1439ms/);
   assert.match(readme, /post-wakeup health.*135ms/);
@@ -179,5 +185,6 @@ test("project docs track Cloudflare smoke results and composition CI policy", as
   assert.match(readme, /full build\s+smoke stays out of default CI/);
   assert.match(readme, /sample-rust-moonbit-wac-status/);
   assert.match(readme, /static WIT summary/);
-  assert.match(readme, /WAC upstream issue #180/);
+  assert.match(readme, /mizchi\/wac/);
+  assert.match(readme, /sample-rust-moonbit-compose-build/);
 });

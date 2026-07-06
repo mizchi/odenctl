@@ -20,6 +20,7 @@ export interface CommandRunner {
 export interface WacMigrationReportInput {
   generatedAt: string;
   wacVersion: string;
+  wacSource?: string;
   runtimeWorld?: WacRuntimeWorkerWitAnalysis;
   canary: CommandResult;
   runtimeProbe: CommandResult;
@@ -48,6 +49,7 @@ export interface WacMigrationReport {
   status: WacMigrationStatus;
   defaultBuildCanSwitch: boolean;
   wacVersion: string;
+  wacSource: string;
   issueUrl: string;
   runtimeWorld: WacRuntimeWorkerWitAnalysis;
   canary: WacMigrationCheck;
@@ -71,6 +73,9 @@ export interface WacMigrationReportCliOptions {
 }
 
 export const WAC_WASIP3_ASYNC_ISSUE_URL = "https://github.com/bytecodealliance/wac/issues/180";
+export const WAC_FORK_GIT_URL = "https://github.com/mizchi/wac";
+export const WAC_FORK_REV = "8d38844";
+export const WAC_FORK_SOURCE_URL = `${WAC_FORK_GIT_URL}/tree/${WAC_FORK_REV}`;
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 const DEFAULT_RUNTIME_WORKER_WIT = "examples/rust-moonbit-release/wit/worker.wit";
@@ -106,6 +111,7 @@ export function evaluateWacMigrationReport(input: WacMigrationReportInput): WacM
     status,
     defaultBuildCanSwitch: status === "ready",
     wacVersion: input.wacVersion.trim(),
+    wacSource: input.wacSource ?? WAC_FORK_SOURCE_URL,
     issueUrl: WAC_WASIP3_ASYNC_ISSUE_URL,
     runtimeWorld,
     canary,
@@ -142,6 +148,7 @@ export function formatWacMigrationMarkdown(report: WacMigrationReport): string {
     `tracking ok: ${report.ok ? "yes" : "no"}`,
     `default build can switch: ${report.defaultBuildCanSwitch ? "yes" : "no"}`,
     `wac version: \`${report.wacVersion}\``,
+    `wac source: [mizchi/wac@${WAC_FORK_REV}](${report.wacSource})`,
     `generated: \`${report.generatedAt}\``,
     `upstream: [WAC upstream issue #180](${report.issueUrl})`,
     "",
@@ -206,10 +213,10 @@ export function analyzeWacRuntimeWorkerWit(path: string, wit: string): WacRuntim
   const notes: string[] = [];
 
   if (hasAsyncExport) {
-    notes.push("The worker exports an async function, which is the current WAC runtime-worker blocker.");
+    notes.push("The worker exports an async function, which is the stock WAC runtime-worker blocker shape.");
   }
   if (hasAsyncFunctions) {
-    notes.push("The WIT includes async functions, so the probe should stay tied to WAC issue #180.");
+    notes.push("The WIT includes async functions, so the probe should keep tracking stock WAC issue #180.");
   }
   if (hasResources) {
     notes.push("The WIT includes resources, matching the resource-heavy worker shape used by wasmplane.");
@@ -279,7 +286,7 @@ function isKnownWasip3AsyncBlocker(result: CommandResult): boolean {
 
 function nextActionForStatus(status: WacMigrationStatus): string {
   if (status === "ready") {
-    return "Switch the deployable Rust + MoonBit runtime worker build from `wasm-tools compose` to `wac plug`.";
+    return "Keep the deployable Rust + MoonBit runtime worker on forked `wac plug` and retain `wasm-tools compose` only as a rollback fallback.";
   }
   if (status === "blocked") {
     return "Keep `wasm-tools compose` for the runtime worker and rerun this report after WAC issue #180 changes land.";

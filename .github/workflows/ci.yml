@@ -97,7 +97,7 @@ jobs:
           version: "0.51.0"
 
       - name: Install WAC
-        run: cargo install wac-cli --version 0.10.1 --locked
+        run: just wac-install
 
       - name: Generate WAC migration report
         run: just sample-rust-moonbit-wac-status

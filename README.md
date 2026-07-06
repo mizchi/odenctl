@@ -1007,20 +1007,20 @@ smoke stays out of default CI for now because it requires MoonBit, `wit-bindgen`
 JCO WASI adapter, and a Rust wasm target. Run `just sample-rust-moonbit-smoke` locally or in a
 release gate before publishing.
 
-WAC 0.10.1 and the Component Model docs both point to `wac plug <socket> --plug <provider>` as the
-replacement shape for linking the MoonBit provider into a Rust socket. Run
-`just sample-rust-moonbit-wac-smoke` to prove that path with a synchronous Rust `wac-caller`
-component and the existing MoonBit `bridge` provider. `just sample-rust-moonbit-wac-probe` keeps the
-intended runtime worker migration command available.
-Run `just sample-rust-moonbit-wac-status` to write `reports/wac-migration.md`; known WAC issue #180
-blockers are reported as `blocked` instead of failing the tracking command. The report also includes
-a static WIT summary for the runtime worker so the async/resource blocker remains visible even when
-the command output changes.
+`wac plug <socket> --plug <provider>` is now the default linking path for the Rust + MoonBit runtime
+worker. Use `just wac-install` to install the pinned `mizchi/wac` fork (`8d38844`), which contains the
+resource aliasing fix needed for this WASIp3 async/resource-heavy worker world. Run
+`just sample-rust-moonbit-wac-smoke` to prove the cheap synchronous Rust `wac-caller` canary, then
+`just sample-rust-moonbit-wac-probe` or `just sample-rust-moonbit-smoke` for the full runtime worker.
 
-The deployable runtime worker still defaults to deprecated `wasm-tools compose` because WAC currently
-panics on this WASIp3 async/resource-heavy worker world. Keep the default build on `wasm-tools compose`
-until [WAC upstream issue #180](https://github.com/bytecodealliance/wac/issues/180) lands enough
-WASIp3 async support for this composition.
+Run `just sample-rust-moonbit-wac-status` to write `reports/wac-migration.md`. The report records the
+fork source, the static WIT summary for the runtime worker, the synchronous canary, and the full runtime
+worker probe. If someone swaps back to stock upstream WAC before the equivalent fix lands, known
+[WAC upstream issue #180](https://github.com/bytecodealliance/wac/issues/180) blocker output is still
+classified as `blocked`.
+
+`just sample-rust-moonbit-compose-build` is kept as a rollback fallback for comparing the previous
+deprecated `wasm-tools compose` output, but release and smoke paths use forked WAC.
 
 Canary rollout can be driven through the control-plane API by first pointing a route at the stable
 deployment, then calling `POST /routes/canary` with a candidate deployment and weight. Rollback uses
