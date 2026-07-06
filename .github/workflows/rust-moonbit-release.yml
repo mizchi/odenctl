@@ -82,20 +82,8 @@ jobs:
       - name: Setup MoonBit
         uses: hustcer/setup-moonbit@v1
 
-      - name: Setup Wasmtime
-        uses: bytecodealliance/actions/wasmtime/setup@v1
-        with:
-          version: "42.0.1"
-
-      - name: Setup wasm-tools
-        uses: bytecodealliance/actions/wasm-tools/setup@v1
-        with:
-          version: "1.245.1"
-
-      - name: Setup wit-bindgen
-        uses: bytecodealliance/actions/wit-bindgen/setup@v1
-        with:
-          version: "0.51.0"
+      - name: Install Wasm CI tools
+        run: bash scripts/install-wasm-ci-tools.sh
 
       - name: Install WAC
         run: just wac-install

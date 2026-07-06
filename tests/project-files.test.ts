@@ -14,6 +14,7 @@ test("project tooling keeps Wasm E2E portable", async () => {
   const flyControl = await readFile("fly.control.toml", "utf8");
   const flyRuntime = await readFile("fly.runtime.toml", "utf8");
   const flyCollector = await readFile("fly.collector.toml", "utf8");
+  const ciToolInstaller = await readFile("scripts/install-wasm-ci-tools.sh", "utf8");
   const readme = await readFile("README.md", "utf8");
   await readFile("pnpm-lock.yaml", "utf8");
 
@@ -69,11 +70,20 @@ test("project tooling keeps Wasm E2E portable", async () => {
   assert.match(workflow, /just e2e/);
   assert.match(workflow, /wac-migration-report:/);
   assert.match(workflow, /hustcer\/setup-moonbit@v1/);
-  assert.match(workflow, /bytecodealliance\/actions\/wasmtime\/setup@v1/);
-  assert.match(ciTestJob, /Setup Wasmtime/);
-  assert.match(ciTestJob, /bytecodealliance\/actions\/wasmtime\/setup@v1/);
-  assert.doesNotMatch(workflow, /cargo install wasm-tools/);
-  assert.doesNotMatch(workflow, /cargo install wit-bindgen-cli/);
+  for (const githubWorkflow of [workflow, rustMoonbitWorkflow, rustMoonbitReleaseWorkflow, perfWorkflow]) {
+    assert.match(githubWorkflow, /Install Wasm CI tools/);
+    assert.match(githubWorkflow, /bash scripts\/install-wasm-ci-tools\.sh/);
+    assert.doesNotMatch(githubWorkflow, /bytecodealliance\/actions\/.+\/setup@v1/);
+    assert.doesNotMatch(githubWorkflow, /cargo install wasm-tools/);
+    assert.doesNotMatch(githubWorkflow, /cargo install wit-bindgen-cli/);
+  }
+  assert.match(ciToolInstaller, /WASMPLANE_WASMTIME_VERSION:-42\.0\.1/);
+  assert.match(ciToolInstaller, /WASMPLANE_WASM_TOOLS_VERSION:-1\.245\.1/);
+  assert.match(ciToolInstaller, /WASMPLANE_WIT_BINDGEN_VERSION:-0\.51\.0/);
+  assert.match(ciToolInstaller, /GITHUB_PATH/);
+  assert.match(ciToolInstaller, /wasmtime --version/);
+  assert.match(ciToolInstaller, /wasm-tools --version/);
+  assert.match(ciToolInstaller, /wit-bindgen --version/);
   for (const githubWorkflow of [workflow, rustMoonbitWorkflow, rustMoonbitReleaseWorkflow, perfWorkflow]) {
     assert.match(githubWorkflow, /name: Cache Rust build artifacts/);
     assert.match(githubWorkflow, /actions\/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5\.0\.5/);
@@ -99,10 +109,6 @@ test("project tooling keeps Wasm E2E portable", async () => {
   assert.match(workflow, /just wac-install/);
   assert.match(workflow, /just sample-rust-moonbit-wac-status/);
   assert.match(workflow, /wasmplane-wac-migration/);
-  assert.match(perfWorkflow, /bytecodealliance\/actions\/wasm-tools\/setup@v1/);
-  assert.match(perfWorkflow, /bytecodealliance\/actions\/wit-bindgen\/setup@v1/);
-  assert.doesNotMatch(perfWorkflow, /cargo install wasm-tools/);
-  assert.doesNotMatch(perfWorkflow, /cargo install wit-bindgen-cli/);
   assert.match(rustMoonbitWorkflow, /workflow_dispatch:/);
   assert.match(rustMoonbitWorkflow, /just wac-install/);
   assert.match(rustMoonbitWorkflow, /just sample-rust-moonbit-smoke/);
