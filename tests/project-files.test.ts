@@ -48,6 +48,12 @@ test("project tooling keeps Wasm E2E portable", async () => {
   assert.match(workflow, /rustup target add wasm32-wasip1/);
   assert.match(workflow, /just test/);
   assert.match(workflow, /just e2e/);
+  assert.match(workflow, /wac-migration-report:/);
+  assert.match(workflow, /hustcer\/setup-moonbit@v1/);
+  assert.match(workflow, /bytecodealliance\/actions\/wasmtime\/setup@v1/);
+  assert.match(workflow, /cargo install wac-cli --version 0\.10\.1 --locked/);
+  assert.match(workflow, /just sample-rust-moonbit-wac-status/);
+  assert.match(workflow, /wasmplane-wac-migration/);
   assert.match(flyControl, /app = "mz-wasmplane-control"/);
   assert.match(flyControl, /WASMPLANE_SNAPSHOT_PUBLISH_INTERVAL_MS = "5000"/);
   assert.match(flyControl, /WASMPLANE_VOLUME_SQLITE_ROOT = "\/data\/sqlite"/);
