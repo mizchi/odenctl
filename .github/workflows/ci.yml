@@ -44,10 +44,15 @@ jobs:
           just tofu-fmt-check
           just tofu-validate
 
-      - name: Install Wasm tooling
-        run: |
-          cargo install wasm-tools --version 1.245.1 --locked
-          cargo install wit-bindgen-cli --version 0.51.0 --locked
+      - name: Setup wasm-tools
+        uses: bytecodealliance/actions/wasm-tools/setup@v1
+        with:
+          version: "1.245.1"
+
+      - name: Setup wit-bindgen
+        uses: bytecodealliance/actions/wit-bindgen/setup@v1
+        with:
+          version: "0.51.0"
 
       - name: Run unit and integration tests
         run: just test

@@ -55,6 +55,8 @@ test("project tooling keeps Wasm E2E portable", async () => {
   assert.match(workflow, /wac-migration-report:/);
   assert.match(workflow, /hustcer\/setup-moonbit@v1/);
   assert.match(workflow, /bytecodealliance\/actions\/wasmtime\/setup@v1/);
+  assert.doesNotMatch(workflow, /cargo install wasm-tools/);
+  assert.doesNotMatch(workflow, /cargo install wit-bindgen-cli/);
   assert.match(workflow, /just wac-install/);
   assert.match(workflow, /just sample-rust-moonbit-wac-status/);
   assert.match(workflow, /wasmplane-wac-migration/);
