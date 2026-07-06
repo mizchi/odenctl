@@ -50,26 +50,32 @@ test("project tooling keeps Wasm E2E portable", async () => {
   assert.match(packageJson.scripts.coverage, /--experimental-test-coverage/);
   assert.match(packageJson.scripts["volume-sqlite-bench"], /src\/volume-sqlite-bench\.ts/);
   assert.equal(packageJson.devDependencies["@bytecodealliance/jco"], "1.15.4");
+  const pinnedCommonActions = [
+    ["actions/checkout", "9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0", "v7"],
+    ["pnpm/action-setup", "b0f76dfb45f55f8421693e4803ac7bb65143bd34", "v6"],
+    ["actions/setup-node", "48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e", "v6"],
+    ["extractions/setup-just", "53165ef7e734c5c07cb06b3c8e7b647c5aa16db3", "v4"],
+    ["actions/upload-artifact", "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a", "v7"],
+  ] as const;
   for (const githubWorkflow of [workflow, rustMoonbitWorkflow, rustMoonbitReleaseWorkflow, perfWorkflow]) {
-    assert.match(githubWorkflow, /actions\/checkout@v7/);
-    assert.match(githubWorkflow, /pnpm\/action-setup@v6/);
-    assert.match(githubWorkflow, /actions\/setup-node@v6/);
-    assert.match(githubWorkflow, /extractions\/setup-just@v4/);
-    assert.match(githubWorkflow, /actions\/upload-artifact@v7/);
-    assert.doesNotMatch(
-      githubWorkflow,
-      /actions\/checkout@v4|pnpm\/action-setup@v4|actions\/setup-node@v4|extractions\/setup-just@v3|actions\/upload-artifact@v4/,
-    );
+    for (const [action, sha, tag] of pinnedCommonActions) {
+      assert.match(githubWorkflow, new RegExp(`uses: ${action.replace("/", "\\/")}@${sha} # ${tag}`));
+      assert.doesNotMatch(githubWorkflow, new RegExp(`uses: ${action.replace("/", "\\/")}@${tag}`));
+    }
+    assert.doesNotMatch(githubWorkflow, /uses: [^\s]+@v\d+/);
   }
   assert.match(workflow, /cache: pnpm/);
-  assert.match(workflow, /opentofu\/setup-opentofu@v2/);
-  assert.doesNotMatch(workflow, /opentofu\/setup-opentofu@v1/);
+  assert.match(workflow, /uses: opentofu\/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2/);
+  assert.doesNotMatch(workflow, /opentofu\/setup-opentofu@v2/);
   assert.match(workflow, /pnpm install --frozen-lockfile/);
   assert.match(workflow, /rustup target add wasm32-wasip1/);
   assert.match(workflow, /just test/);
   assert.match(workflow, /just e2e/);
   assert.match(workflow, /wac-migration-report:/);
-  assert.match(workflow, /hustcer\/setup-moonbit@v1/);
+  for (const moonbitWorkflow of [workflow, rustMoonbitWorkflow, rustMoonbitReleaseWorkflow]) {
+    assert.match(moonbitWorkflow, /uses: hustcer\/setup-moonbit@9199da0ab63ea0c0bab1dc15f03d76e17ed4f75f # v1/);
+    assert.doesNotMatch(moonbitWorkflow, /hustcer\/setup-moonbit@v1/);
+  }
   for (const githubWorkflow of [workflow, rustMoonbitWorkflow, rustMoonbitReleaseWorkflow, perfWorkflow]) {
     assert.match(githubWorkflow, /Install Wasm CI tools/);
     assert.match(githubWorkflow, /bash scripts\/install-wasm-ci-tools\.sh/);
