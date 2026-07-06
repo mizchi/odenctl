@@ -1000,6 +1000,12 @@ The release recipe runs `sample-rust-moonbit-release-preflight`, uploads `exampl
 publishes a route for `rust-moonbit.sample.wasmplane.local`, and checks the runtime response with a
 `Host` header. A successful response contains `moonbit=42`.
 
+The `Rust MoonBit Release workflow` is the protected GitHub Actions gate for the same live scenario.
+Configure a GitHub Environment named `production` with the `WASMPLANE_CONTROL_PLANE_TOKEN` secret.
+The workflow inputs default to the Fly control/runtime pair, install the pinned `mizchi/wac` fork,
+run `just sample-rust-moonbit-release-preflight`, then run `just sample-rust-moonbit-release` and
+upload the WAC migration report plus the composed component.
+
 ## Rust + MoonBit CI policy
 
 The default CI should keep the structural checks in `tests/project-files.test.ts` but the full build

@@ -314,3 +314,4 @@ Production readiness tasks, in implementation order.
 - [x] Add a WAC migration status report that records canary success separately from the WASIp3 async runtime worker blocker.
 - [x] Add static runtime worker WIT diagnostics to the WAC migration report.
 - [x] Replace deprecated `wasm-tools compose` with forked `wac` for the WASIp3 async worker world. wasmplane uses `mizchi/wac@wasmplane-wac-0.10.1-p1`; `sample-rust-moonbit-compose-build` remains as a rollback fallback.
+- [x] Add a protected GitHub Actions release gate for the Rust + MoonBit sample.

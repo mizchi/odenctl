@@ -7,6 +7,7 @@ test("project tooling keeps Wasm E2E portable", async () => {
   const packageJson = JSON.parse(await readFile("package.json", "utf8"));
   const workflow = await readFile(".github/workflows/ci.yml", "utf8");
   const rustMoonbitWorkflow = await readFile(".github/workflows/rust-moonbit-smoke.yml", "utf8");
+  const rustMoonbitReleaseWorkflow = await readFile(".github/workflows/rust-moonbit-release.yml", "utf8");
   const flyControl = await readFile("fly.control.toml", "utf8");
   const flyRuntime = await readFile("fly.runtime.toml", "utf8");
   const flyCollector = await readFile("fly.collector.toml", "utf8");
@@ -59,6 +60,12 @@ test("project tooling keeps Wasm E2E portable", async () => {
   assert.match(rustMoonbitWorkflow, /just wac-install/);
   assert.match(rustMoonbitWorkflow, /just sample-rust-moonbit-smoke/);
   assert.match(rustMoonbitWorkflow, /wasmplane-rust-moonbit-smoke/);
+  assert.match(rustMoonbitReleaseWorkflow, /workflow_dispatch:/);
+  assert.match(rustMoonbitReleaseWorkflow, /environment: production/);
+  assert.match(rustMoonbitReleaseWorkflow, /secrets\.WASMPLANE_CONTROL_PLANE_TOKEN/);
+  assert.match(rustMoonbitReleaseWorkflow, /just sample-rust-moonbit-release-preflight/);
+  assert.match(rustMoonbitReleaseWorkflow, /just sample-rust-moonbit-release/);
+  assert.match(rustMoonbitReleaseWorkflow, /wasmplane-rust-moonbit-release/);
   assert.match(flyControl, /app = "mz-wasmplane-control"/);
   assert.match(flyControl, /WASMPLANE_SNAPSHOT_PUBLISH_INTERVAL_MS = "5000"/);
   assert.match(flyControl, /WASMPLANE_VOLUME_SQLITE_ROOT = "\/data\/sqlite"/);
@@ -194,4 +201,7 @@ test("project docs track Cloudflare smoke results and composition CI policy", as
   assert.match(readme, /static WIT summary/);
   assert.match(readme, /mizchi\/wac/);
   assert.match(readme, /sample-rust-moonbit-compose-build/);
+  assert.match(readme, /Rust MoonBit Release workflow/);
+  assert.match(readme, /WASMPLANE_CONTROL_PLANE_TOKEN/);
+  assert.match(todo, /Add a protected GitHub Actions release gate for the Rust \+ MoonBit sample/);
 });

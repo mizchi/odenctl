@@ -1,0 +1,106 @@
+name: Rust MoonBit Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      control_plane_url:
+        description: Control plane base URL
+        required: true
+        default: https://mz-wasmplane-control.fly.dev
+        type: string
+      runtime_url:
+        description: Runtime base URL
+        required: true
+        default: https://mz-wasmplane-runtime.fly.dev
+        type: string
+      sample_host:
+        description: Host header routed to the Rust + MoonBit sample
+        required: true
+        default: rust-moonbit.sample.wasmplane.local
+        type: string
+      project_id:
+        description: Project id used by the release smoke
+        required: true
+        default: prj_rust_moonbit_release
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rust-moonbit-release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CI: true
+
+jobs:
+  rust-moonbit-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: production
+    env:
+      WASMPLANE_CONTROL_PLANE_URL: ${{ inputs.control_plane_url }}
+      WASMPLANE_RUNTIME_URL: ${{ inputs.runtime_url }}
+      WASMPLANE_SAMPLE_HOST: ${{ inputs.sample_host }}
+      WASMPLANE_SAMPLE_PROJECT_ID: ${{ inputs.project_id }}
+      WASMPLANE_CONTROL_PLANE_TOKEN: ${{ secrets.WASMPLANE_CONTROL_PLANE_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+
+      - name: Install Node dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Rust stable
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup target add wasm32-wasip1 --toolchain stable
+
+      - uses: extractions/setup-just@v3
+
+      - name: Setup MoonBit
+        uses: hustcer/setup-moonbit@v1
+
+      - name: Setup Wasmtime
+        uses: bytecodealliance/actions/wasmtime/setup@v1
+        with:
+          version: "42.0.1"
+
+      - name: Setup wasm-tools
+        uses: bytecodealliance/actions/wasm-tools/setup@v1
+        with:
+          version: "1.245.1"
+
+      - name: Setup wit-bindgen
+        uses: bytecodealliance/actions/wit-bindgen/setup@v1
+        with:
+          version: "0.51.0"
+
+      - name: Install WAC
+        run: just wac-install
+
+      - name: Check release preflight
+        run: just sample-rust-moonbit-release-preflight
+
+      - name: Run live Rust + MoonBit release smoke
+        run: just sample-rust-moonbit-release
+
+      - name: Generate WAC migration report
+        if: ${{ always() }}
+        run: just sample-rust-moonbit-wac-status
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: wasmplane-rust-moonbit-release
+          path: |
+            reports/wac-migration.md
+            examples/rust-moonbit-release/target/rust-moonbit-release.component.wasm
+          retention-days: 30
