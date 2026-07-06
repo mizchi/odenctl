@@ -20,7 +20,7 @@ export interface CommandRunner {
 export interface WacMigrationReportInput {
   generatedAt: string;
   wacVersion: string;
-  wacSource?: string;
+  wacSource?: WacSource;
   runtimeWorld?: WacRuntimeWorkerWitAnalysis;
   canary: CommandResult;
   runtimeProbe: CommandResult;
@@ -49,7 +49,7 @@ export interface WacMigrationReport {
   status: WacMigrationStatus;
   defaultBuildCanSwitch: boolean;
   wacVersion: string;
-  wacSource: string;
+  wacSource: WacSource;
   issueUrl: string;
   runtimeWorld: WacRuntimeWorkerWitAnalysis;
   canary: WacMigrationCheck;
@@ -63,6 +63,7 @@ export interface WacMigrationProbeOptions {
   runtimeWorkerWit?: string;
   runtimeWorkerWitText?: string;
   timeoutMs?: number;
+  env?: NodeJS.ProcessEnv;
 }
 
 export interface WacMigrationReportCliOptions {
@@ -74,14 +75,20 @@ export interface WacMigrationReportCliOptions {
 
 export const WAC_WASIP3_ASYNC_ISSUE_URL = "https://github.com/bytecodealliance/wac/issues/180";
 export const WAC_FORK_GIT_URL = "https://github.com/mizchi/wac";
-export const WAC_FORK_REV = "8d38844";
-export const WAC_FORK_SOURCE_URL = `${WAC_FORK_GIT_URL}/tree/${WAC_FORK_REV}`;
+export const WAC_FORK_REF = "wasmplane-wac-0.10.1-p1";
+export const WAC_FORK_REF_ARG = `--tag ${WAC_FORK_REF}`;
+
+export interface WacSource {
+  label: string;
+  url: string;
+}
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 const DEFAULT_RUNTIME_WORKER_WIT = "examples/rust-moonbit-release/wit/worker.wit";
 
 export function evaluateWacMigrationReport(input: WacMigrationReportInput): WacMigrationReport {
   const runtimeWorld = input.runtimeWorld ?? unknownRuntimeWorkerWitAnalysis(DEFAULT_RUNTIME_WORKER_WIT);
+  const wacSource = input.wacSource ?? resolveWacSource();
   const canaryOk = input.canary.exitCode === 0 && /\b42\b/.test(input.canary.stdout);
   const canary: WacMigrationCheck = canaryOk
     ? {
@@ -111,7 +118,7 @@ export function evaluateWacMigrationReport(input: WacMigrationReportInput): WacM
     status,
     defaultBuildCanSwitch: status === "ready",
     wacVersion: input.wacVersion.trim(),
-    wacSource: input.wacSource ?? WAC_FORK_SOURCE_URL,
+    wacSource,
     issueUrl: WAC_WASIP3_ASYNC_ISSUE_URL,
     runtimeWorld,
     canary,
@@ -123,6 +130,7 @@ export function evaluateWacMigrationReport(input: WacMigrationReportInput): WacM
 export async function runWacMigrationProbe(options: WacMigrationProbeOptions = {}): Promise<WacMigrationReport> {
   const runner = options.runner ?? nodeCommandRunner;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const env = options.env ?? process.env;
   const generatedAt = options.generatedAt ?? new Date().toISOString();
   const runtimeWorkerWit = options.runtimeWorkerWit ?? DEFAULT_RUNTIME_WORKER_WIT;
   const runtimeWorkerWitText = options.runtimeWorkerWitText ?? await readFile(runtimeWorkerWit, "utf8");
@@ -134,6 +142,7 @@ export async function runWacMigrationProbe(options: WacMigrationProbeOptions = {
   return evaluateWacMigrationReport({
     generatedAt,
     wacVersion: version.exitCode === 0 ? version.stdout : summarizeCommandResult(version),
+    wacSource: resolveWacSource(env),
     runtimeWorld,
     canary,
     runtimeProbe,
@@ -148,7 +157,7 @@ export function formatWacMigrationMarkdown(report: WacMigrationReport): string {
     `tracking ok: ${report.ok ? "yes" : "no"}`,
     `default build can switch: ${report.defaultBuildCanSwitch ? "yes" : "no"}`,
     `wac version: \`${report.wacVersion}\``,
-    `wac source: [mizchi/wac@${WAC_FORK_REV}](${report.wacSource})`,
+    `wac source: [${report.wacSource.label}](${report.wacSource.url})`,
     `generated: \`${report.generatedAt}\``,
     `upstream: [WAC upstream issue #180](${report.issueUrl})`,
     "",
@@ -175,6 +184,27 @@ export function formatWacMigrationMarkdown(report: WacMigrationReport): string {
     "",
   ];
   return lines.join("\n");
+}
+
+export function resolveWacSource(env: NodeJS.ProcessEnv = process.env): WacSource {
+  const gitUrl = env.WASMPLANE_WAC_GIT_URL ?? WAC_FORK_GIT_URL;
+  const refArg = env.WASMPLANE_WAC_GIT_REF_ARG ?? WAC_FORK_REF_ARG;
+  const ownerRepo = gitUrl.match(/github\.com[:/]([^/]+\/[^/.]+)(?:\.git)?$/)?.[1] ?? gitUrl;
+  const ref = parseCargoGitRefArg(refArg) ?? WAC_FORK_REF;
+  const url = gitUrl.startsWith("https://github.com/")
+    ? `${gitUrl.replace(/\.git$/, "")}/tree/${encodeURIComponent(ref)}`
+    : gitUrl;
+
+  return {
+    label: `${ownerRepo}@${ref}`,
+    url,
+  };
+}
+
+function parseCargoGitRefArg(refArg: string): string | undefined {
+  const parts = refArg.trim().split(/\s+/).filter(Boolean);
+  const index = parts.findIndex((part) => part === "--rev" || part === "--tag" || part === "--branch");
+  return index >= 0 ? parts[index + 1] : undefined;
 }
 
 export function parseWacMigrationReportArgs(args: string[]): WacMigrationReportCliOptions {

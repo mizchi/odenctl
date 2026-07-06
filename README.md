@@ -1008,7 +1008,7 @@ JCO WASI adapter, and a Rust wasm target. Run `just sample-rust-moonbit-smoke` l
 release gate before publishing.
 
 `wac plug <socket> --plug <provider>` is now the default linking path for the Rust + MoonBit runtime
-worker. Use `just wac-install` to install the pinned `mizchi/wac` fork (`8d38844`), which contains the
+worker. Use `just wac-install` to install the pinned `mizchi/wac` fork (`wasmplane-wac-0.10.1-p1`), which contains the
 resource aliasing fix needed for this WASIp3 async/resource-heavy worker world. Run
 `just sample-rust-moonbit-wac-smoke` to prove the cheap synchronous Rust `wac-caller` canary, then
 `just sample-rust-moonbit-wac-probe` or `just sample-rust-moonbit-smoke` for the full runtime worker.

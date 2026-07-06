@@ -313,4 +313,4 @@ Production readiness tasks, in implementation order.
 - [x] Add a WAC canary that composes the Rust socket component with the MoonBit provider and verifies `answer() == 42`.
 - [x] Add a WAC migration status report that records canary success separately from the WASIp3 async runtime worker blocker.
 - [x] Add static runtime worker WIT diagnostics to the WAC migration report.
-- [x] Replace deprecated `wasm-tools compose` with forked `wac` for the WASIp3 async worker world. wasmplane uses `mizchi/wac@8d38844`; `sample-rust-moonbit-compose-build` remains as a rollback fallback.
+- [x] Replace deprecated `wasm-tools compose` with forked `wac` for the WASIp3 async worker world. wasmplane uses `mizchi/wac@wasmplane-wac-0.10.1-p1`; `sample-rust-moonbit-compose-build` remains as a rollback fallback.

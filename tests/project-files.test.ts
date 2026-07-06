@@ -131,7 +131,7 @@ test("Rust and MoonBit release sample composes a runtime worker", async () => {
   assert.match(justfile, /^sample-rust-moonbit-release:/m);
   assert.match(justfile, /^wac-install:/m);
   assert.match(justfile, /wac_git_url := env_var_or_default\("WASMPLANE_WAC_GIT_URL", "https:\/\/github\.com\/mizchi\/wac"\)/);
-  assert.match(justfile, /wac_git_ref_arg := env_var_or_default\("WASMPLANE_WAC_GIT_REF_ARG", "--rev 8d38844"\)/);
+  assert.match(justfile, /wac_git_ref_arg := env_var_or_default\("WASMPLANE_WAC_GIT_REF_ARG", "--tag wasmplane-wac-0\.10\.1-p1"\)/);
   assert.match(justfile, /^sample-rust-moonbit-wac-build:/m);
   assert.match(justfile, /^sample-rust-moonbit-wac-smoke:/m);
   assert.match(justfile, /^sample-rust-moonbit-wac-status /m);
@@ -177,7 +177,7 @@ test("project docs track Cloudflare smoke results and composition CI policy", as
   assert.match(todo, /Add a WAC migration status report/);
   assert.match(todo, /Add static runtime worker WIT diagnostics/);
   assert.match(todo, /Replace deprecated `wasm-tools compose` with forked `wac` for the WASIp3 async worker world/);
-  assert.match(todo, /mizchi\/wac/);
+  assert.match(todo, /mizchi\/wac@wasmplane-wac-0\.10\.1-p1/);
   assert.match(readme, /Latest deployed Cloudflare Containers smoke/);
   assert.match(readme, /container health.*1439ms/);
   assert.match(readme, /post-wakeup health.*135ms/);

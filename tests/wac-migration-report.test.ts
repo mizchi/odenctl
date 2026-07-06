@@ -5,6 +5,7 @@ import {
   evaluateWacMigrationReport,
   formatWacMigrationMarkdown,
   parseWacMigrationReportArgs,
+  resolveWacSource,
   runWacMigrationProbe,
   type CommandRunner,
 } from "../src/wac-migration-report.ts";
@@ -69,7 +70,8 @@ test("WAC migration report marks runtime worker ready after successful probe", (
   assert.equal(report.status, "ready");
   assert.equal(report.runtimeWorker.status, "ready");
   assert.equal(report.defaultBuildCanSwitch, true);
-  assert.match(report.wacSource, /github\.com\/mizchi\/wac\/tree\/8d38844/);
+  assert.equal(report.wacSource.label, "mizchi/wac@wasmplane-wac-0.10.1-p1");
+  assert.match(report.wacSource.url, /github\.com\/mizchi\/wac\/tree\/wasmplane-wac-0\.10\.1-p1/);
 });
 
 test("WAC migration report fails when the WAC canary fails", () => {
@@ -106,7 +108,7 @@ test("WAC migration markdown summarizes status and issue", () => {
 
   assert.match(markdown, /status: blocked/);
   assert.match(markdown, /WAC upstream issue #180/);
-  assert.match(markdown, /mizchi\/wac@8d38844/);
+  assert.match(markdown, /mizchi\/wac@wasmplane-wac-0\.10\.1-p1/);
   assert.match(markdown, /runtime worker WIT/);
   assert.match(markdown, /async export: yes/);
   assert.match(markdown, /resources: yes/);
@@ -165,4 +167,27 @@ test("WAC migration probe runs canary and runtime worker probe", async () => {
   ]);
   assert.equal(report.status, "blocked");
   assert.equal(report.runtimeWorld.hasAsyncExport, true);
+});
+
+test("WAC source follows git URL and ref env overrides", () => {
+  assert.deepEqual(
+    resolveWacSource({
+      WASMPLANE_WAC_GIT_URL: "https://github.com/mizchi/wac",
+      WASMPLANE_WAC_GIT_REF_ARG: "--rev 8d38844",
+    }),
+    {
+      label: "mizchi/wac@8d38844",
+      url: "https://github.com/mizchi/wac/tree/8d38844",
+    },
+  );
+  assert.deepEqual(
+    resolveWacSource({
+      WASMPLANE_WAC_GIT_URL: "https://github.com/example/fork",
+      WASMPLANE_WAC_GIT_REF_ARG: "--branch experiment",
+    }),
+    {
+      label: "example/fork@experiment",
+      url: "https://github.com/example/fork/tree/experiment",
+    },
+  );
 });

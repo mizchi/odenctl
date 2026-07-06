@@ -1,7 +1,7 @@
 set shell := ["zsh", "-cu"]
 
 wac_git_url := env_var_or_default("WASMPLANE_WAC_GIT_URL", "https://github.com/mizchi/wac")
-wac_git_ref_arg := env_var_or_default("WASMPLANE_WAC_GIT_REF_ARG", "--rev 8d38844")
+wac_git_ref_arg := env_var_or_default("WASMPLANE_WAC_GIT_REF_ARG", "--tag wasmplane-wac-0.10.1-p1")
 wasi_adapter := env_var_or_default("WASI_PREVIEW1_ADAPTER", "node_modules/@bytecodealliance/jco/lib/wasi_snapshot_preview1.reactor.wasm")
 guest_wasm := "examples/hello-worker/target/wasm32-wasip1/debug/hello_worker.wasm"
 guest_component := "examples/hello-worker/target/wasm32-wasip1/debug/hello_worker.component.wasm"
