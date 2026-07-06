@@ -179,6 +179,7 @@ test("Rust and MoonBit release sample composes a runtime worker", async () => {
   assert.match(justfile, /sample-rust-moonbit-release: sample-rust-moonbit-release-preflight sample-rust-moonbit-build/);
   assert.match(justfile, /WASMPLANE_CONTROL_PLANE_TOKEN is required/);
   assert.match(justfile, /^wac-install:/m);
+  assert.match(justfile, /command -v wac/);
   assert.match(justfile, /wac_git_url := env_var_or_default\("WASMPLANE_WAC_GIT_URL", "https:\/\/github\.com\/mizchi\/wac"\)/);
   assert.match(justfile, /wac_git_ref_arg := env_var_or_default\("WASMPLANE_WAC_GIT_REF_ARG", "--tag wasmplane-wac-0\.10\.1-p1"\)/);
   assert.match(justfile, /^sample-rust-moonbit-wac-build:/m);

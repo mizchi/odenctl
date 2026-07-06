@@ -71,7 +71,7 @@ rust-build:
     cargo build -p wasmplane-wasip3-host
 
 wac-install:
-    cargo install --git "{{ wac_git_url }}" {{ wac_git_ref_arg }} --locked wac-cli
+    if command -v wac >/dev/null 2>&1; then wac --version; else cargo install --git "{{ wac_git_url }}" {{ wac_git_ref_arg }} --locked wac-cli; fi
 
 guest-bindings:
     wit-bindgen rust examples/hello-worker/wit --world worker --out-dir /tmp/wasmplane-wbg --async all
