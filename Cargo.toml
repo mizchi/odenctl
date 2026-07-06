@@ -5,6 +5,7 @@ exclude = [
   "examples/reset-worker",
   "examples/rust-interop",
   "examples/rust-moonbit-release/rust-worker",
+  "examples/rust-moonbit-release/rust-wac-caller",
 ]
 resolver = "3"
 

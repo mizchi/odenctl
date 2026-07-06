@@ -1,5 +1,7 @@
 target/
 rust-worker/target/
+rust-wac-caller/target/
+rust-wac-caller/src/bindings.rs
 moonbit-ping/_build/
 moonbit-ping/gen/
 moonbit-ping/world/

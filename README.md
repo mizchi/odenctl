@@ -978,8 +978,8 @@ projects into one wasmplane runtime worker:
 
 - Rust `rust-worker` exports the HTTP `handle` function for `myedge:runtime/worker@0.1.0`
 - MoonBit `moonbit-ping` exports `ping(value) -> value + 7`
-- `wasm-tools compose` links MoonBit into the Rust worker so the deployed response proves the
-  cross-language call path
+- The build links MoonBit into the Rust worker so the deployed response proves the cross-language
+  call path
 
 Build and validate locally:
 
@@ -1005,8 +1005,22 @@ publishes a route for `rust-moonbit.sample.wasmplane.local`, and checks the runt
 The default CI should keep the structural checks in `tests/project-files.test.ts` but the full build
 smoke stays out of default CI for now because it requires MoonBit, `wit-bindgen`, `wasm-tools`, the
 JCO WASI adapter, and a Rust wasm target. Run `just sample-rust-moonbit-smoke` locally or in a
-release gate before publishing. The sample still uses deprecated `wasm-tools compose`; track the
-move to `wac` in `TODO.md` before making the composed build a required CI job.
+release gate before publishing.
+
+WAC 0.10.1 and the Component Model docs both point to `wac plug <socket> --plug <provider>` as the
+replacement shape for linking the MoonBit provider into a Rust socket. Run
+`just sample-rust-moonbit-wac-smoke` to prove that path with a synchronous Rust `wac-caller`
+component and the existing MoonBit `bridge` provider. `just sample-rust-moonbit-wac-probe` keeps the
+intended runtime worker migration command available.
+Run `just sample-rust-moonbit-wac-status` to write `reports/wac-migration.md`; known WAC issue #180
+blockers are reported as `blocked` instead of failing the tracking command. The report also includes
+a static WIT summary for the runtime worker so the async/resource blocker remains visible even when
+the command output changes.
+
+The deployable runtime worker still defaults to deprecated `wasm-tools compose` because WAC currently
+panics on this WASIp3 async/resource-heavy worker world. Keep the default build on `wasm-tools compose`
+until [WAC upstream issue #180](https://github.com/bytecodealliance/wac/issues/180) lands enough
+WASIp3 async support for this composition.
 
 Canary rollout can be driven through the control-plane API by first pointing a route at the stable
 deployment, then calling `POST /routes/canary` with a candidate deployment and weight. Rollback uses

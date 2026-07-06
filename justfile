@@ -9,10 +9,13 @@ moonbit_interop_component := "examples/moonbit-interop/target/moonbit-interop.co
 sample_rust_moonbit_dir := "examples/rust-moonbit-release"
 sample_rust_moonbit_rust_wasm := sample_rust_moonbit_dir + "/rust-worker/target/wasm32-wasip1/release/rust_moonbit_release_worker.wasm"
 sample_rust_moonbit_rust_component := sample_rust_moonbit_dir + "/target/rust-worker.component.wasm"
+sample_rust_moonbit_wac_caller_wasm := sample_rust_moonbit_dir + "/rust-wac-caller/target/wasm32-wasip1/release/rust_moonbit_wac_caller.wasm"
+sample_rust_moonbit_wac_caller_component := sample_rust_moonbit_dir + "/target/rust-wac-caller.component.wasm"
 sample_rust_moonbit_moonbit_core := sample_rust_moonbit_dir + "/moonbit-ping/_build/wasm/release/build/gen/gen.wasm"
 sample_rust_moonbit_moonbit_embedded := sample_rust_moonbit_dir + "/target/moonbit-ping.embedded.wasm"
 sample_rust_moonbit_moonbit_component := sample_rust_moonbit_dir + "/target/moonbit-ping.wasm"
 sample_rust_moonbit_component := sample_rust_moonbit_dir + "/target/rust-moonbit-release.component.wasm"
+sample_rust_moonbit_wac_component := sample_rust_moonbit_dir + "/target/rust-moonbit-wac.component.wasm"
 fly_control_app := env_var_or_default("FLY_CONTROL_APP", "mz-wasmplane-control")
 fly_runtime_app := env_var_or_default("FLY_RUNTIME_APP", "mz-wasmplane-runtime")
 fly_collector_app := env_var_or_default("FLY_COLLECTOR_APP", "mz-wasmplane-otel-collector")
@@ -120,6 +123,31 @@ sample-rust-moonbit-moonbit-build: sample-rust-moonbit-moonbit-bindings
 sample-rust-moonbit-build: sample-rust-moonbit-rust-build sample-rust-moonbit-moonbit-build
     wasm-tools compose "{{ sample_rust_moonbit_rust_component }}" -d "{{ sample_rust_moonbit_moonbit_component }}" -o "{{ sample_rust_moonbit_component }}"
     wasm-tools component wit "{{ sample_rust_moonbit_component }}" >/dev/null
+
+sample-rust-moonbit-wac-caller-bindings:
+    wit-bindgen rust "{{ sample_rust_moonbit_dir }}/wit/wac-caller.wit" --world wac-caller --out-dir /tmp/wasmplane-rust-moonbit-wac-caller-wbg
+    cp /tmp/wasmplane-rust-moonbit-wac-caller-wbg/wac_caller.rs "{{ sample_rust_moonbit_dir }}/rust-wac-caller/src/bindings.rs"
+
+sample-rust-moonbit-wac-caller-build: sample-rust-moonbit-wac-caller-bindings
+    RUSTC=$(rustup which rustc --toolchain stable) rustup run stable cargo build --manifest-path "{{ sample_rust_moonbit_dir }}/rust-wac-caller/Cargo.toml" --target wasm32-wasip1 --release
+    test -f "{{ wasi_adapter }}"
+    mkdir -p "{{ sample_rust_moonbit_dir }}/target"
+    wasm-tools component new "{{ sample_rust_moonbit_wac_caller_wasm }}" --adapt "{{ wasi_adapter }}" -o "{{ sample_rust_moonbit_wac_caller_component }}"
+    wasm-tools component wit "{{ sample_rust_moonbit_wac_caller_component }}" >/dev/null
+
+sample-rust-moonbit-wac-build: sample-rust-moonbit-wac-caller-build sample-rust-moonbit-moonbit-build
+    wac plug "{{ sample_rust_moonbit_wac_caller_component }}" --plug "{{ sample_rust_moonbit_moonbit_component }}" -o "{{ sample_rust_moonbit_wac_component }}"
+    wasm-tools component wit "{{ sample_rust_moonbit_wac_component }}" >/dev/null
+
+sample-rust-moonbit-wac-smoke: sample-rust-moonbit-wac-build
+    wasmtime run --invoke 'answer()' "{{ sample_rust_moonbit_wac_component }}" | grep '42'
+
+sample-rust-moonbit-wac-status output="reports/wac-migration.md" format="markdown":
+    pnpm wac-migration-report --format "{{ format }}" --output "{{ output }}"
+
+sample-rust-moonbit-wac-probe: sample-rust-moonbit-rust-build sample-rust-moonbit-moonbit-build
+    wac plug "{{ sample_rust_moonbit_rust_component }}" --plug "{{ sample_rust_moonbit_moonbit_component }}" -o "{{ sample_rust_moonbit_dir }}/target/rust-moonbit-release.wac-probe.component.wasm"
+    wasm-tools component wit "{{ sample_rust_moonbit_dir }}/target/rust-moonbit-release.wac-probe.component.wasm" >/dev/null
 
 sample-rust-moonbit-smoke: rust-build sample-rust-moonbit-build
     target/debug/wasmplane-wasip3-host compile --component "{{ sample_rust_moonbit_component }}" --out "{{ sample_rust_moonbit_dir }}/target/rust-moonbit-release.cwasm"

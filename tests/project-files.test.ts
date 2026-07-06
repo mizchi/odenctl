@@ -105,6 +105,7 @@ test("Rust and MoonBit interop examples share a WASI p3 component contract", asy
 
 test("Rust and MoonBit release sample composes a runtime worker", async () => {
   const justfile = await readFile("justfile", "utf8");
+  const packageJson = await readFile("package.json", "utf8");
   const cargoToml = await readFile("Cargo.toml", "utf8");
   const readme = await readFile("README.md", "utf8");
   const sampleReadme = await readFile("examples/rust-moonbit-release/README.md", "utf8");
@@ -112,24 +113,40 @@ test("Rust and MoonBit release sample composes a runtime worker", async () => {
   const pingWit = await readFile("examples/rust-moonbit-release/wit/ping.wit", "utf8");
   const rustCargo = await readFile("examples/rust-moonbit-release/rust-worker/Cargo.toml", "utf8");
   const rustLib = await readFile("examples/rust-moonbit-release/rust-worker/src/lib.rs", "utf8");
+  const wacCallerWit = await readFile("examples/rust-moonbit-release/wit/wac-caller.wit", "utf8");
+  const wacCallerCargo = await readFile("examples/rust-moonbit-release/rust-wac-caller/Cargo.toml", "utf8");
+  const wacCallerLib = await readFile("examples/rust-moonbit-release/rust-wac-caller/src/lib.rs", "utf8");
   const moonbitModule = await readFile("examples/rust-moonbit-release/moonbit-ping/moon.mod.json", "utf8");
   const moonbitPing = await readFile("examples/rust-moonbit-release/moonbit-ping/src/ping.mbt", "utf8");
 
   assert.match(justfile, /^sample-rust-moonbit-build:/m);
   assert.match(justfile, /^sample-rust-moonbit-smoke:/m);
   assert.match(justfile, /^sample-rust-moonbit-release:/m);
+  assert.match(justfile, /^sample-rust-moonbit-wac-build:/m);
+  assert.match(justfile, /^sample-rust-moonbit-wac-smoke:/m);
+  assert.match(justfile, /^sample-rust-moonbit-wac-status /m);
+  assert.match(justfile, /^sample-rust-moonbit-wac-probe:/m);
+  assert.match(justfile, /wac plug .* --plug/);
+  assert.match(packageJson, /"wac-migration-report": "node --experimental-strip-types src\/wac-migration-report\.ts"/);
   assert.match(justfile, /runtime smoke failed after/);
   assert.match(cargoToml, /examples\/rust-moonbit-release\/rust-worker/);
+  assert.match(cargoToml, /examples\/rust-moonbit-release\/rust-wac-caller/);
   assert.match(readme, /## Rust \+ MoonBit release sample/);
-  assert.match(sampleReadme, /wasm-tools compose/);
+  assert.match(sampleReadme, /just sample-rust-moonbit-wac-smoke/);
+  assert.match(sampleReadme, /wac currently panics/);
   assert.match(workerWit, /interface bridge/);
   assert.match(workerWit, /import bridge/);
   assert.match(workerWit, /export handle: async func\(req: request\) -> response/);
+  assert.match(wacCallerWit, /world wac-caller/);
+  assert.match(wacCallerWit, /import bridge/);
+  assert.match(wacCallerWit, /export answer: func\(\) -> u32/);
   assert.match(pingWit, /world ping-world/);
   assert.match(pingWit, /ping: func\(value: u32\) -> u32/);
   assert.match(pingWit, /export bridge/);
   assert.match(rustCargo, /name = "rust-moonbit-release-worker"/);
   assert.match(rustLib, /bridge::ping\(35\)/);
+  assert.match(wacCallerCargo, /name = "rust-moonbit-wac-caller"/);
+  assert.match(wacCallerLib, /bridge::ping\(35\)/);
   assert.match(moonbitModule, /"name": "myedge\/runtime"/);
   assert.match(moonbitPing, /pub fn ping\(value : UInt\) -> UInt/);
 });
@@ -144,11 +161,17 @@ test("project docs track Cloudflare smoke results and composition CI policy", as
     todo,
     /- \[x\] Run the Cloudflare Containers smoke harness against the deployed Worker\/container pair and capture logs\/cold-start numbers\./,
   );
-  assert.match(todo, /Replace deprecated `wasm-tools compose` with `wac`/);
+  assert.match(todo, /Add a WAC canary that composes the Rust socket component with the MoonBit provider/);
+  assert.match(todo, /Add a WAC migration status report/);
+  assert.match(todo, /Add static runtime worker WIT diagnostics/);
+  assert.match(todo, /Replace deprecated `wasm-tools compose` with `wac` once WAC supports the WASIp3 async worker world/);
+  assert.match(todo, /bytecodealliance\/wac\/issues\/180/);
   assert.match(readme, /Latest deployed Cloudflare Containers smoke/);
   assert.match(readme, /container health.*1439ms/);
   assert.match(readme, /post-wakeup health.*135ms/);
   assert.match(readme, /## Rust \+ MoonBit CI policy/);
   assert.match(readme, /full build\s+smoke stays out of default CI/);
-  assert.match(readme, /`wac`/);
+  assert.match(readme, /sample-rust-moonbit-wac-status/);
+  assert.match(readme, /static WIT summary/);
+  assert.match(readme, /WAC upstream issue #180/);
 });
