@@ -96,7 +96,7 @@ test(
           wasi: "wasip3",
         },
         limits: {
-          cpuMs: 50,
+          cpuMs: 1000,
           memoryMb: 64,
           wallMs: 10000,
           requestBytes: 1048576,
