@@ -44,6 +44,11 @@ jobs:
           just tofu-fmt-check
           just tofu-validate
 
+      - name: Setup Wasmtime
+        uses: bytecodealliance/actions/wasmtime/setup@v1
+        with:
+          version: "42.0.1"
+
       - name: Setup wasm-tools
         uses: bytecodealliance/actions/wasm-tools/setup@v1
         with:

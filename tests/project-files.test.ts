@@ -6,6 +6,7 @@ test("project tooling keeps Wasm E2E portable", async () => {
   const justfile = await readFile("justfile", "utf8");
   const packageJson = JSON.parse(await readFile("package.json", "utf8"));
   const workflow = await readFile(".github/workflows/ci.yml", "utf8");
+  const ciTestJob = workflow.slice(workflow.indexOf("  test:"), workflow.indexOf("  wac-migration-report:"));
   const rustMoonbitWorkflow = await readFile(".github/workflows/rust-moonbit-smoke.yml", "utf8");
   const rustMoonbitReleaseWorkflow = await readFile(".github/workflows/rust-moonbit-release.yml", "utf8");
   const flyControl = await readFile("fly.control.toml", "utf8");
@@ -55,6 +56,8 @@ test("project tooling keeps Wasm E2E portable", async () => {
   assert.match(workflow, /wac-migration-report:/);
   assert.match(workflow, /hustcer\/setup-moonbit@v1/);
   assert.match(workflow, /bytecodealliance\/actions\/wasmtime\/setup@v1/);
+  assert.match(ciTestJob, /Setup Wasmtime/);
+  assert.match(ciTestJob, /bytecodealliance\/actions\/wasmtime\/setup@v1/);
   assert.doesNotMatch(workflow, /cargo install wasm-tools/);
   assert.doesNotMatch(workflow, /cargo install wit-bindgen-cli/);
   assert.match(workflow, /just wac-install/);
