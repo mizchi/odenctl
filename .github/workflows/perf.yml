@@ -17,11 +17,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: "24"
           cache: pnpm
@@ -48,7 +48,7 @@ jobs:
             ${{ runner.os }}-rust-wasmplane-${{ github.job }}-
             ${{ runner.os }}-rust-wasmplane-
 
-      - uses: extractions/setup-just@v3
+      - uses: extractions/setup-just@v4
 
       - name: Setup wasm-tools
         uses: bytecodealliance/actions/wasm-tools/setup@v1
@@ -75,7 +75,7 @@ jobs:
             cat perf-results/perf-regression.md >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with:
           name: wasmplane-perf-results

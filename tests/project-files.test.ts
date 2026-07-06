@@ -49,7 +49,17 @@ test("project tooling keeps Wasm E2E portable", async () => {
   assert.match(packageJson.scripts.coverage, /--experimental-test-coverage/);
   assert.match(packageJson.scripts["volume-sqlite-bench"], /src\/volume-sqlite-bench\.ts/);
   assert.equal(packageJson.devDependencies["@bytecodealliance/jco"], "1.15.4");
-  assert.match(workflow, /pnpm\/action-setup@v4/);
+  for (const githubWorkflow of [workflow, rustMoonbitWorkflow, rustMoonbitReleaseWorkflow, perfWorkflow]) {
+    assert.match(githubWorkflow, /actions\/checkout@v7/);
+    assert.match(githubWorkflow, /pnpm\/action-setup@v6/);
+    assert.match(githubWorkflow, /actions\/setup-node@v6/);
+    assert.match(githubWorkflow, /extractions\/setup-just@v4/);
+    assert.match(githubWorkflow, /actions\/upload-artifact@v7/);
+    assert.doesNotMatch(
+      githubWorkflow,
+      /actions\/checkout@v4|pnpm\/action-setup@v4|actions\/setup-node@v4|extractions\/setup-just@v3|actions\/upload-artifact@v4/,
+    );
+  }
   assert.match(workflow, /cache: pnpm/);
   assert.match(workflow, /pnpm install --frozen-lockfile/);
   assert.match(workflow, /rustup target add wasm32-wasip1/);

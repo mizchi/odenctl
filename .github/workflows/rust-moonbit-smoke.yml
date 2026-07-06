@@ -15,11 +15,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: "24"
           cache: pnpm
@@ -46,7 +46,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-rust-wac-
 
-      - uses: extractions/setup-just@v3
+      - uses: extractions/setup-just@v4
 
       - name: Setup MoonBit
         uses: hustcer/setup-moonbit@v1
@@ -76,7 +76,7 @@ jobs:
         if: ${{ always() }}
         run: just sample-rust-moonbit-wac-status
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with:
           name: wasmplane-rust-moonbit-smoke
