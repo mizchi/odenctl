@@ -161,6 +161,7 @@ test("project tooling keeps Wasm E2E portable", async () => {
   assert.match(productionReadinessWorkflow, /min_throughput_rps:/);
   assert.match(productionReadinessWorkflow, /max_publish_ms:/);
   assert.match(productionReadinessWorkflow, /check_otel_evidence:/);
+  assert.match(productionReadinessWorkflow, /run_runtime_drain_drill:/);
   assert.match(productionReadinessWorkflow, /restart_runtime_machine:/);
   assert.match(productionReadinessWorkflow, /restart_control_machine:/);
   assert.match(productionReadinessWorkflow, /volume_sqlite_drill_id:/);
@@ -172,6 +173,7 @@ test("project tooling keeps Wasm E2E portable", async () => {
   assert.match(productionReadinessWorkflow, /--max-error-rate "\$\{\{ inputs\.max_error_rate \}\}"/);
   assert.match(productionReadinessWorkflow, /--min-throughput-rps "\$\{\{ inputs\.min_throughput_rps \}\}"/);
   assert.match(productionReadinessWorkflow, /--max-publish-ms "\$\{\{ inputs\.max_publish_ms \}\}"/);
+  assert.match(productionReadinessWorkflow, /--failure-drill/);
   assert.match(productionReadinessWorkflow, /bash scripts\/install-flyctl\.sh/);
   assert.doesNotMatch(productionReadinessWorkflow, /curl -L https:\/\/fly\.io\/install\.sh \| sh/);
   assert.match(productionReadinessWorkflow, /pnpm fly-otel-evidence/);

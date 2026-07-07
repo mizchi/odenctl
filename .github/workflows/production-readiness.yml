@@ -98,6 +98,11 @@ on:
         required: true
         default: true
         type: boolean
+      run_runtime_drain_drill:
+        description: Run the runtime drain/activate readiness drill during scale execution
+        required: true
+        default: false
+        type: boolean
       restart_runtime_machine:
         description: Optional runtime Machine id for an explicit restart drill
         required: false
@@ -225,13 +230,29 @@ jobs:
 
       - name: Plan Fly scale evaluation
         run: |
-          pnpm fly-scale-eval -- --runtime-machines "${{ inputs.runtime_machines }}" --iterations "${{ inputs.iterations }}" --warmup "${{ inputs.warmup }}" --concurrency "${{ inputs.concurrency }}" --max-p95-ms "${{ inputs.max_p95_ms }}" --max-error-rate "${{ inputs.max_error_rate }}" --min-throughput-rps "${{ inputs.min_throughput_rps }}" --max-publish-ms "${{ inputs.max_publish_ms }}" --output reports/production-readiness/fly-scale-plan.md
+          extra_args=()
+          if [ "${{ inputs.run_runtime_drain_drill }}" = "true" ]; then
+            extra_args+=(--failure-drill)
+          fi
+          if [ -n "${{ inputs.restart_runtime_machine }}" ]; then
+            extra_args+=(--restart-runtime-machine "${{ inputs.restart_runtime_machine }}")
+          fi
+          if [ -n "${{ inputs.restart_control_machine }}" ]; then
+            extra_args+=(--restart-control-machine "${{ inputs.restart_control_machine }}")
+          fi
+          if [ -n "${{ inputs.volume_sqlite_drill_id }}" ]; then
+            extra_args+=(--volume-sqlite-drill-id "${{ inputs.volume_sqlite_drill_id }}")
+          fi
+          pnpm fly-scale-eval -- --runtime-machines "${{ inputs.runtime_machines }}" --iterations "${{ inputs.iterations }}" --warmup "${{ inputs.warmup }}" --concurrency "${{ inputs.concurrency }}" --max-p95-ms "${{ inputs.max_p95_ms }}" --max-error-rate "${{ inputs.max_error_rate }}" --min-throughput-rps "${{ inputs.min_throughput_rps }}" --max-publish-ms "${{ inputs.max_publish_ms }}" "${extra_args[@]}" --output reports/production-readiness/fly-scale-plan.md
           cat reports/production-readiness/fly-scale-plan.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Run Fly scale evaluation
         if: ${{ inputs.execute_scale_eval }}
         run: |
           extra_args=()
+          if [ "${{ inputs.run_runtime_drain_drill }}" = "true" ]; then
+            extra_args+=(--failure-drill)
+          fi
           if [ -n "${{ inputs.restart_runtime_machine }}" ]; then
             extra_args+=(--restart-runtime-machine "${{ inputs.restart_runtime_machine }}")
           fi

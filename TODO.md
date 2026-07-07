@@ -325,3 +325,4 @@ Production readiness tasks, in implementation order.
 - [x] Fail the production readiness gate on p95 latency, error-rate, throughput, or route publish SLO regressions.
 - [x] Collect OTEL collector evidence as a readiness artifact.
 - [x] Expose explicit production failure-drill inputs for Machine restarts and volume SQLite backup drills.
+- [x] Keep runtime drain/activate drills off by default and require an explicit workflow input or `--failure-drill`.

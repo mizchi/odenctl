@@ -21,7 +21,7 @@ test("fly scale evaluation args default to N+1 runtime and production checks", (
   assert.deepEqual(parsed.concurrency, [1, 8, 32, 64, 128]);
   assert.equal(parsed.iterations, 300);
   assert.equal(parsed.requireExternalDatabase, true);
-  assert.equal(parsed.failureDrill, true);
+  assert.equal(parsed.failureDrill, false);
   assert.equal(parsed.execute, false);
   assert.equal(parsed.maxP95Ms, undefined);
   assert.equal(parsed.maxErrorRate, undefined);
@@ -47,10 +47,21 @@ test("fly scale evaluation args parse production SLO thresholds", () => {
   assert.equal(parsed.maxPublishMs, 4000);
 });
 
-test("fly scale evaluation plan covers scale, smoke, throughput, and failure drills", () => {
+test("fly scale evaluation args enable failure drills explicitly", () => {
+  const fromFlag = parseFlyScaleEvaluationArgs(["--failure-drill"], {});
+  const fromEnv = parseFlyScaleEvaluationArgs([], { WASMPLANE_FLY_EVAL_FAILURE_DRILL: "true" });
+  const skipped = parseFlyScaleEvaluationArgs(["--failure-drill", "--skip-failure-drill"], {});
+
+  assert.equal(fromFlag.failureDrill, true);
+  assert.equal(fromEnv.failureDrill, true);
+  assert.equal(skipped.failureDrill, false);
+});
+
+test("fly scale evaluation plan covers scale, smoke, throughput, and explicit failure drills", () => {
   const plan = buildFlyScaleEvaluationPlan(parseFlyScaleEvaluationArgs([
     "--runtime-machines",
     "3",
+    "--failure-drill",
     "--restart-runtime-machine",
     "abc123",
     "--restart-control-machine",
@@ -80,6 +91,20 @@ test("fly scale evaluation plan covers scale, smoke, throughput, and failure dri
   assert.equal(plan[8].destructive, true);
 });
 
+test("fly scale evaluation plan does not include failure drills by default", () => {
+  const plan = buildFlyScaleEvaluationPlan(parseFlyScaleEvaluationArgs([], {
+    WASMPLANE_CONTROL_PLANE_TOKEN: "control-token",
+    WASMPLANE_RUNTIME_TOKEN: "runtime-token",
+  }));
+
+  assert.deepEqual(plan.map((step) => step.name), [
+    "scale runtime machines",
+    "publish route snapshot",
+    "production smoke",
+    "http throughput benchmark",
+  ]);
+});
+
 test("fly scale evaluation dry-run returns the plan without executing commands", async () => {
   let commands = 0;
   const result = await runFlyScaleEvaluation({
@@ -101,8 +126,6 @@ test("fly scale evaluation dry-run returns the plan without executing commands",
     ["publish route snapshot", "planned"],
     ["production smoke", "planned"],
     ["http throughput benchmark", "planned"],
-    ["runtime drain drill", "planned"],
-    ["runtime activate", "planned"],
   ]);
 });
 

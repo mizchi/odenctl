@@ -516,11 +516,11 @@ fly volumes list -a "$FLY_RUNTIME_APP"
 ```
 
 `fly-scale-eval` is dry-run by default. With `--execute`, it scales the runtime app, publishes the
-current route snapshot, runs production smoke checks, measures HTTP throughput at the requested
-concurrency levels, and performs a runtime drain/activate readiness drill. Machine restarts are
-available only when explicit ids are supplied with `--restart-runtime-machine <id>` or
-`--restart-control-machine <id>`. Volume SQLite backup drills require an explicit database id with
-`--volume-sqlite-drill-id <id>`.
+current route snapshot, runs production smoke checks, and measures HTTP throughput at the requested
+concurrency levels. The runtime drain/activate readiness drill runs only with `--failure-drill`.
+Machine restarts are available only when explicit ids are supplied with
+`--restart-runtime-machine <id>` or `--restart-control-machine <id>`. Volume SQLite backup drills
+require an explicit database id with `--volume-sqlite-drill-id <id>`.
 
 ### Production readiness gate
 
@@ -534,9 +534,9 @@ uploads `reports/production-readiness/` as `wasmplane-production-readiness`.
 gate needs Fly API access for OTEL evidence or execute-mode drills. SLO thresholds are workflow
 inputs: p95 latency, error-rate, minimum throughput, and route publish latency are passed to
 `fly-scale-eval`, which fails the gate when an executed run regresses. `pnpm fly-otel-evidence`
-captures collector log evidence that runtime spans reached the OTEL pipeline. Machine restart and
-volume SQLite backup drills are also exposed as empty-by-default inputs, so destructive checks remain
-explicit.
+captures collector log evidence that runtime spans reached the OTEL pipeline. Runtime drain,
+Machine restart, and volume SQLite backup drills are also exposed as off/empty-by-default inputs, so
+destructive checks remain explicit.
 
 ## Multi-cloud Deploy POC
 

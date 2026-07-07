@@ -109,7 +109,7 @@ export function parseFlyScaleEvaluationArgs(
     warmup: nonnegativeInteger(env.WASMPLANE_FLY_EVAL_WARMUP, 10),
     concurrency: parseIntegerList(env.WASMPLANE_FLY_EVAL_CONCURRENCY ?? "1,8,32,64,128"),
     requireExternalDatabase: env.WASMPLANE_FLY_EVAL_REQUIRE_EXTERNAL_DB !== "0",
-    failureDrill: env.WASMPLANE_FLY_EVAL_FAILURE_DRILL !== "0",
+    failureDrill: envFlag(env.WASMPLANE_FLY_EVAL_FAILURE_DRILL),
     scaleWaitMs: positiveInteger(env.WASMPLANE_FLY_EVAL_SCALE_WAIT_MS, 30_000),
     maxP95Ms: optionalPositiveNumber(env.WASMPLANE_FLY_EVAL_MAX_P95_MS, "WASMPLANE_FLY_EVAL_MAX_P95_MS"),
     maxErrorRate: optionalRate(env.WASMPLANE_FLY_EVAL_MAX_ERROR_RATE, "WASMPLANE_FLY_EVAL_MAX_ERROR_RATE"),
@@ -229,6 +229,9 @@ export function parseFlyScaleEvaluationArgs(
         break;
       case "--skip-failure-drill":
         options.failureDrill = false;
+        break;
+      case "--failure-drill":
+        options.failureDrill = true;
         break;
       case "--execute":
         options.execute = true;
@@ -721,6 +724,11 @@ function ensurePath(value: string): string {
 
 function nonEmpty(value: string | undefined): string | undefined {
   return value && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function envFlag(value: string | undefined): boolean {
+  const normalized = value?.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes";
 }
 
 function errorMessage(error: unknown): string {
