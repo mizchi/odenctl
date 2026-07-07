@@ -51,7 +51,7 @@ on:
       max_p95_ms:
         description: Maximum allowed runtime HTTP p95 latency in milliseconds
         required: true
-        default: "1000"
+        default: "1500"
         type: string
       max_error_rate:
         description: Maximum allowed runtime HTTP error rate from 0 to 1

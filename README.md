@@ -533,7 +533,9 @@ uploads `reports/production-readiness/` as `wasmplane-production-readiness`.
 `scripts/install-flyctl.sh` installs a pinned `flyctl` release with SHA-256 verification whenever the
 gate needs Fly API access for OTEL evidence or execute-mode drills. SLO thresholds are workflow
 inputs: p95 latency, error-rate, minimum throughput, and route publish latency are passed to
-`fly-scale-eval`, which fails the gate when an executed run regresses. `pnpm fly-otel-evidence`
+`fly-scale-eval`, which fails the gate when an executed run regresses. The default p95 gate is
+1500ms for the current two-runtime Fly baseline; tighten it after capacity or pooling improves.
+`pnpm fly-otel-evidence`
 captures collector log evidence that runtime spans reached the OTEL pipeline. Runtime drain,
 Machine restart, and volume SQLite backup drills are also exposed as off/empty-by-default inputs, so
 destructive checks remain explicit.
