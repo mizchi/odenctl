@@ -10,6 +10,7 @@ test("project tooling keeps Wasm E2E portable", async () => {
   const ciWacJob = workflow.slice(workflow.indexOf("  wac-migration-report:"));
   const rustMoonbitWorkflow = await readFile(".github/workflows/rust-moonbit-smoke.yml", "utf8");
   const rustMoonbitReleaseWorkflow = await readFile(".github/workflows/rust-moonbit-release.yml", "utf8");
+  const productionReadinessWorkflow = await readFile(".github/workflows/production-readiness.yml", "utf8");
   const perfWorkflow = await readFile(".github/workflows/perf.yml", "utf8");
   const flyControl = await readFile("fly.control.toml", "utf8");
   const flyRuntime = await readFile("fly.runtime.toml", "utf8");
@@ -64,7 +65,14 @@ test("project tooling keeps Wasm E2E portable", async () => {
     ["extractions/setup-just", "53165ef7e734c5c07cb06b3c8e7b647c5aa16db3", "v4"],
     ["actions/upload-artifact", "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a", "v7"],
   ] as const;
-  for (const githubWorkflow of [workflow, rustMoonbitWorkflow, rustMoonbitReleaseWorkflow, perfWorkflow]) {
+  const commonWorkflows = [
+    workflow,
+    rustMoonbitWorkflow,
+    rustMoonbitReleaseWorkflow,
+    productionReadinessWorkflow,
+    perfWorkflow,
+  ];
+  for (const githubWorkflow of commonWorkflows) {
     for (const [action, sha, tag] of pinnedCommonActions) {
       assert.match(githubWorkflow, new RegExp(`uses: ${action.replace("/", "\\/")}@${sha} # ${tag}`));
       assert.doesNotMatch(githubWorkflow, new RegExp(`uses: ${action.replace("/", "\\/")}@${tag}`));
@@ -79,11 +87,11 @@ test("project tooling keeps Wasm E2E portable", async () => {
   assert.match(workflow, /just test/);
   assert.match(workflow, /just e2e/);
   assert.match(workflow, /wac-migration-report:/);
-  for (const moonbitWorkflow of [workflow, rustMoonbitWorkflow, rustMoonbitReleaseWorkflow]) {
+  for (const moonbitWorkflow of [workflow, rustMoonbitWorkflow, rustMoonbitReleaseWorkflow, productionReadinessWorkflow]) {
     assert.match(moonbitWorkflow, /uses: hustcer\/setup-moonbit@9199da0ab63ea0c0bab1dc15f03d76e17ed4f75f # v1/);
     assert.doesNotMatch(moonbitWorkflow, /hustcer\/setup-moonbit@v1/);
   }
-  for (const githubWorkflow of [workflow, rustMoonbitWorkflow, rustMoonbitReleaseWorkflow, perfWorkflow]) {
+  for (const githubWorkflow of commonWorkflows) {
     assert.match(githubWorkflow, /Install Wasm CI tools/);
     assert.match(githubWorkflow, /bash scripts\/install-wasm-ci-tools\.sh/);
     assert.doesNotMatch(githubWorkflow, /bytecodealliance\/actions\/.+\/setup@v1/);
@@ -97,7 +105,7 @@ test("project tooling keeps Wasm E2E portable", async () => {
   assert.match(ciToolInstaller, /wasmtime --version/);
   assert.match(ciToolInstaller, /wasm-tools --version/);
   assert.match(ciToolInstaller, /wit-bindgen --version/);
-  for (const githubWorkflow of [workflow, rustMoonbitWorkflow, rustMoonbitReleaseWorkflow, perfWorkflow]) {
+  for (const githubWorkflow of commonWorkflows) {
     assert.match(githubWorkflow, /name: Cache Rust build artifacts/);
     assert.match(githubWorkflow, /actions\/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5\.0\.5/);
     assert.match(githubWorkflow, /~\/\.cargo\/registry\/cache/);
@@ -105,7 +113,7 @@ test("project tooling keeps Wasm E2E portable", async () => {
     assert.match(githubWorkflow, /examples\/\*\*\/target/);
     assert.match(githubWorkflow, /hashFiles\('Cargo\.lock', '\*\*\/Cargo\.lock', '\*\*\/Cargo\.toml', 'justfile'\)/);
   }
-  for (const wacWorkflow of [ciWacJob, rustMoonbitWorkflow, rustMoonbitReleaseWorkflow]) {
+  for (const wacWorkflow of [ciWacJob, rustMoonbitWorkflow, rustMoonbitReleaseWorkflow, productionReadinessWorkflow]) {
     assert.match(wacWorkflow, /~\/\.cargo\/bin\/wac/);
     assert.match(
       wacWorkflow,
@@ -132,6 +140,20 @@ test("project tooling keeps Wasm E2E portable", async () => {
   assert.match(rustMoonbitReleaseWorkflow, /just sample-rust-moonbit-release-preflight/);
   assert.match(rustMoonbitReleaseWorkflow, /just sample-rust-moonbit-release/);
   assert.match(rustMoonbitReleaseWorkflow, /wasmplane-rust-moonbit-release/);
+  assert.match(productionReadinessWorkflow, /name: Production Readiness/);
+  assert.match(productionReadinessWorkflow, /workflow_dispatch:/);
+  assert.match(productionReadinessWorkflow, /environment: production/);
+  assert.match(productionReadinessWorkflow, /secrets\.WASMPLANE_CONTROL_PLANE_TOKEN/);
+  assert.match(productionReadinessWorkflow, /secrets\.WASMPLANE_RUNTIME_TOKEN/);
+  assert.match(productionReadinessWorkflow, /secrets\.FLY_API_TOKEN/);
+  assert.match(productionReadinessWorkflow, /just fly-smoke-production/);
+  assert.match(productionReadinessWorkflow, /just fly-alarm-demo/);
+  assert.match(productionReadinessWorkflow, /pnpm fly-scale-eval -- --runtime-machines/);
+  assert.match(productionReadinessWorkflow, /pnpm fly-scale-eval -- --execute --runtime-machines/);
+  assert.match(productionReadinessWorkflow, /just sample-rust-moonbit-release-preflight/);
+  assert.match(productionReadinessWorkflow, /just sample-rust-moonbit-release/);
+  assert.match(productionReadinessWorkflow, /wasmplane-production-readiness/);
+  assert.match(productionReadinessWorkflow, /reports\/production-readiness/);
   assert.match(flyControl, /app = "mz-wasmplane-control"/);
   assert.match(flyControl, /WASMPLANE_SNAPSHOT_PUBLISH_INTERVAL_MS = "5000"/);
   assert.match(flyControl, /WASMPLANE_VOLUME_SQLITE_ROOT = "\/data\/sqlite"/);
@@ -148,6 +170,9 @@ test("project tooling keeps Wasm E2E portable", async () => {
   assert.match(readme, /WASMPLANE_DURABLE_OBJECT_ALARM_WEBHOOK_URL/);
   assert.match(readme, /just fly-alarm-demo/);
   assert.match(readme, /just fly-scale-eval/);
+  assert.match(readme, /Production readiness gate/);
+  assert.match(readme, /production-readiness\.yml/);
+  assert.match(readme, /WASMPLANE_RUNTIME_TOKEN/);
   assert.match(readme, /pnpm cloudflare-control-smoke/);
   assert.match(readme, /just rust-daemon-bench/);
   assert.match(readme, /just fly-smoke/);
@@ -271,4 +296,6 @@ test("project docs track Cloudflare smoke results and composition CI policy", as
   assert.match(readme, /Rust MoonBit Release workflow/);
   assert.match(readme, /WASMPLANE_CONTROL_PLANE_TOKEN/);
   assert.match(todo, /Add a protected GitHub Actions release gate for the Rust \+ MoonBit sample/);
+  assert.match(todo, /Production readiness gate/);
+  assert.match(todo, /Add a protected manual GitHub Actions gate for Fly production smoke, alarms, scale evaluation, and Rust \+ MoonBit release/);
 });

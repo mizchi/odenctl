@@ -1,0 +1,201 @@
+name: Production Readiness
+
+on:
+  workflow_dispatch:
+    inputs:
+      control_plane_url:
+        description: Control plane base URL
+        required: true
+        default: https://mz-wasmplane-control.fly.dev
+        type: string
+      runtime_url:
+        description: Runtime base URL
+        required: true
+        default: https://mz-wasmplane-runtime.fly.dev
+        type: string
+      collector_url:
+        description: Collector base URL
+        required: true
+        default: https://mz-wasmplane-otel-collector.fly.dev
+        type: string
+      sample_host:
+        description: Host header routed to the Rust + MoonBit sample
+        required: true
+        default: rust-moonbit.sample.wasmplane.local
+        type: string
+      project_id:
+        description: Project id used by the Rust + MoonBit release smoke
+        required: true
+        default: prj_rust_moonbit_release
+        type: string
+      runtime_machines:
+        description: Runtime Machine count for scale evaluation
+        required: true
+        default: "2"
+        type: string
+      iterations:
+        description: HTTP benchmark iterations for scale evaluation
+        required: true
+        default: "300"
+        type: string
+      warmup:
+        description: HTTP benchmark warmup iterations for scale evaluation
+        required: true
+        default: "10"
+        type: string
+      concurrency:
+        description: Comma-separated HTTP concurrency list
+        required: true
+        default: "1,8,32,64,128"
+        type: string
+      fly_region:
+        description: Fly region for scaling
+        required: true
+        default: nrt
+        type: string
+      control_app:
+        description: Fly control app
+        required: true
+        default: mz-wasmplane-control
+        type: string
+      runtime_app:
+        description: Fly runtime app
+        required: true
+        default: mz-wasmplane-runtime
+        type: string
+      collector_app:
+        description: Fly collector app
+        required: true
+        default: mz-wasmplane-otel-collector
+        type: string
+      execute_scale_eval:
+        description: Execute Fly scale evaluation instead of only planning it
+        required: true
+        default: false
+        type: boolean
+      release_rust_moonbit:
+        description: Run the live Rust + MoonBit release smoke
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-readiness-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CI: true
+
+jobs:
+  production-readiness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    environment: production
+    env:
+      WASMPLANE_CONTROL_PLANE_URL: ${{ inputs.control_plane_url }}
+      WASMPLANE_RUNTIME_URL: ${{ inputs.runtime_url }}
+      WASMPLANE_COLLECTOR_URL: ${{ inputs.collector_url }}
+      WASMPLANE_SAMPLE_HOST: ${{ inputs.sample_host }}
+      WASMPLANE_SAMPLE_PROJECT_ID: ${{ inputs.project_id }}
+      WASMPLANE_CONTROL_PLANE_TOKEN: ${{ secrets.WASMPLANE_CONTROL_PLANE_TOKEN }}
+      WASMPLANE_RUNTIME_TOKEN: ${{ secrets.WASMPLANE_RUNTIME_TOKEN }}
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      FLY_CONTROL_APP: ${{ inputs.control_app }}
+      FLY_RUNTIME_APP: ${{ inputs.runtime_app }}
+      FLY_COLLECTOR_APP: ${{ inputs.collector_app }}
+      FLY_REGION: ${{ inputs.fly_region }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: "24"
+          cache: pnpm
+
+      - name: Install Node dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Rust stable
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup target add wasm32-wasip1 --toolchain stable
+
+      - name: Cache Rust build artifacts
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ~/.cargo/bin/wac
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+            examples/**/target
+          key: ${{ runner.os }}-rust-wac-${{ hashFiles('Cargo.lock', '**/Cargo.lock', '**/Cargo.toml', 'justfile') }}
+          restore-keys: |
+            ${{ runner.os }}-rust-wac-
+
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+
+      - name: Setup MoonBit
+        uses: hustcer/setup-moonbit@9199da0ab63ea0c0bab1dc15f03d76e17ed4f75f # v1
+
+      - name: Install Wasm CI tools
+        run: bash scripts/install-wasm-ci-tools.sh
+
+      - name: Install WAC
+        run: just wac-install
+
+      - name: Prepare reports
+        run: mkdir -p reports/production-readiness
+
+      - name: Check workflow action pins
+        run: just actions-pin-check
+
+      - name: Run production smoke
+        run: just fly-smoke-production
+
+      - name: Run alarm demo smoke
+        run: just fly-alarm-demo
+
+      - name: Plan Fly scale evaluation
+        run: |
+          pnpm fly-scale-eval -- --runtime-machines "${{ inputs.runtime_machines }}" --iterations "${{ inputs.iterations }}" --warmup "${{ inputs.warmup }}" --concurrency "${{ inputs.concurrency }}" --output reports/production-readiness/fly-scale-plan.md
+          cat reports/production-readiness/fly-scale-plan.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Install flyctl
+        if: ${{ inputs.execute_scale_eval }}
+        run: |
+          curl -L https://fly.io/install.sh | sh
+          echo "$HOME/.fly/bin" >> "$GITHUB_PATH"
+
+      - name: Run Fly scale evaluation
+        if: ${{ inputs.execute_scale_eval }}
+        run: |
+          pnpm fly-scale-eval -- --execute --runtime-machines "${{ inputs.runtime_machines }}" --iterations "${{ inputs.iterations }}" --warmup "${{ inputs.warmup }}" --concurrency "${{ inputs.concurrency }}" --output reports/production-readiness/fly-scale-execute.md
+          cat reports/production-readiness/fly-scale-execute.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Check Rust + MoonBit release preflight
+        if: ${{ inputs.release_rust_moonbit }}
+        run: just sample-rust-moonbit-release-preflight
+
+      - name: Run Rust + MoonBit release smoke
+        if: ${{ inputs.release_rust_moonbit }}
+        run: just sample-rust-moonbit-release
+
+      - name: Generate WAC migration report
+        if: ${{ always() }}
+        run: just sample-rust-moonbit-wac-status reports/production-readiness/wac-migration.md
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: ${{ !cancelled() }}
+        with:
+          name: wasmplane-production-readiness
+          path: |
+            reports/production-readiness/
+            examples/rust-moonbit-release/target/rust-moonbit-release.component.wasm
+          retention-days: 30

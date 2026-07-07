@@ -315,3 +315,9 @@ Production readiness tasks, in implementation order.
 - [x] Add static runtime worker WIT diagnostics to the WAC migration report.
 - [x] Replace deprecated `wasm-tools compose` with forked `wac` for the WASIp3 async worker world. wasmplane uses `mizchi/wac@wasmplane-wac-0.10.1-p1`; `sample-rust-moonbit-compose-build` remains as a rollback fallback.
 - [x] Add a protected GitHub Actions release gate for the Rust + MoonBit sample.
+
+## 39. Production readiness gate
+
+- [x] Add a protected manual GitHub Actions gate for Fly production smoke, alarms, scale evaluation, and Rust + MoonBit release.
+- [x] Keep Fly scale execution explicit through a workflow input and production environment approval.
+- [x] Upload readiness reports for release review.

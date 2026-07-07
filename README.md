@@ -522,6 +522,15 @@ available only when explicit ids are supplied with `--restart-runtime-machine <i
 `--restart-control-machine <id>`. Volume SQLite backup drills require an explicit database id with
 `--volume-sqlite-drill-id <id>`.
 
+### Production readiness gate
+
+`.github/workflows/production-readiness.yml` is the protected manual gate for live Fly production
+posture. Configure the GitHub Environment `production` with
+`WASMPLANE_CONTROL_PLANE_TOKEN`, `WASMPLANE_RUNTIME_TOKEN`, and `FLY_API_TOKEN`. The workflow runs
+`just actions-pin-check`, `just fly-smoke-production`, `just fly-alarm-demo`, a Fly scale
+evaluation plan, and optionally executes the scale evaluation and Rust + MoonBit release smoke. It
+uploads `reports/production-readiness/` as `wasmplane-production-readiness`.
+
 ## Multi-cloud Deploy POC
 
 Fly remains the most exercised deployment target, but the repository now includes first-pass
