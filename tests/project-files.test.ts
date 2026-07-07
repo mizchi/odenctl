@@ -153,6 +153,9 @@ test("project tooling keeps Wasm E2E portable", async () => {
   assert.match(productionReadinessWorkflow, /secrets\.WASMPLANE_CONTROL_PLANE_TOKEN/);
   assert.match(productionReadinessWorkflow, /secrets\.WASMPLANE_RUNTIME_TOKEN/);
   assert.match(productionReadinessWorkflow, /secrets\.FLY_API_TOKEN/);
+  assert.match(productionReadinessWorkflow, /Validate production secrets/);
+  assert.match(productionReadinessWorkflow, /Missing production secret/);
+  assert.match(productionReadinessWorkflow, /WASMPLANE_CONTROL_PLANE_TOKEN WASMPLANE_RUNTIME_TOKEN FLY_API_TOKEN/);
   assert.match(productionReadinessWorkflow, /max_p95_ms:/);
   assert.match(productionReadinessWorkflow, /max_error_rate:/);
   assert.match(productionReadinessWorkflow, /min_throughput_rps:/);
