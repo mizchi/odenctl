@@ -266,6 +266,9 @@ fly-scale-eval:
 fly-scale-eval-execute:
     pnpm fly-scale-eval -- --execute
 
+fly-otel-evidence:
+    pnpm fly-otel-evidence
+
 tofu-fmt-check:
     tofu fmt -check -recursive infra/terraform
 

@@ -16,6 +16,7 @@ test("project tooling keeps Wasm E2E portable", async () => {
   const flyRuntime = await readFile("fly.runtime.toml", "utf8");
   const flyCollector = await readFile("fly.collector.toml", "utf8");
   const ciToolInstaller = await readFile("scripts/install-wasm-ci-tools.sh", "utf8");
+  const flyctlInstaller = await readFile("scripts/install-flyctl.sh", "utf8");
   const readme = await readFile("README.md", "utf8");
   await readFile("pnpm-lock.yaml", "utf8");
 
@@ -51,6 +52,7 @@ test("project tooling keeps Wasm E2E portable", async () => {
   assert.match(packageJson.scripts["alarm-demo-smoke"], /src\/alarm-demo-smoke\.ts/);
   assert.match(packageJson.scripts["cloudflare-control-smoke"], /src\/cloudflare-control-smoke\.ts/);
   assert.match(packageJson.scripts["fly-scale-eval"], /src\/fly-scale-eval\.ts/);
+  assert.match(packageJson.scripts["fly-otel-evidence"], /src\/fly-otel-evidence\.ts/);
   assert.match(packageJson.scripts["rust-daemon-bench"], /src\/rust-daemon-bench\.ts/);
   assert.match(packageJson.scripts["actions-pin-check"], /src\/workflow-action-pins\.ts check/);
   assert.match(packageJson.scripts["actions-pin-verify"], /src\/workflow-action-pins\.ts check --verify-remote/);
@@ -105,6 +107,11 @@ test("project tooling keeps Wasm E2E portable", async () => {
   assert.match(ciToolInstaller, /wasmtime --version/);
   assert.match(ciToolInstaller, /wasm-tools --version/);
   assert.match(ciToolInstaller, /wit-bindgen --version/);
+  assert.match(flyctlInstaller, /WASMPLANE_FLYCTL_VERSION:-0\.4\.67/);
+  assert.match(flyctlInstaller, /WASMPLANE_FLYCTL_SHA256/);
+  assert.match(flyctlInstaller, /sha256sum -c/);
+  assert.match(flyctlInstaller, /GITHUB_PATH/);
+  assert.match(flyctlInstaller, /flyctl version/);
   for (const githubWorkflow of commonWorkflows) {
     assert.match(githubWorkflow, /name: Cache Rust build artifacts/);
     assert.match(githubWorkflow, /actions\/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5\.0\.5/);
@@ -146,10 +153,26 @@ test("project tooling keeps Wasm E2E portable", async () => {
   assert.match(productionReadinessWorkflow, /secrets\.WASMPLANE_CONTROL_PLANE_TOKEN/);
   assert.match(productionReadinessWorkflow, /secrets\.WASMPLANE_RUNTIME_TOKEN/);
   assert.match(productionReadinessWorkflow, /secrets\.FLY_API_TOKEN/);
+  assert.match(productionReadinessWorkflow, /max_p95_ms:/);
+  assert.match(productionReadinessWorkflow, /max_error_rate:/);
+  assert.match(productionReadinessWorkflow, /min_throughput_rps:/);
+  assert.match(productionReadinessWorkflow, /max_publish_ms:/);
+  assert.match(productionReadinessWorkflow, /check_otel_evidence:/);
+  assert.match(productionReadinessWorkflow, /restart_runtime_machine:/);
+  assert.match(productionReadinessWorkflow, /restart_control_machine:/);
+  assert.match(productionReadinessWorkflow, /volume_sqlite_drill_id:/);
   assert.match(productionReadinessWorkflow, /just fly-smoke-production/);
   assert.match(productionReadinessWorkflow, /just fly-alarm-demo/);
   assert.match(productionReadinessWorkflow, /pnpm fly-scale-eval -- --runtime-machines/);
   assert.match(productionReadinessWorkflow, /pnpm fly-scale-eval -- --execute --runtime-machines/);
+  assert.match(productionReadinessWorkflow, /--max-p95-ms "\$\{\{ inputs\.max_p95_ms \}\}"/);
+  assert.match(productionReadinessWorkflow, /--max-error-rate "\$\{\{ inputs\.max_error_rate \}\}"/);
+  assert.match(productionReadinessWorkflow, /--min-throughput-rps "\$\{\{ inputs\.min_throughput_rps \}\}"/);
+  assert.match(productionReadinessWorkflow, /--max-publish-ms "\$\{\{ inputs\.max_publish_ms \}\}"/);
+  assert.match(productionReadinessWorkflow, /bash scripts\/install-flyctl\.sh/);
+  assert.doesNotMatch(productionReadinessWorkflow, /curl -L https:\/\/fly\.io\/install\.sh \| sh/);
+  assert.match(productionReadinessWorkflow, /pnpm fly-otel-evidence/);
+  assert.match(productionReadinessWorkflow, /fly-otel-evidence\.md/);
   assert.match(productionReadinessWorkflow, /just sample-rust-moonbit-release-preflight/);
   assert.match(productionReadinessWorkflow, /just sample-rust-moonbit-release/);
   assert.match(productionReadinessWorkflow, /wasmplane-production-readiness/);
@@ -173,6 +196,9 @@ test("project tooling keeps Wasm E2E portable", async () => {
   assert.match(readme, /Production readiness gate/);
   assert.match(readme, /production-readiness\.yml/);
   assert.match(readme, /WASMPLANE_RUNTIME_TOKEN/);
+  assert.match(readme, /SLO thresholds/);
+  assert.match(readme, /fly-otel-evidence/);
+  assert.match(readme, /scripts\/install-flyctl\.sh/);
   assert.match(readme, /pnpm cloudflare-control-smoke/);
   assert.match(readme, /just rust-daemon-bench/);
   assert.match(readme, /just fly-smoke/);
@@ -298,4 +324,8 @@ test("project docs track Cloudflare smoke results and composition CI policy", as
   assert.match(todo, /Add a protected GitHub Actions release gate for the Rust \+ MoonBit sample/);
   assert.match(todo, /Production readiness gate/);
   assert.match(todo, /Add a protected manual GitHub Actions gate for Fly production smoke, alarms, scale evaluation, and Rust \+ MoonBit release/);
+  assert.match(todo, /Harden production flyctl installation with a pinned version and SHA-256 verification/);
+  assert.match(todo, /Fail the production readiness gate on p95 latency, error-rate, throughput, or route publish SLO regressions/);
+  assert.match(todo, /Collect OTEL collector evidence as a readiness artifact/);
+  assert.match(todo, /Expose explicit production failure-drill inputs for Machine restarts and volume SQLite backup drills/);
 });

@@ -530,6 +530,13 @@ posture. Configure the GitHub Environment `production` with
 `just actions-pin-check`, `just fly-smoke-production`, `just fly-alarm-demo`, a Fly scale
 evaluation plan, and optionally executes the scale evaluation and Rust + MoonBit release smoke. It
 uploads `reports/production-readiness/` as `wasmplane-production-readiness`.
+`scripts/install-flyctl.sh` installs a pinned `flyctl` release with SHA-256 verification whenever the
+gate needs Fly API access for OTEL evidence or execute-mode drills. SLO thresholds are workflow
+inputs: p95 latency, error-rate, minimum throughput, and route publish latency are passed to
+`fly-scale-eval`, which fails the gate when an executed run regresses. `pnpm fly-otel-evidence`
+captures collector log evidence that runtime spans reached the OTEL pipeline. Machine restart and
+volume SQLite backup drills are also exposed as empty-by-default inputs, so destructive checks remain
+explicit.
 
 ## Multi-cloud Deploy POC
 

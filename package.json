@@ -21,6 +21,7 @@
     "alarm-demo-smoke": "node --experimental-strip-types src/alarm-demo-smoke.ts",
     "cloudflare-control-smoke": "node --experimental-strip-types src/cloudflare-control-smoke.ts",
     "fly-scale-eval": "node --experimental-strip-types src/fly-scale-eval.ts",
+    "fly-otel-evidence": "node --experimental-strip-types src/fly-otel-evidence.ts",
     "perf-check": "node --experimental-strip-types src/perf-regression.ts",
     "wac-migration-report": "node --experimental-strip-types src/wac-migration-report.ts",
     "actions-pin-check": "node --experimental-strip-types src/workflow-action-pins.ts check",

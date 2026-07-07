@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   buildFlyScaleEvaluationPlan,
+  formatFlyScaleEvaluationMarkdown,
   parseFlyScaleEvaluationArgs,
   runFlyScaleEvaluation,
 } from "../src/fly-scale-eval.ts";
@@ -22,6 +23,28 @@ test("fly scale evaluation args default to N+1 runtime and production checks", (
   assert.equal(parsed.requireExternalDatabase, true);
   assert.equal(parsed.failureDrill, true);
   assert.equal(parsed.execute, false);
+  assert.equal(parsed.maxP95Ms, undefined);
+  assert.equal(parsed.maxErrorRate, undefined);
+  assert.equal(parsed.minThroughputRps, undefined);
+  assert.equal(parsed.maxPublishMs, undefined);
+});
+
+test("fly scale evaluation args parse production SLO thresholds", () => {
+  const parsed = parseFlyScaleEvaluationArgs([
+    "--max-p95-ms",
+    "750",
+    "--max-error-rate",
+    "0.01",
+    "--min-throughput-rps",
+    "25",
+    "--max-publish-ms",
+    "4000",
+  ], {});
+
+  assert.equal(parsed.maxP95Ms, 750);
+  assert.equal(parsed.maxErrorRate, 0.01);
+  assert.equal(parsed.minThroughputRps, 25);
+  assert.equal(parsed.maxPublishMs, 4000);
 });
 
 test("fly scale evaluation plan covers scale, smoke, throughput, and failure drills", () => {
@@ -82,3 +105,129 @@ test("fly scale evaluation dry-run returns the plan without executing commands",
     ["runtime activate", "planned"],
   ]);
 });
+
+test("fly scale evaluation enforces SLO checks after execution", async () => {
+  const fetchImpl = async (url: string | URL, init?: RequestInit) => {
+    const parsed = new URL(String(url));
+    if (init?.method === "POST" && parsed.pathname === "/snapshots/routes/publish") {
+      return jsonResponse(200, { ok: true });
+    }
+    if (parsed.pathname === "/healthz") {
+      return jsonResponse(200, { ok: true });
+    }
+    if (parsed.pathname === "/__runtime/healthz") {
+      return jsonResponse(200, { ok: true });
+    }
+    if (parsed.pathname === "/__runtime/readyz") {
+      return jsonResponse(200, {
+        ok: true,
+        status: "active",
+        checks: { snapshot: { loaded: 1 } },
+      });
+    }
+    if (parsed.hostname === "collector.example" && parsed.pathname === "/") {
+      return jsonResponse(200, { ok: true });
+    }
+    if (parsed.pathname === "/autoscaling/signals") {
+      return jsonResponse(200, { signals: [] });
+    }
+    if (parsed.pathname === "/snapshots/routes") {
+      return jsonResponse(200, { schemaVersion: 1, routes: [] });
+    }
+    if (parsed.pathname === "/ops/config") {
+      return jsonResponse(200, {
+        schemaVersion: 1,
+        database: { kind: "postgres", external: true },
+        artifactStore: { kind: "s3", external: true },
+      });
+    }
+    if (parsed.pathname === "/runtime-nodes") {
+      return jsonResponse(200, [
+        { id: "rt_a", status: "active" },
+        { id: "rt_b", status: "active" },
+      ]);
+    }
+    if (parsed.pathname === "/__runtime/metrics") {
+      return jsonResponse(200, {
+        requests: {},
+        invocations: {},
+        snapshots: {},
+      });
+    }
+    if (parsed.hostname === "runtime.example" && parsed.pathname === "/") {
+      return textResponse(200, "ok");
+    }
+    return jsonResponse(404, { error: { code: "not_found" } });
+  };
+  const result = await runFlyScaleEvaluation({
+    ...parseFlyScaleEvaluationArgs([
+      "--execute",
+      "--runtime-url",
+      "https://runtime.example",
+      "--control-url",
+      "https://control.example",
+      "--collector-url",
+      "https://collector.example",
+      "--runtime-machines",
+      "2",
+      "--skip-failure-drill",
+      "--max-p95-ms",
+      "100",
+      "--max-error-rate",
+      "0.01",
+      "--min-throughput-rps",
+      "50",
+      "--max-publish-ms",
+      "5000",
+    ], {
+      WASMPLANE_CONTROL_PLANE_TOKEN: "control-token",
+      WASMPLANE_RUNTIME_TOKEN: "runtime-token",
+    }),
+    fetch: fetchImpl as typeof fetch,
+    sleep: async () => {},
+    commandRunner: async () => ({ stdout: "", stderr: "" }),
+    benchmarkRunner: async () => ({
+      schemaVersion: 1,
+      generatedAt: "2026-07-07T00:00:00.000Z",
+      environment: { node: "v24.0.0", platform: "test", arch: "x64", cpus: 1 },
+      results: [
+        {
+          name: "runtime.http",
+          iterations: 10,
+          concurrency: 8,
+          count: 10,
+          errors: 1,
+          elapsedMs: 1000,
+          throughputRps: 10,
+          minMs: 10,
+          avgMs: 50,
+          p50Ms: 50,
+          p95Ms: 150,
+          p99Ms: 180,
+          maxMs: 200,
+        },
+      ],
+    }),
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.slo?.ok, false);
+  assert.deepEqual(result.slo?.checks.map((check) => [check.name, check.ok]), [
+    ["route publish elapsed", true],
+    ["http p95 latency", false],
+    ["http error rate", false],
+    ["http throughput", false],
+  ]);
+  assert.match(formatFlyScaleEvaluationMarkdown(result), /## SLO checks/);
+});
+
+function jsonResponse(status: number, body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+function textResponse(status: number, body: string): Response {
+  return new Response(body, { status });
+}

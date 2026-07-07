@@ -321,3 +321,7 @@ Production readiness tasks, in implementation order.
 - [x] Add a protected manual GitHub Actions gate for Fly production smoke, alarms, scale evaluation, and Rust + MoonBit release.
 - [x] Keep Fly scale execution explicit through a workflow input and production environment approval.
 - [x] Upload readiness reports for release review.
+- [x] Harden production flyctl installation with a pinned version and SHA-256 verification.
+- [x] Fail the production readiness gate on p95 latency, error-rate, throughput, or route publish SLO regressions.
+- [x] Collect OTEL collector evidence as a readiness artifact.
+- [x] Expose explicit production failure-drill inputs for Machine restarts and volume SQLite backup drills.

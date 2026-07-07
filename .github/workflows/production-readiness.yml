@@ -48,6 +48,26 @@ on:
         required: true
         default: "1,8,32,64,128"
         type: string
+      max_p95_ms:
+        description: Maximum allowed runtime HTTP p95 latency in milliseconds
+        required: true
+        default: "1000"
+        type: string
+      max_error_rate:
+        description: Maximum allowed runtime HTTP error rate from 0 to 1
+        required: true
+        default: "0.01"
+        type: string
+      min_throughput_rps:
+        description: Minimum allowed runtime HTTP throughput for every benchmark row
+        required: true
+        default: "5"
+        type: string
+      max_publish_ms:
+        description: Maximum allowed route snapshot publish latency in milliseconds
+        required: true
+        default: "5000"
+        type: string
       fly_region:
         description: Fly region for scaling
         required: true
@@ -73,6 +93,26 @@ on:
         required: true
         default: false
         type: boolean
+      check_otel_evidence:
+        description: Check Fly collector logs for OTEL runtime span evidence
+        required: true
+        default: true
+        type: boolean
+      restart_runtime_machine:
+        description: Optional runtime Machine id for an explicit restart drill
+        required: false
+        default: ""
+        type: string
+      restart_control_machine:
+        description: Optional control Machine id for an explicit restart drill
+        required: false
+        default: ""
+        type: string
+      volume_sqlite_drill_id:
+        description: Optional volume SQLite database id for an explicit backup drill
+        required: false
+        default: ""
+        type: string
       release_rust_moonbit:
         description: Run the live Rust + MoonBit release smoke
         required: true
@@ -162,21 +202,35 @@ jobs:
       - name: Run alarm demo smoke
         run: just fly-alarm-demo
 
+      - name: Install flyctl
+        if: ${{ inputs.execute_scale_eval || inputs.check_otel_evidence }}
+        run: bash scripts/install-flyctl.sh
+
+      - name: Check OTEL collector evidence
+        if: ${{ inputs.check_otel_evidence }}
+        run: |
+          pnpm fly-otel-evidence -- --collector-app "${{ inputs.collector_app }}" --output reports/production-readiness/fly-otel-evidence.md
+          cat reports/production-readiness/fly-otel-evidence.md >> "$GITHUB_STEP_SUMMARY"
+
       - name: Plan Fly scale evaluation
         run: |
-          pnpm fly-scale-eval -- --runtime-machines "${{ inputs.runtime_machines }}" --iterations "${{ inputs.iterations }}" --warmup "${{ inputs.warmup }}" --concurrency "${{ inputs.concurrency }}" --output reports/production-readiness/fly-scale-plan.md
+          pnpm fly-scale-eval -- --runtime-machines "${{ inputs.runtime_machines }}" --iterations "${{ inputs.iterations }}" --warmup "${{ inputs.warmup }}" --concurrency "${{ inputs.concurrency }}" --max-p95-ms "${{ inputs.max_p95_ms }}" --max-error-rate "${{ inputs.max_error_rate }}" --min-throughput-rps "${{ inputs.min_throughput_rps }}" --max-publish-ms "${{ inputs.max_publish_ms }}" --output reports/production-readiness/fly-scale-plan.md
           cat reports/production-readiness/fly-scale-plan.md >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Install flyctl
-        if: ${{ inputs.execute_scale_eval }}
-        run: |
-          curl -L https://fly.io/install.sh | sh
-          echo "$HOME/.fly/bin" >> "$GITHUB_PATH"
 
       - name: Run Fly scale evaluation
         if: ${{ inputs.execute_scale_eval }}
         run: |
-          pnpm fly-scale-eval -- --execute --runtime-machines "${{ inputs.runtime_machines }}" --iterations "${{ inputs.iterations }}" --warmup "${{ inputs.warmup }}" --concurrency "${{ inputs.concurrency }}" --output reports/production-readiness/fly-scale-execute.md
+          extra_args=()
+          if [ -n "${{ inputs.restart_runtime_machine }}" ]; then
+            extra_args+=(--restart-runtime-machine "${{ inputs.restart_runtime_machine }}")
+          fi
+          if [ -n "${{ inputs.restart_control_machine }}" ]; then
+            extra_args+=(--restart-control-machine "${{ inputs.restart_control_machine }}")
+          fi
+          if [ -n "${{ inputs.volume_sqlite_drill_id }}" ]; then
+            extra_args+=(--volume-sqlite-drill-id "${{ inputs.volume_sqlite_drill_id }}")
+          fi
+          pnpm fly-scale-eval -- --execute --runtime-machines "${{ inputs.runtime_machines }}" --iterations "${{ inputs.iterations }}" --warmup "${{ inputs.warmup }}" --concurrency "${{ inputs.concurrency }}" --max-p95-ms "${{ inputs.max_p95_ms }}" --max-error-rate "${{ inputs.max_error_rate }}" --min-throughput-rps "${{ inputs.min_throughput_rps }}" --max-publish-ms "${{ inputs.max_publish_ms }}" "${extra_args[@]}" --output reports/production-readiness/fly-scale-execute.md
           cat reports/production-readiness/fly-scale-execute.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Check Rust + MoonBit release preflight

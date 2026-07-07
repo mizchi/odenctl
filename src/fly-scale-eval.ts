@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import { pathToFileURL } from "node:url";
-import type { BenchmarkReport } from "./bench.ts";
+import type { BenchmarkReport, BenchOptions } from "./bench.ts";
 import { formatBenchmarkMarkdown, runBenchmarkSuite } from "./bench.ts";
 import { runOpsSmoke, type OpsSmokeResult } from "./ops-smoke.ts";
 
@@ -30,12 +30,17 @@ export interface FlyScaleEvaluationOptions {
   restartRuntimeMachineId?: string;
   restartControlMachineId?: string;
   volumeSqliteDrillId?: string;
+  maxP95Ms?: number;
+  maxErrorRate?: number;
+  minThroughputRps?: number;
+  maxPublishMs?: number;
   execute: boolean;
   format: "markdown" | "json";
   output?: string;
   fetch?: typeof fetch;
   sleep?: (ms: number) => Promise<void>;
   commandRunner?: CommandRunner;
+  benchmarkRunner?: BenchmarkRunner;
 }
 
 export interface FlyScaleEvaluationPlanStep {
@@ -56,6 +61,7 @@ export interface FlyScaleEvaluationReport {
   ok: boolean;
   executed: boolean;
   steps: FlyScaleEvaluationStepResult[];
+  slo?: FlyScaleEvaluationSloReport;
   smoke?: OpsSmokeResult;
   benchmark?: BenchmarkReport;
 }
@@ -64,6 +70,21 @@ export type CommandRunner = (
   command: string,
   args: string[],
 ) => Promise<{ stdout: string; stderr: string }>;
+
+export type BenchmarkRunner = (options: BenchOptions) => Promise<BenchmarkReport>;
+
+export interface FlyScaleEvaluationSloReport {
+  ok: boolean;
+  checks: FlyScaleEvaluationSloCheck[];
+}
+
+export interface FlyScaleEvaluationSloCheck {
+  name: string;
+  ok: boolean;
+  threshold: number;
+  value?: number;
+  detail?: string;
+}
 
 export function parseFlyScaleEvaluationArgs(
   args: string[],
@@ -90,6 +111,13 @@ export function parseFlyScaleEvaluationArgs(
     requireExternalDatabase: env.WASMPLANE_FLY_EVAL_REQUIRE_EXTERNAL_DB !== "0",
     failureDrill: env.WASMPLANE_FLY_EVAL_FAILURE_DRILL !== "0",
     scaleWaitMs: positiveInteger(env.WASMPLANE_FLY_EVAL_SCALE_WAIT_MS, 30_000),
+    maxP95Ms: optionalPositiveNumber(env.WASMPLANE_FLY_EVAL_MAX_P95_MS, "WASMPLANE_FLY_EVAL_MAX_P95_MS"),
+    maxErrorRate: optionalRate(env.WASMPLANE_FLY_EVAL_MAX_ERROR_RATE, "WASMPLANE_FLY_EVAL_MAX_ERROR_RATE"),
+    minThroughputRps: optionalPositiveNumber(
+      env.WASMPLANE_FLY_EVAL_MIN_THROUGHPUT_RPS,
+      "WASMPLANE_FLY_EVAL_MIN_THROUGHPUT_RPS",
+    ),
+    maxPublishMs: optionalPositiveNumber(env.WASMPLANE_FLY_EVAL_MAX_PUBLISH_MS, "WASMPLANE_FLY_EVAL_MAX_PUBLISH_MS"),
     execute: false,
     format: "markdown",
   };
@@ -178,6 +206,22 @@ export function parseFlyScaleEvaluationArgs(
         break;
       case "--volume-sqlite-drill-id":
         options.volumeSqliteDrillId = requiredValue(flag, value);
+        index += 1;
+        break;
+      case "--max-p95-ms":
+        options.maxP95Ms = positiveNumber(requiredValue(flag, value), flag);
+        index += 1;
+        break;
+      case "--max-error-rate":
+        options.maxErrorRate = rateNumber(requiredValue(flag, value), flag);
+        index += 1;
+        break;
+      case "--min-throughput-rps":
+        options.minThroughputRps = positiveNumber(requiredValue(flag, value), flag);
+        index += 1;
+        break;
+      case "--max-publish-ms":
+        options.maxPublishMs = positiveNumber(requiredValue(flag, value), flag);
         index += 1;
         break;
       case "--skip-external-db-check":
@@ -306,10 +350,12 @@ export async function runFlyScaleEvaluation(
 
   const fetchImpl = options.fetch ?? fetch;
   const commandRunner = options.commandRunner ?? defaultCommandRunner;
+  const benchmarkRunner = options.benchmarkRunner ?? runBenchmarkSuite;
   const sleep = options.sleep ?? ((ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const steps: FlyScaleEvaluationStepResult[] = [];
   let smoke: OpsSmokeResult | undefined;
   let benchmark: BenchmarkReport | undefined;
+  let slo: FlyScaleEvaluationSloReport | undefined;
 
   try {
     await timedStep(steps, plan[0], () =>
@@ -347,7 +393,7 @@ export async function runFlyScaleEvaluation(
       }
     });
     await timedStep(steps, plan[3], async () => {
-      benchmark = await runBenchmarkSuite({
+      benchmark = await benchmarkRunner({
         mode: "http",
         hostBin: "target/debug/wasmplane-wasip3-host",
         runtimeUrl: options.runtimeUrl,
@@ -361,6 +407,10 @@ export async function runFlyScaleEvaluation(
         format: "json",
         timeoutMs: 30_000,
       });
+      slo = evaluateFlyScaleEvaluationSlo(options, steps, benchmark);
+      if (slo && !slo.ok) {
+        throw new Error("production SLO checks failed");
+      }
     });
 
     let nextPlanIndex = 4;
@@ -409,6 +459,7 @@ export async function runFlyScaleEvaluation(
       ok: false,
       executed: true,
       steps,
+      slo,
       smoke,
       benchmark,
     };
@@ -420,6 +471,7 @@ export async function runFlyScaleEvaluation(
     ok: steps.every((step) => step.status === "ok"),
     executed: true,
     steps,
+    slo,
     smoke,
     benchmark,
   };
@@ -442,7 +494,103 @@ export function formatFlyScaleEvaluationMarkdown(report: FlyScaleEvaluationRepor
   if (report.benchmark) {
     lines.push("", formatBenchmarkMarkdown(report.benchmark).trimEnd());
   }
+  if (report.slo) {
+    lines.push(
+      "",
+      "## SLO checks",
+      "",
+      "| check | status | value | threshold | detail |",
+      "| --- | --- | ---: | ---: | --- |",
+    );
+    for (const check of report.slo.checks) {
+      lines.push(
+        `| ${check.name} | ${check.ok ? "ok" : "failed"} | ${check.value ?? ""} | ${check.threshold} | ${check.detail ?? ""} |`,
+      );
+    }
+  }
   return `${lines.join("\n")}\n`;
+}
+
+export function evaluateFlyScaleEvaluationSlo(
+  options: FlyScaleEvaluationOptions,
+  steps: FlyScaleEvaluationStepResult[],
+  benchmark: BenchmarkReport | undefined,
+): FlyScaleEvaluationSloReport | undefined {
+  const checks: FlyScaleEvaluationSloCheck[] = [];
+  if (options.maxPublishMs !== undefined) {
+    const publish = steps.find((step) => step.name === "publish route snapshot");
+    const value = publish?.elapsedMs;
+    checks.push({
+      name: "route publish elapsed",
+      ok: value !== undefined && value <= options.maxPublishMs,
+      value,
+      threshold: options.maxPublishMs,
+      detail: value === undefined ? "publish step did not complete" : undefined,
+    });
+  }
+
+  const needsHttp = options.maxP95Ms !== undefined
+    || options.maxErrorRate !== undefined
+    || options.minThroughputRps !== undefined;
+  const httpResults = benchmark?.results.filter((result) => result.name === "runtime.http") ?? [];
+  if (needsHttp && httpResults.length === 0) {
+    if (options.maxP95Ms !== undefined) {
+      checks.push(noBenchmarkCheck("http p95 latency", options.maxP95Ms));
+    }
+    if (options.maxErrorRate !== undefined) {
+      checks.push(noBenchmarkCheck("http error rate", options.maxErrorRate));
+    }
+    if (options.minThroughputRps !== undefined) {
+      checks.push(noBenchmarkCheck("http throughput", options.minThroughputRps));
+    }
+  } else {
+    if (options.maxP95Ms !== undefined) {
+      const value = Math.max(...httpResults.map((result) => result.p95Ms));
+      checks.push({
+        name: "http p95 latency",
+        ok: value <= options.maxP95Ms,
+        value: round3(value),
+        threshold: options.maxP95Ms,
+      });
+    }
+    if (options.maxErrorRate !== undefined) {
+      const total = httpResults.reduce((sum, result) => sum + result.count, 0);
+      const errors = httpResults.reduce((sum, result) => sum + result.errors, 0);
+      const value = total === 0 ? 1 : errors / total;
+      checks.push({
+        name: "http error rate",
+        ok: value <= options.maxErrorRate,
+        value: round3(value),
+        threshold: options.maxErrorRate,
+      });
+    }
+    if (options.minThroughputRps !== undefined) {
+      const value = Math.min(...httpResults.map((result) => result.throughputRps));
+      checks.push({
+        name: "http throughput",
+        ok: value >= options.minThroughputRps,
+        value: round3(value),
+        threshold: options.minThroughputRps,
+      });
+    }
+  }
+
+  if (checks.length === 0) {
+    return undefined;
+  }
+  return {
+    ok: checks.every((check) => check.ok),
+    checks,
+  };
+}
+
+function noBenchmarkCheck(name: string, threshold: number): FlyScaleEvaluationSloCheck {
+  return {
+    name,
+    ok: false,
+    threshold,
+    detail: "no runtime.http benchmark results",
+  };
 }
 
 async function timedStep(
@@ -514,6 +662,30 @@ function positiveInteger(value: string | undefined, fallback?: number, label = "
   return parsed;
 }
 
+function optionalPositiveNumber(value: string | undefined, label: string): number | undefined {
+  return value === undefined || value.trim() === "" ? undefined : positiveNumber(value, label);
+}
+
+function positiveNumber(value: string, label = "value"): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`${label} must be a positive number`);
+  }
+  return parsed;
+}
+
+function optionalRate(value: string | undefined, label: string): number | undefined {
+  return value === undefined || value.trim() === "" ? undefined : rateNumber(value, label);
+}
+
+function rateNumber(value: string, label = "value"): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) {
+    throw new Error(`${label} must be a number between 0 and 1`);
+  }
+  return parsed;
+}
+
 function nonnegativeInteger(value: string | undefined, fallback?: number, label = "value"): number {
   if (!value) {
     if (fallback !== undefined) {
@@ -553,6 +725,10 @@ function nonEmpty(value: string | undefined): string | undefined {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function round3(value: number): number {
+  return Math.round(value * 1000) / 1000;
 }
 
 async function main(): Promise<void> {
