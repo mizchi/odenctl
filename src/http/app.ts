@@ -57,6 +57,7 @@ type MaybePromise<T> = T | Promise<T>;
 export interface HttpAppOptions {
   controlPlane: {
     createOrganization(input: any): MaybePromise<unknown>;
+    updateOrganizationBilling(input: any): MaybePromise<unknown>;
     createUser(input: any): MaybePromise<unknown>;
     createProject(input: any): MaybePromise<unknown>;
     addProjectMembership(input: any): MaybePromise<unknown>;
@@ -262,6 +263,18 @@ export function createHttpApp(options: HttpAppOptions) {
       }
       if (method === "POST" && url.pathname === "/organizations") {
         writeJson(response, 201, await options.controlPlane.createOrganization(await readJson(request)));
+        return;
+      }
+      const organizationBillingProfile = organizationBillingProfileMatch(method, url.pathname);
+      if (organizationBillingProfile) {
+        writeJson(
+          response,
+          200,
+          await options.controlPlane.updateOrganizationBilling({
+            ...(await readJson(request)),
+            organizationId: organizationBillingProfile.organizationId,
+          }),
+        );
         return;
       }
       const organizationBillingStatement = organizationBillingStatementMatch(method, url.pathname);
@@ -1720,6 +1733,17 @@ function projectBillingBudgetMatch(method: string, pathname: string): { projectI
     return undefined;
   }
   return { projectId: decodeURIComponent(match[1]) };
+}
+
+function organizationBillingProfileMatch(method: string, pathname: string): { organizationId: string } | undefined {
+  if (method !== "PUT") {
+    return undefined;
+  }
+  const match = /^\/organizations\/([^/]+)\/billing$/.exec(pathname);
+  if (!match) {
+    return undefined;
+  }
+  return { organizationId: decodeURIComponent(match[1]) };
 }
 
 function organizationBillingStatementMatch(method: string, pathname: string): { organizationId: string } | undefined {

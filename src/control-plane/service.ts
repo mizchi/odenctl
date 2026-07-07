@@ -51,6 +51,7 @@ import {
   normalizeKvNamespaceName,
   normalizeLimits,
   normalizeLocation,
+  normalizeOrganizationBillingProfile,
   normalizeOrganizationName,
   normalizePathPrefix,
   normalizeProjectRole,
@@ -177,6 +178,18 @@ export interface ControlPlaneOptions {
 export interface CreateOrganizationInput {
   id?: string;
   name: string;
+  billingProvider?: unknown;
+  billingCustomerId?: unknown;
+  paymentStatus?: unknown;
+  billingEmail?: unknown;
+}
+
+export interface UpdateOrganizationBillingInput {
+  organizationId: string;
+  billingProvider?: unknown;
+  billingCustomerId?: unknown;
+  paymentStatus?: unknown;
+  billingEmail?: unknown;
 }
 
 export interface CreateUserInput {
@@ -618,12 +631,37 @@ export function createControlPlane(options: ControlPlaneOptions) {
   const edgeWorkerDeployer = options.edgeWorkerDeployer ?? createMockCloudflareWorkerDeployer();
 
   function createOrganization(input: CreateOrganizationInput): Organization {
+    const createdAt = now();
     const organization: Organization = {
       id: optionalId(input.id, "organization id") ?? idGenerator("org"),
       name: normalizeOrganizationName(input.name),
-      createdAt: now(),
+      ...normalizeOrganizationBillingProfile({
+        billingProvider: input.billingProvider,
+        billingCustomerId: input.billingCustomerId,
+        paymentStatus: input.paymentStatus,
+        billingEmail: input.billingEmail,
+        paymentStatusUpdatedAt: createdAt,
+      }),
+      createdAt,
     };
     return repository.createOrganization(organization);
+  }
+
+  function updateOrganizationBilling(input: UpdateOrganizationBillingInput): Organization {
+    const organization = requireOrganization(repository, input.organizationId);
+    const updated: Organization = {
+      id: organization.id,
+      name: organization.name,
+      ...normalizeOrganizationBillingProfile({
+        billingProvider: input.billingProvider === undefined ? organization.billingProvider : input.billingProvider,
+        billingCustomerId: input.billingCustomerId === undefined ? organization.billingCustomerId : input.billingCustomerId,
+        paymentStatus: input.paymentStatus === undefined ? organization.paymentStatus : input.paymentStatus,
+        billingEmail: input.billingEmail === undefined ? organization.billingEmail : input.billingEmail,
+        paymentStatusUpdatedAt: input.paymentStatus === undefined ? organization.paymentStatusUpdatedAt : now(),
+      }),
+      createdAt: organization.createdAt,
+    };
+    return repository.updateOrganizationBilling(updated);
   }
 
   function createUser(input: CreateUserInput): User {
@@ -1821,6 +1859,7 @@ export function createControlPlane(options: ControlPlaneOptions) {
 
   return {
     createOrganization,
+    updateOrganizationBilling,
     createUser,
     createProject,
     addProjectMembership,

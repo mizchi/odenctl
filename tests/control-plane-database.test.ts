@@ -100,6 +100,11 @@ test("Postgres schema covers control-plane tables without SQLite-only syntax", a
   assert.match(sql, /billing_webhook_deliveries_status_next_idx/);
   assert.match(sql, /billing_invoice_adjustments_invoice_idx/);
   assert.match(sql, /billing_invoice_retention_policies_org_idx/);
+  assert.match(sql, /billing_provider text not null default 'none'/);
+  assert.match(sql, /billing_customer_id text/);
+  assert.match(sql, /payment_status text not null default 'payment_pending'/);
+  assert.match(sql, /billing_email text/);
+  assert.match(sql, /payment_status_updated_at text not null/);
   assert.doesNotMatch(sql, /pragma/i);
   assert.doesNotMatch(sql, /\binteger primary key\b/i);
 });

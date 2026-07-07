@@ -120,8 +120,26 @@ export class PostgresControlPlaneRepository implements AsyncControlPlaneReposito
   async createOrganization(organization: Organization): Promise<Organization> {
     try {
       await this.pool.query(
-        "insert into organizations (id, name, created_at) values ($1, $2, $3)",
-        [organization.id, organization.name, organization.createdAt],
+        `insert into organizations (
+          id,
+          name,
+          billing_provider,
+          billing_customer_id,
+          payment_status,
+          billing_email,
+          payment_status_updated_at,
+          created_at
+        ) values ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [
+          organization.id,
+          organization.name,
+          organization.billingProvider,
+          organization.billingCustomerId ?? null,
+          organization.paymentStatus,
+          organization.billingEmail ?? null,
+          organization.paymentStatusUpdatedAt,
+          organization.createdAt,
+        ],
       );
       return organization;
     } catch (error) {
@@ -132,6 +150,38 @@ export class PostgresControlPlaneRepository implements AsyncControlPlaneReposito
   async getOrganization(id: string): Promise<Organization | undefined> {
     const result = await this.pool.query("select * from organizations where id = $1", [id]);
     return result.rows[0] ? organizationFromRow(result.rows[0]) : undefined;
+  }
+
+  async updateOrganizationBilling(organization: Organization): Promise<Organization> {
+    try {
+      const result = await this.pool.query(
+        `update organizations set
+          billing_provider = $1,
+          billing_customer_id = $2,
+          payment_status = $3,
+          billing_email = $4,
+          payment_status_updated_at = $5
+         where id = $6
+         returning *`,
+        [
+          organization.billingProvider,
+          organization.billingCustomerId ?? null,
+          organization.paymentStatus,
+          organization.billingEmail ?? null,
+          organization.paymentStatusUpdatedAt,
+          organization.id,
+        ],
+      );
+      if (!result.rows[0]) {
+        throw new ControlPlaneError("not_found", `organization ${organization.id} was not found`);
+      }
+      return organizationFromRow(result.rows[0]);
+    } catch (error) {
+      if (isControlPlaneError(error)) {
+        throw error;
+      }
+      throw writeError("organization", organization.id, error);
+    }
   }
 
   async createUser(user: User): Promise<User> {
@@ -1416,6 +1466,11 @@ function organizationFromRow(row: any): Organization {
   return {
     id: row.id,
     name: row.name,
+    billingProvider: row.billing_provider ?? "none",
+    ...(row.billing_customer_id ? { billingCustomerId: row.billing_customer_id } : {}),
+    paymentStatus: row.payment_status ?? "payment_pending",
+    ...(row.billing_email ? { billingEmail: row.billing_email } : {}),
+    paymentStatusUpdatedAt: row.payment_status_updated_at ?? row.created_at,
     createdAt: row.created_at,
   };
 }

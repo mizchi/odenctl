@@ -31,6 +31,7 @@ import type { BillingInvoiceRetentionPolicy } from "./billing-retention.ts";
 export interface ControlPlaneRepository {
   createOrganization(organization: Organization): Organization;
   getOrganization(id: string): Organization | undefined;
+  updateOrganizationBilling(organization: Organization): Organization;
   createUser(user: User): User;
   getUser(id: string): User | undefined;
   createProjectMembership(membership: ProjectMembership): ProjectMembership;
@@ -152,8 +153,28 @@ class SqliteControlPlaneRepository implements ControlPlaneRepository {
   createOrganization(organization: Organization): Organization {
     try {
       this.db
-        .prepare("insert into organizations (id, name, created_at) values (?, ?, ?)")
-        .run(organization.id, organization.name, organization.createdAt);
+        .prepare(
+          `insert into organizations (
+            id,
+            name,
+            billing_provider,
+            billing_customer_id,
+            payment_status,
+            billing_email,
+            payment_status_updated_at,
+            created_at
+          ) values (?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          organization.id,
+          organization.name,
+          organization.billingProvider,
+          organization.billingCustomerId ?? null,
+          organization.paymentStatus,
+          organization.billingEmail ?? null,
+          organization.paymentStatusUpdatedAt,
+          organization.createdAt,
+        );
       return organization;
     } catch (error) {
       throw writeError("organization", organization.id, error);
@@ -163,6 +184,39 @@ class SqliteControlPlaneRepository implements ControlPlaneRepository {
   getOrganization(id: string): Organization | undefined {
     const row = this.db.prepare("select * from organizations where id = ?").get(id);
     return row ? organizationFromRow(row) : undefined;
+  }
+
+  updateOrganizationBilling(organization: Organization): Organization {
+    try {
+      const result = this.db
+        .prepare(
+          `update organizations set
+            billing_provider = ?,
+            billing_customer_id = ?,
+            payment_status = ?,
+            billing_email = ?,
+            payment_status_updated_at = ?
+           where id = ?`,
+        )
+        .run(
+          organization.billingProvider,
+          organization.billingCustomerId ?? null,
+          organization.paymentStatus,
+          organization.billingEmail ?? null,
+          organization.paymentStatusUpdatedAt,
+          organization.id,
+        );
+      if (result.changes === 0) {
+        throw new ControlPlaneError("not_found", `organization ${organization.id} was not found`);
+      }
+      const row = this.db.prepare("select * from organizations where id = ?").get(organization.id);
+      return organizationFromRow(row);
+    } catch (error) {
+      if (error instanceof ControlPlaneError) {
+        throw error;
+      }
+      throw writeError("organization", organization.id, error);
+    }
   }
 
   createUser(user: User): User {
@@ -1471,6 +1525,11 @@ function organizationFromRow(row: any): Organization {
   return {
     id: row.id,
     name: row.name,
+    billingProvider: row.billing_provider ?? "none",
+    ...(row.billing_customer_id ? { billingCustomerId: row.billing_customer_id } : {}),
+    paymentStatus: row.payment_status ?? "payment_pending",
+    ...(row.billing_email ? { billingEmail: row.billing_email } : {}),
+    paymentStatusUpdatedAt: row.payment_status_updated_at ?? row.created_at,
     createdAt: row.created_at,
   };
 }
@@ -1858,6 +1917,11 @@ create table if not exists schema_migrations (
 create table if not exists organizations (
   id text primary key,
   name text not null unique,
+  billing_provider text not null default 'none',
+  billing_customer_id text,
+  payment_status text not null default 'payment_pending',
+  billing_email text,
+  payment_status_updated_at text not null,
   created_at text not null
 );
 
@@ -2656,6 +2720,21 @@ const migrations: SchemaMigration[] = [
 
         create index if not exists edge_worker_release_operations_release_idx
           on edge_worker_release_operations (release_id, created_at asc, id asc);
+      `);
+    },
+  },
+  {
+    id: "202607070001_organization_billing_profile",
+    apply(db) {
+      ensureColumn(db, "organizations", "billing_provider", "text not null default 'none'");
+      ensureColumn(db, "organizations", "billing_customer_id", "text");
+      ensureColumn(db, "organizations", "payment_status", "text not null default 'payment_pending'");
+      ensureColumn(db, "organizations", "billing_email", "text");
+      ensureColumn(db, "organizations", "payment_status_updated_at", "text not null default ''");
+      db.exec(`
+        update organizations
+        set payment_status_updated_at = created_at
+        where payment_status_updated_at = ''
       `);
     },
   },

@@ -10,6 +10,13 @@ export type RuntimeBackend = typeof MVP_RUNTIME_BACKEND;
 export type WasiVersion = typeof MVP_WASI_VERSION;
 export type ApiScope = "*" | "read" | "write" | "publish";
 export type ProjectRole = "owner" | "developer" | "viewer";
+export type OrganizationBillingProvider = "none" | "stripe" | "manual";
+export type OrganizationPaymentStatus =
+  | "payment_pending"
+  | "trialing"
+  | "active"
+  | "past_due"
+  | "suspended";
 export const USAGE_METRIC_NAMES = [
   "invocation",
   "cpu_ms",
@@ -24,7 +31,20 @@ export type UsageMetricName = (typeof USAGE_METRIC_NAMES)[number];
 export interface Organization {
   id: string;
   name: string;
+  billingProvider: OrganizationBillingProvider;
+  billingCustomerId?: string;
+  paymentStatus: OrganizationPaymentStatus;
+  billingEmail?: string;
+  paymentStatusUpdatedAt: string;
   createdAt: string;
+}
+
+export interface OrganizationBillingProfileInput {
+  billingProvider?: unknown;
+  billingCustomerId?: unknown;
+  paymentStatus?: unknown;
+  billingEmail?: unknown;
+  paymentStatusUpdatedAt: string;
 }
 
 export interface User {
@@ -497,6 +517,71 @@ export function normalizeOrganizationName(value: unknown): string {
     throw new ControlPlaneError("validation", "organization name must be between 1 and 120 characters");
   }
   return name;
+}
+
+export function normalizeOrganizationBillingProvider(value: unknown): OrganizationBillingProvider {
+  if (value === "none" || value === "stripe" || value === "manual") {
+    return value;
+  }
+  throw new ControlPlaneError("validation", "organization billing provider must be none, stripe, or manual");
+}
+
+export function normalizeOrganizationPaymentStatus(value: unknown): OrganizationPaymentStatus {
+  if (
+    value === "payment_pending" ||
+    value === "trialing" ||
+    value === "active" ||
+    value === "past_due" ||
+    value === "suspended"
+  ) {
+    return value;
+  }
+  throw new ControlPlaneError(
+    "validation",
+    "organization payment status must be payment_pending, trialing, active, past_due, or suspended",
+  );
+}
+
+export function normalizeOrganizationBillingCustomerId(value: unknown): string | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  const customerId = nonEmptyString(value, "organization billing customer id");
+  if (customerId.length > 200 || /[\u0000-\u001f\u007f]/.test(customerId)) {
+    throw new ControlPlaneError(
+      "validation",
+      "organization billing customer id must be a printable string up to 200 characters",
+    );
+  }
+  return customerId;
+}
+
+export function normalizeOrganizationBillingEmail(value: unknown): string | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  return normalizeUserEmail(value);
+}
+
+export function normalizeOrganizationBillingProfile(
+  input: OrganizationBillingProfileInput,
+): Pick<
+  Organization,
+  "billingProvider" | "billingCustomerId" | "paymentStatus" | "billingEmail" | "paymentStatusUpdatedAt"
+> {
+  const billingCustomerId = normalizeOrganizationBillingCustomerId(input.billingCustomerId);
+  const billingEmail = normalizeOrganizationBillingEmail(input.billingEmail);
+  return {
+    billingProvider: input.billingProvider === undefined
+      ? "none"
+      : normalizeOrganizationBillingProvider(input.billingProvider),
+    ...(billingCustomerId === undefined ? {} : { billingCustomerId }),
+    paymentStatus: input.paymentStatus === undefined
+      ? "payment_pending"
+      : normalizeOrganizationPaymentStatus(input.paymentStatus),
+    ...(billingEmail === undefined ? {} : { billingEmail }),
+    paymentStatusUpdatedAt: input.paymentStatusUpdatedAt,
+  };
 }
 
 export function normalizeUserEmail(value: unknown): string {

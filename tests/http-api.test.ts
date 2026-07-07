@@ -16,6 +16,42 @@ import { createVolumeSqliteRegistry } from "../src/control-plane/volume-sqlite.t
 import { createHttpApp, publishCurrentRouteSnapshot } from "../src/http/app.ts";
 import { verifyRuntimeIdentityHeaders } from "../src/runtime/identity.ts";
 
+test("HTTP API updates organization billing profile", async () => {
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+  });
+  const app = createHttpApp({ controlPlane: control });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const organization = await postJson(baseUrl, "/organizations", {
+      id: "org_http_billing_profile",
+      name: "HTTP Billing Profile",
+      billingEmail: "OWNER@example.com",
+    });
+    assert.equal(organization.billingProvider, "none");
+    assert.equal(organization.paymentStatus, "payment_pending");
+    assert.equal(organization.billingEmail, "owner@example.com");
+
+    const updated = await putJson(baseUrl, `/organizations/${organization.id}/billing`, {
+      billingProvider: "stripe",
+      billingCustomerId: "cus_http",
+      paymentStatus: "active",
+    });
+    assert.equal(updated.billingProvider, "stripe");
+    assert.equal(updated.billingCustomerId, "cus_http");
+    assert.equal(updated.paymentStatus, "active");
+  } finally {
+    await app.close();
+  }
+});
+
 test("HTTP API creates deployment and exposes compact route snapshot", async () => {
   const control = createControlPlane({
     repository: createMemoryRepository(),

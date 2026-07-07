@@ -6,6 +6,17 @@ create table if not exists schema_migrations (
 create table if not exists organizations (
   id text primary key,
   name text not null unique,
+  billing_provider text not null default 'none' check (billing_provider in ('none', 'stripe', 'manual')),
+  billing_customer_id text,
+  payment_status text not null default 'payment_pending' check (payment_status in (
+    'payment_pending',
+    'trialing',
+    'active',
+    'past_due',
+    'suspended'
+  )),
+  billing_email text,
+  payment_status_updated_at text not null,
   created_at text not null
 );
 
@@ -324,6 +335,17 @@ alter table if exists route_snapshot_publications
 
 alter table if exists projects
   add column if not exists organization_id text references organizations(id);
+
+alter table if exists organizations
+  add column if not exists billing_provider text not null default 'none',
+  add column if not exists billing_customer_id text,
+  add column if not exists payment_status text not null default 'payment_pending',
+  add column if not exists billing_email text,
+  add column if not exists payment_status_updated_at text not null default '';
+
+update organizations
+  set payment_status_updated_at = created_at
+  where payment_status_updated_at = '';
 
 alter table if exists deployments
   add column if not exists world_version text not null default '0.1.0';

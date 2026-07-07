@@ -51,6 +51,7 @@ import {
   normalizeKvNamespaceName,
   normalizeLimits,
   normalizeLocation,
+  normalizeOrganizationBillingProfile,
   normalizeOrganizationName,
   normalizePathPrefix,
   normalizeProjectRole,
@@ -156,6 +157,7 @@ import {
 export interface AsyncControlPlaneRepository {
   createOrganization(organization: Organization): Promise<Organization>;
   getOrganization(id: string): Promise<Organization | undefined>;
+  updateOrganizationBilling(organization: Organization): Promise<Organization>;
   createUser(user: User): Promise<User>;
   getUser(id: string): Promise<User | undefined>;
   createProjectMembership(membership: ProjectMembership): Promise<ProjectMembership>;
@@ -271,6 +273,18 @@ export interface CreateProjectInput {
 export interface CreateOrganizationInput {
   id?: string;
   name: string;
+  billingProvider?: unknown;
+  billingCustomerId?: unknown;
+  paymentStatus?: unknown;
+  billingEmail?: unknown;
+}
+
+export interface UpdateOrganizationBillingInput {
+  organizationId: string;
+  billingProvider?: unknown;
+  billingCustomerId?: unknown;
+  paymentStatus?: unknown;
+  billingEmail?: unknown;
 }
 
 export interface CreateUserInput {
@@ -706,12 +720,37 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
   const edgeWorkerDeployer = options.edgeWorkerDeployer ?? createMockCloudflareWorkerDeployer();
 
   async function createOrganization(input: CreateOrganizationInput): Promise<Organization> {
+    const createdAt = now();
     const organization: Organization = {
       id: optionalId(input.id, "organization id") ?? idGenerator("org"),
       name: normalizeOrganizationName(input.name),
-      createdAt: now(),
+      ...normalizeOrganizationBillingProfile({
+        billingProvider: input.billingProvider,
+        billingCustomerId: input.billingCustomerId,
+        paymentStatus: input.paymentStatus,
+        billingEmail: input.billingEmail,
+        paymentStatusUpdatedAt: createdAt,
+      }),
+      createdAt,
     };
     return repository.createOrganization(organization);
+  }
+
+  async function updateOrganizationBilling(input: UpdateOrganizationBillingInput): Promise<Organization> {
+    const organization = await requireOrganization(repository, input.organizationId);
+    const updated: Organization = {
+      id: organization.id,
+      name: organization.name,
+      ...normalizeOrganizationBillingProfile({
+        billingProvider: input.billingProvider === undefined ? organization.billingProvider : input.billingProvider,
+        billingCustomerId: input.billingCustomerId === undefined ? organization.billingCustomerId : input.billingCustomerId,
+        paymentStatus: input.paymentStatus === undefined ? organization.paymentStatus : input.paymentStatus,
+        billingEmail: input.billingEmail === undefined ? organization.billingEmail : input.billingEmail,
+        paymentStatusUpdatedAt: input.paymentStatus === undefined ? organization.paymentStatusUpdatedAt : now(),
+      }),
+      createdAt: organization.createdAt,
+    };
+    return repository.updateOrganizationBilling(updated);
   }
 
   async function createUser(input: CreateUserInput): Promise<User> {
@@ -1948,6 +1987,7 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
 
   return {
     createOrganization,
+    updateOrganizationBilling,
     createUser,
     createProject,
     addProjectMembership,

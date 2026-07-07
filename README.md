@@ -1081,6 +1081,9 @@ pnpm wasmplane onboard beta \
 
 The response includes a one-time deploy token, onboarding checklist, usage/billing URLs, and a
 deploy command that uses `WASMPLANE_CONTROL_PLANE_TOKEN=<deploy-token>`.
+Organizations track a billing provider, external customer id, billing email, payment status, and
+payment status update timestamp. Update those fields with `PUT /organizations/:id/billing` before
+raising a beta tenant's production quota.
 
 Available endpoints:
 
@@ -1089,6 +1092,7 @@ Available endpoints:
 - `POST /admin/routes/rollback`
 - `POST /beta/onboardings`
 - `POST /organizations`
+- `PUT /organizations/:id/billing`
 - `GET /organizations/:id/billing-statement`
 - `GET /organizations/:id/billing-invoices`
 - `POST /organizations/:id/billing-invoices`

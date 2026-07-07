@@ -162,6 +162,53 @@ test("manages tenant memberships and project scoped API keys", () => {
   assert.equal(control.authenticateApiToken({ token: "wmp_missing" }), undefined);
 });
 
+test("control plane tracks organization billing profile and payment status", () => {
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+  });
+
+  const organization = control.createOrganization({
+    id: "org_billing_profile",
+    name: "Billing Profile Org",
+    billingEmail: "BILLING@example.com",
+  });
+
+  assert.deepEqual(organization, {
+    id: "org_billing_profile",
+    name: "Billing Profile Org",
+    billingProvider: "none",
+    paymentStatus: "payment_pending",
+    billingEmail: "billing@example.com",
+    paymentStatusUpdatedAt: fixedNow(),
+    createdAt: fixedNow(),
+  });
+
+  const active = control.updateOrganizationBilling({
+    organizationId: organization.id,
+    billingProvider: "stripe",
+    billingCustomerId: "cus_123",
+    paymentStatus: "active",
+  });
+
+  assert.deepEqual(active, {
+    ...organization,
+    billingProvider: "stripe",
+    billingCustomerId: "cus_123",
+    paymentStatus: "active",
+    paymentStatusUpdatedAt: fixedNow(),
+  });
+  assert.throws(
+    () =>
+      control.updateOrganizationBilling({
+        organizationId: organization.id,
+        paymentStatus: "unknown",
+      }),
+    /payment status/,
+  );
+});
+
 test("control plane creates a beta onboarding bundle for a new service tenant", () => {
   const control = createControlPlane({
     repository: createMemoryRepository(),
@@ -183,6 +230,8 @@ test("control plane creates a beta onboarding bundle for a new service tenant", 
   });
 
   assert.equal(onboarding.organization.id, "org_acme");
+  assert.equal(onboarding.organization.paymentStatus, "payment_pending");
+  assert.equal(onboarding.organization.billingProvider, "none");
   assert.equal(onboarding.user.email, "alice@example.com");
   assert.equal(onboarding.project.organizationId, "org_acme");
   assert.deepEqual(onboarding.membership, {
@@ -3059,6 +3108,7 @@ test("sqlite repository records schema migrations and upgrades existing database
     "202607030001_edge_worker_releases",
     "202607030002_edge_worker_release_lifecycle",
     "202607030003_edge_worker_release_operations",
+    "202607070001_organization_billing_profile",
   ]);
   assert.ok(routeColumns.includes("targets_json"));
   const artifactColumns = db
@@ -3085,7 +3135,16 @@ test("sqlite repository records schema migrations and upgrades existing database
     .prepare("pragma table_info(projects)")
     .all()
     .map((row: any) => row.name);
+  const organizationColumns = db
+    .prepare("pragma table_info(organizations)")
+    .all()
+    .map((row: any) => row.name);
   assert.ok(projectColumns.includes("organization_id"));
+  assert.ok(organizationColumns.includes("billing_provider"));
+  assert.ok(organizationColumns.includes("billing_customer_id"));
+  assert.ok(organizationColumns.includes("payment_status"));
+  assert.ok(organizationColumns.includes("billing_email"));
+  assert.ok(organizationColumns.includes("payment_status_updated_at"));
   assert.equal(db.prepare("select count(*) as count from organizations").get().count, 0);
   assert.equal(db.prepare("select count(*) as count from users").get().count, 0);
   assert.equal(db.prepare("select count(*) as count from project_memberships").get().count, 0);
