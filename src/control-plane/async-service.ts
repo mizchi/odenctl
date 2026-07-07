@@ -18,6 +18,8 @@ import type {
   Organization,
   Project,
   ProjectMembership,
+  ProductionQuotaIncrease,
+  ProductionQuotaReadinessCheck,
   ProjectRole,
   ProjectUsageSummary,
   RoutePointer,
@@ -54,6 +56,7 @@ import {
   normalizeOrganizationBillingProfile,
   normalizeOrganizationName,
   normalizePathPrefix,
+  normalizeProductionQuotaIncreaseQuotas,
   normalizeProjectRole,
   normalizeProjectName,
   normalizeRuntime,
@@ -160,8 +163,10 @@ export interface AsyncControlPlaneRepository {
   updateOrganizationBilling(organization: Organization): Promise<Organization>;
   createUser(user: User): Promise<User>;
   getUser(id: string): Promise<User | undefined>;
+  updateUserEmailVerification(id: string, emailVerifiedAt: string): Promise<User>;
   createProjectMembership(membership: ProjectMembership): Promise<ProjectMembership>;
   listProjectMemberships(projectId: string): Promise<ProjectMembership[]>;
+  acceptProjectMembershipInvite(projectId: string, userId: string, acceptedAt: string): Promise<ProjectMembership>;
   createApiKey(apiKey: ApiKey, tokenHash: string): Promise<ApiKey>;
   getApiKeyByTokenHash(tokenHash: string): Promise<ApiKey | undefined>;
   listProjectApiKeys(projectId: string): Promise<ApiKey[]>;
@@ -169,6 +174,7 @@ export interface AsyncControlPlaneRepository {
   createUsageEvent(event: UsageEvent): Promise<UsageEvent>;
   getUsageEvent(id: string): Promise<UsageEvent | undefined>;
   getProjectUsageSummary(projectId: string, from?: string, to?: string): Promise<ProjectUsageSummary>;
+  createProductionQuotaIncrease(increase: ProductionQuotaIncrease): Promise<ProductionQuotaIncrease>;
   createBillingInvoice(invoice: OrganizationBillingInvoice): Promise<OrganizationBillingInvoice>;
   getBillingInvoice(id: string): Promise<OrganizationBillingInvoice | undefined>;
   getOrganizationBillingInvoiceByPeriod(
@@ -291,6 +297,11 @@ export interface CreateUserInput {
   id?: string;
   email: string;
   name?: string;
+  emailVerifiedAt?: string;
+}
+
+export interface VerifyUserEmailInput {
+  userId: string;
 }
 
 export interface AddProjectMembershipInput {
@@ -301,6 +312,18 @@ export interface AddProjectMembershipInput {
 
 export interface ListProjectMembershipsInput {
   projectId: string;
+}
+
+export interface AcceptProjectMembershipInviteInput {
+  projectId: string;
+  userId: string;
+}
+
+export interface RequestProductionQuotaIncreaseInput {
+  id?: string;
+  organizationId: string;
+  projectId?: string;
+  requestedQuotas: unknown;
 }
 
 export interface CreateApiKeyInput {
@@ -754,13 +777,22 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
   }
 
   async function createUser(input: CreateUserInput): Promise<User> {
+    const emailVerifiedAt = input.emailVerifiedAt === undefined
+      ? undefined
+      : normalizeUsageTimestamp(input.emailVerifiedAt, "user emailVerifiedAt") ?? now();
     const user: User = {
       id: optionalId(input.id, "user id") ?? idGenerator("usr"),
       email: normalizeUserEmail(input.email),
       ...(input.name === undefined ? {} : { name: normalizeUserName(input.name) }),
+      ...(emailVerifiedAt === undefined ? {} : { emailVerifiedAt }),
       createdAt: now(),
     };
     return repository.createUser(user);
+  }
+
+  async function verifyUserEmail(input: VerifyUserEmailInput): Promise<User> {
+    await requireUser(repository, input.userId);
+    return repository.updateUserEmailVerification(input.userId, now());
   }
 
   async function createProject(input: CreateProjectInput): Promise<Project> {
@@ -785,6 +817,8 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
       projectId: input.projectId,
       userId: input.userId,
       role: normalizeProjectRole(input.role),
+      inviteStatus: "pending",
+      invitedAt: now(),
       createdAt: now(),
     });
   }
@@ -794,6 +828,51 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
   ): Promise<ProjectMembership[]> {
     await requireProject(repository, input.projectId);
     return repository.listProjectMemberships(input.projectId);
+  }
+
+  async function acceptProjectMembershipInvite(
+    input: AcceptProjectMembershipInviteInput,
+  ): Promise<ProjectMembership> {
+    await requireProject(repository, input.projectId);
+    await requireUser(repository, input.userId);
+    return repository.acceptProjectMembershipInvite(input.projectId, input.userId, now());
+  }
+
+  async function requestProductionQuotaIncrease(
+    input: RequestProductionQuotaIncreaseInput,
+  ): Promise<ProductionQuotaIncrease> {
+    const organization = await requireOrganization(repository, input.organizationId);
+    const project = input.projectId ? await requireProject(repository, input.projectId) : undefined;
+    if (project && project.organizationId !== organization.id) {
+      throw new ControlPlaneError(
+        "validation",
+        `project ${project.id} does not belong to organization ${organization.id}`,
+      );
+    }
+    const checks = await productionQuotaReadinessChecks({
+      organization,
+      projectId: project?.id,
+      repository,
+    });
+    const missing = checks.filter((check) => !check.done).map((check) => check.id);
+    if (missing.length > 0) {
+      throw new ControlPlaneError(
+        "validation",
+        `production quota increase requires ${missing.join(", ")}`,
+      );
+    }
+    const approvedAt = now();
+    const increase: ProductionQuotaIncrease = {
+      id: optionalId(input.id, "production quota increase id") ?? idGenerator("qinc"),
+      organizationId: organization.id,
+      ...(project ? { projectId: project.id } : {}),
+      requestedQuotas: normalizeProductionQuotaIncreaseQuotas(input.requestedQuotas),
+      status: "approved",
+      checks,
+      createdAt: approvedAt,
+      approvedAt,
+    };
+    return repository.createProductionQuotaIncrease(increase);
   }
 
   async function createApiKey(input: CreateApiKeyInput): Promise<CreateApiKeyOutput> {
@@ -1989,9 +2068,12 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
     createOrganization,
     updateOrganizationBilling,
     createUser,
+    verifyUserEmail,
     createProject,
     addProjectMembership,
     listProjectMemberships,
+    acceptProjectMembershipInvite,
+    requestProductionQuotaIncrease,
     createApiKey,
     listProjectApiKeys,
     createBetaOnboarding,
@@ -2236,6 +2318,47 @@ async function requireProject(repository: AsyncControlPlaneRepository, id: strin
   return project;
 }
 
+async function productionQuotaReadinessChecks(input: {
+  organization: Organization;
+  projectId?: string;
+  repository: AsyncControlPlaneRepository;
+}): Promise<ProductionQuotaReadinessCheck[]> {
+  const projects = input.projectId
+    ? [await requireProject(input.repository, input.projectId)]
+    : await input.repository.listOrganizationProjects(input.organization.id);
+  const ownerMemberships = (
+    await Promise.all(
+      projects
+        .filter((project) => project.organizationId === input.organization.id)
+        .map((project) => input.repository.listProjectMemberships(project.id)),
+    )
+  )
+    .flat()
+    .filter((membership) => membership.role === "owner");
+  const acceptedOwners = ownerMemberships.filter((membership) => membership.inviteStatus === "accepted");
+  const acceptedOwnerUsers = await Promise.all(
+    acceptedOwners.map((membership) => input.repository.getUser(membership.userId)),
+  );
+  const hasVerifiedAcceptedOwner = acceptedOwnerUsers.some((user) => Boolean(user?.emailVerifiedAt));
+  return [
+    {
+      id: "payment-active",
+      title: "Payment status is active",
+      done: input.organization.paymentStatus === "active",
+    },
+    {
+      id: "owner-invite-accepted",
+      title: "At least one owner invite is accepted",
+      done: acceptedOwners.length > 0,
+    },
+    {
+      id: "owner-email-verified",
+      title: "At least one accepted owner has a verified email",
+      done: hasVerifiedAcceptedOwner,
+    },
+  ];
+}
+
 async function requireCustomDomain(
   repository: AsyncControlPlaneRepository,
   id: string,
@@ -2465,6 +2588,8 @@ function betaOnboardingBundle(input: {
       { id: "user", title: "Create owner user", done: true },
       { id: "project", title: "Create project", done: true },
       { id: "owner-membership", title: "Grant owner membership", done: true },
+      { id: "owner-invite-accepted", title: "Accept owner invite", done: input.membership.inviteStatus === "accepted" },
+      { id: "owner-email-verified", title: "Verify owner email", done: Boolean(input.user.emailVerifiedAt) },
       { id: "deploy-key", title: "Issue deploy API key", done: true },
       { id: "first-deploy", title: "Deploy the first WASI p3 component", done: false },
       { id: "usage-review", title: "Review usage and quota reports", done: false },

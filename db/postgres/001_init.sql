@@ -24,6 +24,7 @@ create table if not exists users (
   id text primary key,
   email text not null unique,
   name text,
+  email_verified_at text,
   created_at text not null
 );
 
@@ -38,8 +39,22 @@ create table if not exists project_memberships (
   project_id text not null references projects(id),
   user_id text not null references users(id),
   role text not null check (role in ('owner', 'developer', 'viewer')),
+  invite_status text not null default 'pending' check (invite_status in ('pending', 'accepted')),
+  invited_at text not null,
+  accepted_at text,
   created_at text not null,
   primary key (project_id, user_id)
+);
+
+create table if not exists production_quota_increases (
+  id text primary key,
+  organization_id text not null references organizations(id),
+  project_id text references projects(id),
+  requested_quotas_json jsonb not null,
+  status text not null check (status in ('approved')),
+  checks_json jsonb not null,
+  created_at text not null,
+  approved_at text not null
 );
 
 create table if not exists api_keys (
@@ -347,6 +362,18 @@ update organizations
   set payment_status_updated_at = created_at
   where payment_status_updated_at = '';
 
+alter table if exists users
+  add column if not exists email_verified_at text;
+
+alter table if exists project_memberships
+  add column if not exists invite_status text not null default 'pending',
+  add column if not exists invited_at text not null default '',
+  add column if not exists accepted_at text;
+
+update project_memberships
+  set invited_at = created_at
+  where invited_at = '';
+
 alter table if exists deployments
   add column if not exists world_version text not null default '0.1.0';
 
@@ -369,6 +396,9 @@ create index if not exists artifacts_project_digest_idx
 
 create index if not exists project_memberships_user_id_idx
   on project_memberships (user_id);
+
+create index if not exists production_quota_increases_org_idx
+  on production_quota_increases (organization_id, created_at desc, id desc);
 
 create index if not exists api_keys_project_created_idx
   on api_keys (project_id, created_at desc, id desc);

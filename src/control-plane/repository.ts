@@ -11,6 +11,7 @@ import type {
   EdgeWorkerRelease,
   KvNamespace,
   Organization,
+  ProductionQuotaIncrease,
   Project,
   ProjectMembership,
   RoutePointer,
@@ -34,8 +35,10 @@ export interface ControlPlaneRepository {
   updateOrganizationBilling(organization: Organization): Organization;
   createUser(user: User): User;
   getUser(id: string): User | undefined;
+  updateUserEmailVerification(id: string, emailVerifiedAt: string): User;
   createProjectMembership(membership: ProjectMembership): ProjectMembership;
   listProjectMemberships(projectId: string): ProjectMembership[];
+  acceptProjectMembershipInvite(projectId: string, userId: string, acceptedAt: string): ProjectMembership;
   createApiKey(apiKey: ApiKey, tokenHash: string): ApiKey;
   getApiKeyByTokenHash(tokenHash: string): ApiKey | undefined;
   listProjectApiKeys(projectId: string): ApiKey[];
@@ -43,6 +46,7 @@ export interface ControlPlaneRepository {
   createUsageEvent(event: UsageEvent): UsageEvent;
   getUsageEvent(id: string): UsageEvent | undefined;
   getProjectUsageSummary(projectId: string, from?: string, to?: string): ProjectUsageSummary;
+  createProductionQuotaIncrease(increase: ProductionQuotaIncrease): ProductionQuotaIncrease;
   createBillingInvoice(invoice: OrganizationBillingInvoice): OrganizationBillingInvoice;
   getBillingInvoice(id: string): OrganizationBillingInvoice | undefined;
   getOrganizationBillingInvoiceByPeriod(
@@ -222,8 +226,8 @@ class SqliteControlPlaneRepository implements ControlPlaneRepository {
   createUser(user: User): User {
     try {
       this.db
-        .prepare("insert into users (id, email, name, created_at) values (?, ?, ?, ?)")
-        .run(user.id, user.email, user.name ?? null, user.createdAt);
+        .prepare("insert into users (id, email, name, email_verified_at, created_at) values (?, ?, ?, ?, ?)")
+        .run(user.id, user.email, user.name ?? null, user.emailVerifiedAt ?? null, user.createdAt);
       return user;
     } catch (error) {
       throw writeError("user", user.id, error);
@@ -235,6 +239,17 @@ class SqliteControlPlaneRepository implements ControlPlaneRepository {
     return row ? userFromRow(row) : undefined;
   }
 
+  updateUserEmailVerification(id: string, emailVerifiedAt: string): User {
+    const result = this.db
+      .prepare("update users set email_verified_at = ? where id = ?")
+      .run(emailVerifiedAt, id);
+    if (result.changes === 0) {
+      throw new ControlPlaneError("not_found", `user ${id} was not found`);
+    }
+    const row = this.db.prepare("select * from users where id = ?").get(id);
+    return userFromRow(row);
+  }
+
   createProjectMembership(membership: ProjectMembership): ProjectMembership {
     try {
       this.db
@@ -243,11 +258,26 @@ class SqliteControlPlaneRepository implements ControlPlaneRepository {
             project_id,
             user_id,
             role,
+            invite_status,
+            invited_at,
+            accepted_at,
             created_at
-          ) values (?, ?, ?, ?)
-          on conflict(project_id, user_id) do update set role = excluded.role`,
+          ) values (?, ?, ?, ?, ?, ?, ?)
+          on conflict(project_id, user_id) do update set
+            role = excluded.role,
+            invite_status = excluded.invite_status,
+            invited_at = excluded.invited_at,
+            accepted_at = excluded.accepted_at`,
         )
-        .run(membership.projectId, membership.userId, membership.role, membership.createdAt);
+        .run(
+          membership.projectId,
+          membership.userId,
+          membership.role,
+          membership.inviteStatus,
+          membership.invitedAt,
+          membership.acceptedAt ?? null,
+          membership.createdAt,
+        );
       const row = this.db
         .prepare("select * from project_memberships where project_id = ? and user_id = ?")
         .get(membership.projectId, membership.userId);
@@ -262,6 +292,24 @@ class SqliteControlPlaneRepository implements ControlPlaneRepository {
       .prepare("select * from project_memberships where project_id = ? order by user_id asc")
       .all(projectId)
       .map(membershipFromRow);
+  }
+
+  acceptProjectMembershipInvite(projectId: string, userId: string, acceptedAt: string): ProjectMembership {
+    const result = this.db
+      .prepare(
+        `update project_memberships set
+          invite_status = 'accepted',
+          accepted_at = ?
+         where project_id = ? and user_id = ?`,
+      )
+      .run(acceptedAt, projectId, userId);
+    if (result.changes === 0) {
+      throw new ControlPlaneError("not_found", `project membership ${projectId}/${userId} was not found`);
+    }
+    const row = this.db
+      .prepare("select * from project_memberships where project_id = ? and user_id = ?")
+      .get(projectId, userId);
+    return membershipFromRow(row);
   }
 
   createApiKey(apiKey: ApiKey, tokenHash: string): ApiKey {
@@ -381,6 +429,37 @@ class SqliteControlPlaneRepository implements ControlPlaneRepository {
       .get(...params);
     const project = this.getProject(projectId);
     return usageSummaryFromRow(projectId, project?.organizationId, from, to, row);
+  }
+
+  createProductionQuotaIncrease(increase: ProductionQuotaIncrease): ProductionQuotaIncrease {
+    try {
+      this.db
+        .prepare(
+          `insert into production_quota_increases (
+            id,
+            organization_id,
+            project_id,
+            requested_quotas_json,
+            status,
+            checks_json,
+            created_at,
+            approved_at
+          ) values (?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          increase.id,
+          increase.organizationId,
+          increase.projectId ?? null,
+          JSON.stringify(increase.requestedQuotas),
+          increase.status,
+          JSON.stringify(increase.checks),
+          increase.createdAt,
+          increase.approvedAt,
+        );
+      return increase;
+    } catch (error) {
+      throw writeError("production quota increase", increase.id, error);
+    }
   }
 
   createBillingInvoice(invoice: OrganizationBillingInvoice): OrganizationBillingInvoice {
@@ -1539,6 +1618,7 @@ function userFromRow(row: any): User {
     id: row.id,
     email: row.email,
     ...(row.name ? { name: row.name } : {}),
+    ...(row.email_verified_at ? { emailVerifiedAt: row.email_verified_at } : {}),
     createdAt: row.created_at,
   };
 }
@@ -1548,6 +1628,9 @@ function membershipFromRow(row: any): ProjectMembership {
     projectId: row.project_id,
     userId: row.user_id,
     role: row.role,
+    inviteStatus: row.invite_status ?? "pending",
+    invitedAt: row.invited_at || row.created_at,
+    ...(row.accepted_at ? { acceptedAt: row.accepted_at } : {}),
     createdAt: row.created_at,
   };
 }
@@ -1929,6 +2012,7 @@ create table if not exists users (
   id text primary key,
   email text not null unique,
   name text,
+  email_verified_at text,
   created_at text not null
 );
 
@@ -1944,11 +2028,30 @@ create table if not exists project_memberships (
   project_id text not null,
   user_id text not null,
   role text not null,
+  invite_status text not null default 'pending',
+  invited_at text not null,
+  accepted_at text,
   created_at text not null,
   primary key (project_id, user_id),
   foreign key (project_id) references projects(id),
   foreign key (user_id) references users(id)
 );
+
+create table if not exists production_quota_increases (
+  id text primary key,
+  organization_id text not null,
+  project_id text,
+  requested_quotas_json text not null,
+  status text not null,
+  checks_json text not null,
+  created_at text not null,
+  approved_at text not null,
+  foreign key (organization_id) references organizations(id),
+  foreign key (project_id) references projects(id)
+);
+
+create index if not exists production_quota_increases_org_idx
+  on production_quota_increases (organization_id, created_at desc, id desc);
 
 create table if not exists api_keys (
   id text primary key,
@@ -2445,6 +2548,7 @@ const migrations: SchemaMigration[] = [
           id text primary key,
           email text not null unique,
           name text,
+          email_verified_at text,
           created_at text not null
         );
 
@@ -2452,6 +2556,9 @@ const migrations: SchemaMigration[] = [
           project_id text not null,
           user_id text not null,
           role text not null,
+          invite_status text not null default 'pending',
+          invited_at text not null,
+          accepted_at text,
           created_at text not null,
           primary key (project_id, user_id),
           foreign key (project_id) references projects(id),
@@ -2735,6 +2842,36 @@ const migrations: SchemaMigration[] = [
         update organizations
         set payment_status_updated_at = created_at
         where payment_status_updated_at = ''
+      `);
+    },
+  },
+  {
+    id: "202607080001_invite_email_quota_gate",
+    apply(db) {
+      ensureColumn(db, "users", "email_verified_at", "text");
+      ensureColumn(db, "project_memberships", "invite_status", "text not null default 'pending'");
+      ensureColumn(db, "project_memberships", "invited_at", "text not null default ''");
+      ensureColumn(db, "project_memberships", "accepted_at", "text");
+      db.exec(`
+        update project_memberships
+        set invited_at = created_at
+        where invited_at = '';
+
+        create table if not exists production_quota_increases (
+          id text primary key,
+          organization_id text not null,
+          project_id text,
+          requested_quotas_json text not null,
+          status text not null,
+          checks_json text not null,
+          created_at text not null,
+          approved_at text not null,
+          foreign key (organization_id) references organizations(id),
+          foreign key (project_id) references projects(id)
+        );
+
+        create index if not exists production_quota_increases_org_idx
+          on production_quota_increases (organization_id, created_at desc, id desc);
       `);
     },
   },

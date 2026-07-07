@@ -1084,6 +1084,11 @@ deploy command that uses `WASMPLANE_CONTROL_PLANE_TOKEN=<deploy-token>`.
 Organizations track a billing provider, external customer id, billing email, payment status, and
 payment status update timestamp. Update those fields with `PUT /organizations/:id/billing` before
 raising a beta tenant's production quota.
+Production quota increase requests are durable control-plane records created with
+`POST /organizations/:id/production-quota-increases`. They are approved only after payment is
+active, at least one owner invite has been accepted, and that accepted owner has a verified email.
+Use `POST /projects/:id/memberships/:userId/accept` and `POST /users/:id/verify-email` to complete
+the beta owner checks.
 
 Available endpoints:
 
@@ -1093,6 +1098,7 @@ Available endpoints:
 - `POST /beta/onboardings`
 - `POST /organizations`
 - `PUT /organizations/:id/billing`
+- `POST /organizations/:id/production-quota-increases`
 - `GET /organizations/:id/billing-statement`
 - `GET /organizations/:id/billing-invoices`
 - `POST /organizations/:id/billing-invoices`
@@ -1102,9 +1108,11 @@ Available endpoints:
 - `PUT /billing-invoices/:id/retention-policy`
 - `POST /billing-invoices/retention/prune`
 - `POST /users`
+- `POST /users/:id/verify-email`
 - `POST /projects`
 - `POST /projects/:id/memberships`
 - `GET /projects/:id/memberships`
+- `POST /projects/:id/memberships/:userId/accept`
 - `POST /api-keys`
 - `GET /projects/:id/api-keys`
 - `POST /usage/events`

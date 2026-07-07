@@ -10,6 +10,7 @@ export type RuntimeBackend = typeof MVP_RUNTIME_BACKEND;
 export type WasiVersion = typeof MVP_WASI_VERSION;
 export type ApiScope = "*" | "read" | "write" | "publish";
 export type ProjectRole = "owner" | "developer" | "viewer";
+export type ProjectMembershipInviteStatus = "pending" | "accepted";
 export type OrganizationBillingProvider = "none" | "stripe" | "manual";
 export type OrganizationPaymentStatus =
   | "payment_pending"
@@ -51,6 +52,7 @@ export interface User {
   id: string;
   email: string;
   name?: string;
+  emailVerifiedAt?: string;
   createdAt: string;
 }
 
@@ -65,7 +67,36 @@ export interface ProjectMembership {
   projectId: string;
   userId: string;
   role: ProjectRole;
+  inviteStatus: ProjectMembershipInviteStatus;
+  invitedAt: string;
+  acceptedAt?: string;
   createdAt: string;
+}
+
+export interface ProductionQuotaIncreaseQuotas {
+  maxArtifacts?: number;
+  maxDeployments?: number;
+  maxRoutes?: number;
+  maxSecrets?: number;
+  maxKvNamespaces?: number;
+  maxDurableObjectNamespaces?: number;
+}
+
+export interface ProductionQuotaReadinessCheck {
+  id: "payment-active" | "owner-invite-accepted" | "owner-email-verified";
+  title: string;
+  done: boolean;
+}
+
+export interface ProductionQuotaIncrease {
+  id: string;
+  organizationId: string;
+  projectId?: string;
+  requestedQuotas: ProductionQuotaIncreaseQuotas;
+  status: "approved";
+  checks: ProductionQuotaReadinessCheck[];
+  createdAt: string;
+  approvedAt: string;
 }
 
 export interface ApiKey {
@@ -611,6 +642,41 @@ export function normalizeProjectRole(value: unknown): ProjectRole {
     return value;
   }
   throw new ControlPlaneError("validation", "project membership role must be owner, developer, or viewer");
+}
+
+export function normalizeProjectMembershipInviteStatus(value: unknown): ProjectMembershipInviteStatus {
+  if (value === "pending" || value === "accepted") {
+    return value;
+  }
+  throw new ControlPlaneError("validation", "project membership invite status must be pending or accepted");
+}
+
+export function normalizeProductionQuotaIncreaseQuotas(value: unknown): ProductionQuotaIncreaseQuotas {
+  if (value === undefined) {
+    throw new ControlPlaneError("validation", "production quota increase requires requestedQuotas");
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new ControlPlaneError("validation", "production quota increase requestedQuotas must be an object");
+  }
+  const record = value as Record<string, unknown>;
+  const quotas: ProductionQuotaIncreaseQuotas = {};
+  for (const key of [
+    "maxArtifacts",
+    "maxDeployments",
+    "maxRoutes",
+    "maxSecrets",
+    "maxKvNamespaces",
+    "maxDurableObjectNamespaces",
+  ] as const) {
+    const parsed = optionalPositiveInteger(record[key], `production quota increase ${key}`);
+    if (parsed !== undefined) {
+      quotas[key] = parsed;
+    }
+  }
+  if (Object.keys(quotas).length === 0) {
+    throw new ControlPlaneError("validation", "production quota increase requestedQuotas must include a limit");
+  }
+  return quotas;
 }
 
 export function normalizeApiKeyName(value: unknown): string {
@@ -1234,6 +1300,13 @@ function positiveInteger(value: unknown, field: string): number {
     throw new ControlPlaneError("validation", `${field} must be a positive integer`);
   }
   return value as number;
+}
+
+function optionalPositiveInteger(value: unknown, field: string): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  return positiveInteger(value, field);
 }
 
 function nonnegativeInteger(value: unknown, field: string): number {

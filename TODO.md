@@ -332,5 +332,5 @@ Production readiness tasks, in implementation order.
 - [x] Add a beta onboarding API that creates organization, owner user, project, owner membership, and a project-scoped deploy key in one transaction-like flow.
 - [x] Add a `wasmplane onboard beta` CLI for invite-only tenant bootstrap.
 - [x] Add billing provider/customer ids and payment status to organization records.
-- [ ] Add invite acceptance and owner email verification before production quota increases.
+- [x] Add invite acceptance and owner email verification before production quota increases.
 - [ ] Add a customer-facing project settings surface for API keys, usage, billing, and domains.

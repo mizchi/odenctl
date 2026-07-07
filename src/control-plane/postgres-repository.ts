@@ -14,6 +14,7 @@ import type {
   EdgeWorkerRelease,
   KvNamespace,
   Organization,
+  ProductionQuotaIncrease,
   Project,
   ProjectMembership,
   ProjectUsageSummary,
@@ -187,8 +188,8 @@ export class PostgresControlPlaneRepository implements AsyncControlPlaneReposito
   async createUser(user: User): Promise<User> {
     try {
       await this.pool.query(
-        "insert into users (id, email, name, created_at) values ($1, $2, $3, $4)",
-        [user.id, user.email, user.name ?? null, user.createdAt],
+        "insert into users (id, email, name, email_verified_at, created_at) values ($1, $2, $3, $4, $5)",
+        [user.id, user.email, user.name ?? null, user.emailVerifiedAt ?? null, user.createdAt],
       );
       return user;
     } catch (error) {
@@ -201,16 +202,47 @@ export class PostgresControlPlaneRepository implements AsyncControlPlaneReposito
     return result.rows[0] ? userFromRow(result.rows[0]) : undefined;
   }
 
+  async updateUserEmailVerification(id: string, emailVerifiedAt: string): Promise<User> {
+    const result = await this.pool.query(
+      "update users set email_verified_at = $1 where id = $2 returning *",
+      [emailVerifiedAt, id],
+    );
+    if (!result.rows[0]) {
+      throw new ControlPlaneError("not_found", `user ${id} was not found`);
+    }
+    return userFromRow(result.rows[0]);
+  }
+
   async createProjectMembership(
     membership: ProjectMembership,
   ): Promise<ProjectMembership> {
     try {
       const result = await this.pool.query(
-        `insert into project_memberships (project_id, user_id, role, created_at)
-         values ($1, $2, $3, $4)
-         on conflict (project_id, user_id) do update set role = excluded.role
+        `insert into project_memberships (
+          project_id,
+          user_id,
+          role,
+          invite_status,
+          invited_at,
+          accepted_at,
+          created_at
+        )
+         values ($1, $2, $3, $4, $5, $6, $7)
+         on conflict (project_id, user_id) do update set
+          role = excluded.role,
+          invite_status = excluded.invite_status,
+          invited_at = excluded.invited_at,
+          accepted_at = excluded.accepted_at
          returning *`,
-        [membership.projectId, membership.userId, membership.role, membership.createdAt],
+        [
+          membership.projectId,
+          membership.userId,
+          membership.role,
+          membership.inviteStatus,
+          membership.invitedAt,
+          membership.acceptedAt ?? null,
+          membership.createdAt,
+        ],
       );
       return membershipFromRow(result.rows[0]);
     } catch (error) {
@@ -224,6 +256,25 @@ export class PostgresControlPlaneRepository implements AsyncControlPlaneReposito
       [projectId],
     );
     return result.rows.map(membershipFromRow);
+  }
+
+  async acceptProjectMembershipInvite(
+    projectId: string,
+    userId: string,
+    acceptedAt: string,
+  ): Promise<ProjectMembership> {
+    const result = await this.pool.query(
+      `update project_memberships set
+        invite_status = 'accepted',
+        accepted_at = $1
+       where project_id = $2 and user_id = $3
+       returning *`,
+      [acceptedAt, projectId, userId],
+    );
+    if (!result.rows[0]) {
+      throw new ControlPlaneError("not_found", `project membership ${projectId}/${userId} was not found`);
+    }
+    return membershipFromRow(result.rows[0]);
   }
 
   async createApiKey(apiKey: ApiKey, tokenHash: string): Promise<ApiKey> {
@@ -347,6 +398,38 @@ export class PostgresControlPlaneRepository implements AsyncControlPlaneReposito
     );
     const project = await this.getProject(projectId);
     return usageSummaryFromRow(projectId, project?.organizationId, from, to, result.rows[0]);
+  }
+
+  async createProductionQuotaIncrease(
+    increase: ProductionQuotaIncrease,
+  ): Promise<ProductionQuotaIncrease> {
+    try {
+      await this.pool.query(
+        `insert into production_quota_increases (
+          id,
+          organization_id,
+          project_id,
+          requested_quotas_json,
+          status,
+          checks_json,
+          created_at,
+          approved_at
+        ) values ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [
+          increase.id,
+          increase.organizationId,
+          increase.projectId ?? null,
+          JSON.stringify(increase.requestedQuotas),
+          increase.status,
+          JSON.stringify(increase.checks),
+          increase.createdAt,
+          increase.approvedAt,
+        ],
+      );
+      return increase;
+    } catch (error) {
+      throw writeError("production quota increase", increase.id, error);
+    }
   }
 
   async createBillingInvoice(
@@ -1480,6 +1563,7 @@ function userFromRow(row: any): User {
     id: row.id,
     email: row.email,
     ...(row.name ? { name: row.name } : {}),
+    ...(row.email_verified_at ? { emailVerifiedAt: row.email_verified_at } : {}),
     createdAt: row.created_at,
   };
 }
@@ -1489,6 +1573,9 @@ function membershipFromRow(row: any): ProjectMembership {
     projectId: row.project_id,
     userId: row.user_id,
     role: row.role,
+    inviteStatus: row.invite_status ?? "pending",
+    invitedAt: row.invited_at || row.created_at,
+    ...(row.accepted_at ? { acceptedAt: row.accepted_at } : {}),
     createdAt: row.created_at,
   };
 }

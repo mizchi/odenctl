@@ -137,6 +137,8 @@ test("manages tenant memberships and project scoped API keys", () => {
     projectId: "prj_acme",
     userId: "usr_alice",
     role: "owner",
+    inviteStatus: "pending",
+    invitedAt: fixedNow(),
     createdAt: fixedNow(),
   });
   assert.deepEqual(control.listProjectMemberships({ projectId: project.id }), [membership]);
@@ -238,6 +240,8 @@ test("control plane creates a beta onboarding bundle for a new service tenant", 
     projectId: "prj_acme_api",
     userId: "usr_alice",
     role: "owner",
+    inviteStatus: "pending",
+    invitedAt: fixedNow(),
     createdAt: fixedNow(),
   });
   assert.deepEqual(onboarding.deployKey.apiKey, {
@@ -257,6 +261,8 @@ test("control plane creates a beta onboarding bundle for a new service tenant", 
     ["user", true],
     ["project", true],
     ["owner-membership", true],
+    ["owner-invite-accepted", false],
+    ["owner-email-verified", false],
     ["deploy-key", true],
     ["first-deploy", false],
     ["usage-review", false],
@@ -266,6 +272,82 @@ test("control plane creates a beta onboarding bundle for a new service tenant", 
   const authenticated = control.authenticateApiToken({ token: onboarding.deployKey.token });
   assert.deepEqual(authenticated?.scopes, ["read", "write", "publish"]);
   assert.equal(authenticated?.projectId, "prj_acme_api");
+});
+
+test("control plane gates production quota increases on accepted owner invite and verified email", () => {
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+  });
+
+  const onboarding = control.createBetaOnboarding({
+    organizationId: "org_quota_gate",
+    organizationName: "Quota Gate Org",
+    userId: "usr_owner",
+    userEmail: "owner@example.com",
+    projectId: "prj_quota_gate",
+    projectName: "Quota Gate",
+  });
+
+  assert.throws(
+    () =>
+      control.requestProductionQuotaIncrease({
+        id: "qinc_blocked",
+        organizationId: onboarding.organization.id,
+        projectId: onboarding.project.id,
+        requestedQuotas: { maxDeployments: 20 },
+      }),
+    /production quota increase requires payment-active, owner-invite-accepted, owner-email-verified/,
+  );
+
+  control.updateOrganizationBilling({
+    organizationId: onboarding.organization.id,
+    billingProvider: "stripe",
+    billingCustomerId: "cus_quota_gate",
+    paymentStatus: "active",
+  });
+  const accepted = control.acceptProjectMembershipInvite({
+    projectId: onboarding.project.id,
+    userId: onboarding.user.id,
+  });
+  assert.equal(accepted.inviteStatus, "accepted");
+  assert.equal(accepted.acceptedAt, fixedNow());
+
+  assert.throws(
+    () =>
+      control.requestProductionQuotaIncrease({
+        id: "qinc_unverified",
+        organizationId: onboarding.organization.id,
+        projectId: onboarding.project.id,
+        requestedQuotas: { maxDeployments: 20 },
+      }),
+    /production quota increase requires owner-email-verified/,
+  );
+
+  const verified = control.verifyUserEmail({ userId: onboarding.user.id });
+  assert.equal(verified.emailVerifiedAt, fixedNow());
+
+  const increase = control.requestProductionQuotaIncrease({
+    id: "qinc_approved",
+    organizationId: onboarding.organization.id,
+    projectId: onboarding.project.id,
+    requestedQuotas: { maxDeployments: 20, maxRoutes: 10 },
+  });
+  assert.deepEqual(increase, {
+    id: "qinc_approved",
+    organizationId: "org_quota_gate",
+    projectId: "prj_quota_gate",
+    requestedQuotas: { maxDeployments: 20, maxRoutes: 10 },
+    status: "approved",
+    checks: [
+      { id: "payment-active", title: "Payment status is active", done: true },
+      { id: "owner-invite-accepted", title: "At least one owner invite is accepted", done: true },
+      { id: "owner-email-verified", title: "At least one accepted owner has a verified email", done: true },
+    ],
+    createdAt: fixedNow(),
+    approvedAt: fixedNow(),
+  });
 });
 
 test("control plane records project usage metering events", () => {
@@ -1519,6 +1601,8 @@ test("async control plane manages tenant API keys and usage meters", async () =>
     projectId: project.id,
     userId: user.id,
     role: "developer",
+    inviteStatus: "pending",
+    invitedAt: fixedNow(),
     createdAt: fixedNow(),
   }]);
   assert.deepEqual(await control.getProjectUsageSummary({ projectId: project.id }), {
@@ -3109,6 +3193,7 @@ test("sqlite repository records schema migrations and upgrades existing database
     "202607030002_edge_worker_release_lifecycle",
     "202607030003_edge_worker_release_operations",
     "202607070001_organization_billing_profile",
+    "202607080001_invite_email_quota_gate",
   ]);
   assert.ok(routeColumns.includes("targets_json"));
   const artifactColumns = db
@@ -3139,15 +3224,28 @@ test("sqlite repository records schema migrations and upgrades existing database
     .prepare("pragma table_info(organizations)")
     .all()
     .map((row: any) => row.name);
+  const userColumns = db
+    .prepare("pragma table_info(users)")
+    .all()
+    .map((row: any) => row.name);
+  const membershipColumns = db
+    .prepare("pragma table_info(project_memberships)")
+    .all()
+    .map((row: any) => row.name);
   assert.ok(projectColumns.includes("organization_id"));
   assert.ok(organizationColumns.includes("billing_provider"));
   assert.ok(organizationColumns.includes("billing_customer_id"));
   assert.ok(organizationColumns.includes("payment_status"));
   assert.ok(organizationColumns.includes("billing_email"));
   assert.ok(organizationColumns.includes("payment_status_updated_at"));
+  assert.ok(userColumns.includes("email_verified_at"));
+  assert.ok(membershipColumns.includes("invite_status"));
+  assert.ok(membershipColumns.includes("invited_at"));
+  assert.ok(membershipColumns.includes("accepted_at"));
   assert.equal(db.prepare("select count(*) as count from organizations").get().count, 0);
   assert.equal(db.prepare("select count(*) as count from users").get().count, 0);
   assert.equal(db.prepare("select count(*) as count from project_memberships").get().count, 0);
+  assert.equal(db.prepare("select count(*) as count from production_quota_increases").get().count, 0);
   assert.equal(db.prepare("select count(*) as count from api_keys").get().count, 0);
   assert.equal(db.prepare("select count(*) as count from usage_events").get().count, 0);
   assert.equal(db.prepare("select count(*) as count from custom_domains").get().count, 0);

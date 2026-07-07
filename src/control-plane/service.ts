@@ -18,6 +18,8 @@ import type {
   Organization,
   Project,
   ProjectMembership,
+  ProductionQuotaIncrease,
+  ProductionQuotaReadinessCheck,
   ProjectRole,
   RoutePointer,
   RouteSnapshot,
@@ -54,6 +56,7 @@ import {
   normalizeOrganizationBillingProfile,
   normalizeOrganizationName,
   normalizePathPrefix,
+  normalizeProductionQuotaIncreaseQuotas,
   normalizeProjectRole,
   normalizeProjectName,
   normalizeRuntime,
@@ -196,6 +199,11 @@ export interface CreateUserInput {
   id?: string;
   email: string;
   name?: string;
+  emailVerifiedAt?: string;
+}
+
+export interface VerifyUserEmailInput {
+  userId: string;
 }
 
 export interface CreateProjectInput {
@@ -212,6 +220,18 @@ export interface AddProjectMembershipInput {
 
 export interface ListProjectMembershipsInput {
   projectId: string;
+}
+
+export interface AcceptProjectMembershipInviteInput {
+  projectId: string;
+  userId: string;
+}
+
+export interface RequestProductionQuotaIncreaseInput {
+  id?: string;
+  organizationId: string;
+  projectId?: string;
+  requestedQuotas: unknown;
 }
 
 export interface CreateApiKeyInput {
@@ -665,13 +685,22 @@ export function createControlPlane(options: ControlPlaneOptions) {
   }
 
   function createUser(input: CreateUserInput): User {
+    const emailVerifiedAt = input.emailVerifiedAt === undefined
+      ? undefined
+      : normalizeUsageTimestamp(input.emailVerifiedAt, "user emailVerifiedAt") ?? now();
     const user: User = {
       id: optionalId(input.id, "user id") ?? idGenerator("usr"),
       email: normalizeUserEmail(input.email),
       ...(input.name === undefined ? {} : { name: normalizeUserName(input.name) }),
+      ...(emailVerifiedAt === undefined ? {} : { emailVerifiedAt }),
       createdAt: now(),
     };
     return repository.createUser(user);
+  }
+
+  function verifyUserEmail(input: VerifyUserEmailInput): User {
+    requireUser(repository, input.userId);
+    return repository.updateUserEmailVerification(input.userId, now());
   }
 
   function createProject(input: CreateProjectInput): Project {
@@ -694,6 +723,8 @@ export function createControlPlane(options: ControlPlaneOptions) {
       projectId: input.projectId,
       userId: input.userId,
       role: normalizeProjectRole(input.role),
+      inviteStatus: "pending",
+      invitedAt: now(),
       createdAt: now(),
     });
   }
@@ -701,6 +732,47 @@ export function createControlPlane(options: ControlPlaneOptions) {
   function listProjectMemberships(input: ListProjectMembershipsInput): ProjectMembership[] {
     requireProject(repository, input.projectId);
     return repository.listProjectMemberships(input.projectId);
+  }
+
+  function acceptProjectMembershipInvite(input: AcceptProjectMembershipInviteInput): ProjectMembership {
+    requireProject(repository, input.projectId);
+    requireUser(repository, input.userId);
+    return repository.acceptProjectMembershipInvite(input.projectId, input.userId, now());
+  }
+
+  function requestProductionQuotaIncrease(input: RequestProductionQuotaIncreaseInput): ProductionQuotaIncrease {
+    const organization = requireOrganization(repository, input.organizationId);
+    const project = input.projectId ? requireProject(repository, input.projectId) : undefined;
+    if (project && project.organizationId !== organization.id) {
+      throw new ControlPlaneError(
+        "validation",
+        `project ${project.id} does not belong to organization ${organization.id}`,
+      );
+    }
+    const checks = productionQuotaReadinessChecks({
+      organization,
+      projectId: project?.id,
+      repository,
+    });
+    const missing = checks.filter((check) => !check.done).map((check) => check.id);
+    if (missing.length > 0) {
+      throw new ControlPlaneError(
+        "validation",
+        `production quota increase requires ${missing.join(", ")}`,
+      );
+    }
+    const approvedAt = now();
+    const increase: ProductionQuotaIncrease = {
+      id: optionalId(input.id, "production quota increase id") ?? idGenerator("qinc"),
+      organizationId: organization.id,
+      ...(project ? { projectId: project.id } : {}),
+      requestedQuotas: normalizeProductionQuotaIncreaseQuotas(input.requestedQuotas),
+      status: "approved",
+      checks,
+      createdAt: approvedAt,
+      approvedAt,
+    };
+    return repository.createProductionQuotaIncrease(increase);
   }
 
   function createApiKey(input: CreateApiKeyInput): CreateApiKeyOutput {
@@ -1861,9 +1933,12 @@ export function createControlPlane(options: ControlPlaneOptions) {
     createOrganization,
     updateOrganizationBilling,
     createUser,
+    verifyUserEmail,
     createProject,
     addProjectMembership,
     listProjectMemberships,
+    acceptProjectMembershipInvite,
+    requestProductionQuotaIncrease,
     createApiKey,
     listProjectApiKeys,
     createBetaOnboarding,
@@ -2105,6 +2180,42 @@ function requireProject(repository: ControlPlaneRepository, id: string): Project
   return project;
 }
 
+function productionQuotaReadinessChecks(input: {
+  organization: Organization;
+  projectId?: string;
+  repository: ControlPlaneRepository;
+}): ProductionQuotaReadinessCheck[] {
+  const projects = input.projectId
+    ? [requireProject(input.repository, input.projectId)]
+    : input.repository.listOrganizationProjects(input.organization.id);
+  const ownerMemberships = projects
+    .filter((project) => project.organizationId === input.organization.id)
+    .flatMap((project) => input.repository.listProjectMemberships(project.id))
+    .filter((membership) => membership.role === "owner");
+  const acceptedOwners = ownerMemberships.filter((membership) => membership.inviteStatus === "accepted");
+  const hasVerifiedAcceptedOwner = acceptedOwners.some((membership) => {
+    const user = input.repository.getUser(membership.userId);
+    return Boolean(user?.emailVerifiedAt);
+  });
+  return [
+    {
+      id: "payment-active",
+      title: "Payment status is active",
+      done: input.organization.paymentStatus === "active",
+    },
+    {
+      id: "owner-invite-accepted",
+      title: "At least one owner invite is accepted",
+      done: acceptedOwners.length > 0,
+    },
+    {
+      id: "owner-email-verified",
+      title: "At least one accepted owner has a verified email",
+      done: hasVerifiedAcceptedOwner,
+    },
+  ];
+}
+
 function requireCustomDomain(repository: ControlPlaneRepository, id: string): CustomDomain {
   const domain = repository.getCustomDomain(id);
   if (!domain) {
@@ -2311,6 +2422,8 @@ function betaOnboardingBundle(input: {
       { id: "user", title: "Create owner user", done: true },
       { id: "project", title: "Create project", done: true },
       { id: "owner-membership", title: "Grant owner membership", done: true },
+      { id: "owner-invite-accepted", title: "Accept owner invite", done: input.membership.inviteStatus === "accepted" },
+      { id: "owner-email-verified", title: "Verify owner email", done: Boolean(input.user.emailVerifiedAt) },
       { id: "deploy-key", title: "Issue deploy API key", done: true },
       { id: "first-deploy", title: "Deploy the first WASI p3 component", done: false },
       { id: "usage-review", title: "Review usage and quota reports", done: false },

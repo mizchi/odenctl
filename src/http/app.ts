@@ -59,9 +59,12 @@ export interface HttpAppOptions {
     createOrganization(input: any): MaybePromise<unknown>;
     updateOrganizationBilling(input: any): MaybePromise<unknown>;
     createUser(input: any): MaybePromise<unknown>;
+    verifyUserEmail(input: any): MaybePromise<unknown>;
     createProject(input: any): MaybePromise<unknown>;
     addProjectMembership(input: any): MaybePromise<unknown>;
     listProjectMemberships(input: any): MaybePromise<unknown>;
+    acceptProjectMembershipInvite(input: any): MaybePromise<unknown>;
+    requestProductionQuotaIncrease(input: any): MaybePromise<unknown>;
     createApiKey(input: any): MaybePromise<unknown>;
     listProjectApiKeys(input: any): MaybePromise<unknown>;
     createBetaOnboarding(input: any): MaybePromise<unknown>;
@@ -265,6 +268,18 @@ export function createHttpApp(options: HttpAppOptions) {
         writeJson(response, 201, await options.controlPlane.createOrganization(await readJson(request)));
         return;
       }
+      const productionQuotaIncrease = productionQuotaIncreaseMatch(method, url.pathname);
+      if (productionQuotaIncrease) {
+        writeJson(
+          response,
+          201,
+          await options.controlPlane.requestProductionQuotaIncrease({
+            ...(await readJson(request)),
+            organizationId: productionQuotaIncrease.organizationId,
+          }),
+        );
+        return;
+      }
       const organizationBillingProfile = organizationBillingProfileMatch(method, url.pathname);
       if (organizationBillingProfile) {
         writeJson(
@@ -314,6 +329,15 @@ export function createHttpApp(options: HttpAppOptions) {
       }
       if (method === "POST" && url.pathname === "/users") {
         writeJson(response, 201, await options.controlPlane.createUser(await readJson(request)));
+        return;
+      }
+      const userEmailVerification = userEmailVerificationMatch(method, url.pathname);
+      if (userEmailVerification) {
+        writeJson(
+          response,
+          200,
+          await options.controlPlane.verifyUserEmail({ userId: userEmailVerification.userId }),
+        );
         return;
       }
       if (method === "POST" && url.pathname === "/api-keys") {
@@ -468,6 +492,15 @@ export function createHttpApp(options: HttpAppOptions) {
         return;
       }
       const projectMemberships = projectMembershipsMatch(method, url.pathname);
+      const projectMembershipInviteAcceptance = projectMembershipInviteAcceptanceMatch(method, url.pathname);
+      if (projectMembershipInviteAcceptance) {
+        writeJson(
+          response,
+          200,
+          await options.controlPlane.acceptProjectMembershipInvite(projectMembershipInviteAcceptance),
+        );
+        return;
+      }
       if (projectMemberships && method === "POST") {
         const input = objectRecord(await readJson(request));
         writeJson(response, 201, await options.controlPlane.addProjectMembership({
@@ -1746,6 +1779,17 @@ function organizationBillingProfileMatch(method: string, pathname: string): { or
   return { organizationId: decodeURIComponent(match[1]) };
 }
 
+function productionQuotaIncreaseMatch(method: string, pathname: string): { organizationId: string } | undefined {
+  if (method !== "POST") {
+    return undefined;
+  }
+  const match = /^\/organizations\/([^/]+)\/production-quota-increases$/.exec(pathname);
+  if (!match) {
+    return undefined;
+  }
+  return { organizationId: decodeURIComponent(match[1]) };
+}
+
 function organizationBillingStatementMatch(method: string, pathname: string): { organizationId: string } | undefined {
   if (method !== "GET") {
     return undefined;
@@ -1914,6 +1958,17 @@ function customDomainTlsCompleteMatch(method: string, pathname: string): { id: s
   return { id: decodeURIComponent(match[1]) };
 }
 
+function userEmailVerificationMatch(method: string, pathname: string): { userId: string } | undefined {
+  if (method !== "POST") {
+    return undefined;
+  }
+  const match = /^\/users\/([^/]+)\/verify-email$/.exec(pathname);
+  if (!match) {
+    return undefined;
+  }
+  return { userId: decodeURIComponent(match[1]) };
+}
+
 function projectMembershipsMatch(method: string, pathname: string): { projectId: string } | undefined {
   if (method !== "GET" && method !== "POST") {
     return undefined;
@@ -1923,6 +1978,20 @@ function projectMembershipsMatch(method: string, pathname: string): { projectId:
     return undefined;
   }
   return { projectId: decodeURIComponent(match[1]) };
+}
+
+function projectMembershipInviteAcceptanceMatch(
+  method: string,
+  pathname: string,
+): { projectId: string; userId: string } | undefined {
+  if (method !== "POST") {
+    return undefined;
+  }
+  const match = /^\/projects\/([^/]+)\/memberships\/([^/]+)\/accept$/.exec(pathname);
+  if (!match) {
+    return undefined;
+  }
+  return { projectId: decodeURIComponent(match[1]), userId: decodeURIComponent(match[2]) };
 }
 
 function projectApiKeysMatch(method: string, pathname: string): { projectId: string } | undefined {

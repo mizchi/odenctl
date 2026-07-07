@@ -251,6 +251,71 @@ test("HTTP API creates beta onboarding bundles", async () => {
   }
 });
 
+test("HTTP API gates production quota increases on accepted and verified owners", async () => {
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+  });
+  const app = createHttpApp({ controlPlane: control });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const onboarding = await postJson(baseUrl, "/beta/onboardings", {
+      organizationId: "org_http_quota_gate",
+      organizationName: "HTTP Quota Gate",
+      userId: "usr_http_owner",
+      userEmail: "owner-http@example.com",
+      projectId: "prj_http_quota_gate",
+      projectName: "HTTP Quota Gate",
+    });
+    await putJson(baseUrl, `/organizations/${onboarding.organization.id}/billing`, {
+      billingProvider: "stripe",
+      billingCustomerId: "cus_http_quota_gate",
+      paymentStatus: "active",
+    });
+
+    const blocked = await fetch(`${baseUrl}/organizations/${onboarding.organization.id}/production-quota-increases`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        id: "qinc_http_blocked",
+        projectId: onboarding.project.id,
+        requestedQuotas: { maxDeployments: 20 },
+      }),
+    });
+    assert.equal(blocked.status, 400);
+    assert.match((await blocked.json()).error.message, /owner-invite-accepted, owner-email-verified/);
+
+    const accepted = await postJsonOk(
+      baseUrl,
+      `/projects/${onboarding.project.id}/memberships/${onboarding.user.id}/accept`,
+      {},
+    );
+    assert.equal(accepted.inviteStatus, "accepted");
+    const verified = await postJsonOk(baseUrl, `/users/${onboarding.user.id}/verify-email`, {});
+    assert.equal(verified.emailVerifiedAt, fixedNow());
+
+    const increase = await postJson(
+      baseUrl,
+      `/organizations/${onboarding.organization.id}/production-quota-increases`,
+      {
+        id: "qinc_http_approved",
+        projectId: onboarding.project.id,
+        requestedQuotas: { maxDeployments: 20, maxRoutes: 10 },
+      },
+    );
+    assert.equal(increase.status, "approved");
+    assert.deepEqual(increase.requestedQuotas, { maxDeployments: 20, maxRoutes: 10 });
+  } finally {
+    await app.close();
+  }
+});
+
 test("HTTP API exposes project quota usage", async () => {
   const control = createControlPlane({
     repository: createMemoryRepository(),

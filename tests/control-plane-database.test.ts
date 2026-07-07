@@ -61,6 +61,7 @@ test("Postgres schema covers control-plane tables without SQLite-only syntax", a
     "project_memberships",
     "api_keys",
     "usage_events",
+    "production_quota_increases",
     "custom_domains",
     "deploy_previews",
     "edge_worker_releases",
@@ -105,6 +106,12 @@ test("Postgres schema covers control-plane tables without SQLite-only syntax", a
   assert.match(sql, /payment_status text not null default 'payment_pending'/);
   assert.match(sql, /billing_email text/);
   assert.match(sql, /payment_status_updated_at text not null/);
+  assert.match(sql, /email_verified_at text/);
+  assert.match(sql, /invite_status text not null default 'pending'/);
+  assert.match(sql, /accepted_at text/);
+  assert.match(sql, /create table if not exists production_quota_increases/);
+  assert.match(sql, /requested_quotas_json jsonb not null/);
+  assert.match(sql, /production_quota_increases_org_idx/);
   assert.doesNotMatch(sql, /pragma/i);
   assert.doesNotMatch(sql, /\binteger primary key\b/i);
 });
