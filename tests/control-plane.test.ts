@@ -162,6 +162,63 @@ test("manages tenant memberships and project scoped API keys", () => {
   assert.equal(control.authenticateApiToken({ token: "wmp_missing" }), undefined);
 });
 
+test("control plane creates a beta onboarding bundle for a new service tenant", () => {
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+  });
+
+  const onboarding = control.createBetaOnboarding({
+    organizationId: "org_acme",
+    organizationName: "Acme",
+    userId: "usr_alice",
+    userEmail: "ALICE@example.com",
+    userName: "Alice",
+    projectId: "prj_acme_api",
+    projectName: "Acme API",
+    apiKeyId: "key_acme_deploy",
+    apiKeyName: "Acme deploy key",
+    defaultHost: "api.acme.example",
+  });
+
+  assert.equal(onboarding.organization.id, "org_acme");
+  assert.equal(onboarding.user.email, "alice@example.com");
+  assert.equal(onboarding.project.organizationId, "org_acme");
+  assert.deepEqual(onboarding.membership, {
+    projectId: "prj_acme_api",
+    userId: "usr_alice",
+    role: "owner",
+    createdAt: fixedNow(),
+  });
+  assert.deepEqual(onboarding.deployKey.apiKey, {
+    id: "key_acme_deploy",
+    organizationId: "org_acme",
+    projectId: "prj_acme_api",
+    name: "Acme deploy key",
+    scopes: ["read", "write", "publish"],
+    createdAt: fixedNow(),
+  });
+  assert.match(onboarding.deployKey.token, /^wmp_[a-z0-9]{32}$/);
+  assert.match(onboarding.next.deployCommand, /--project-id prj_acme_api/);
+  assert.match(onboarding.next.deployCommand, /--host api\.acme\.example/);
+  assert.match(onboarding.next.deployCommand, /WASMPLANE_CONTROL_PLANE_TOKEN=<deploy-token>/);
+  assert.deepEqual(onboarding.checklist.map((item) => [item.id, item.done]), [
+    ["organization", true],
+    ["user", true],
+    ["project", true],
+    ["owner-membership", true],
+    ["deploy-key", true],
+    ["first-deploy", false],
+    ["usage-review", false],
+    ["billing-review", false],
+  ]);
+
+  const authenticated = control.authenticateApiToken({ token: onboarding.deployKey.token });
+  assert.deepEqual(authenticated?.scopes, ["read", "write", "publish"]);
+  assert.equal(authenticated?.projectId, "prj_acme_api");
+});
+
 test("control plane records project usage metering events", () => {
   const control = createControlPlane({
     repository: createMemoryRepository(),

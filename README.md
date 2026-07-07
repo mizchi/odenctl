@@ -1068,11 +1068,26 @@ curl -X POST http://127.0.0.1:8787/projects \
   -d '{"name":"hello"}'
 ```
 
+For invite-only beta onboarding, create the organization, owner, project, owner membership, and
+project-scoped deploy key in one call:
+
+```sh
+pnpm wasmplane onboard beta \
+  --organization-name "Acme" \
+  --user-email owner@acme.example \
+  --project-name "Acme API" \
+  --host api.acme.example
+```
+
+The response includes a one-time deploy token, onboarding checklist, usage/billing URLs, and a
+deploy command that uses `WASMPLANE_CONTROL_PLANE_TOKEN=<deploy-token>`.
+
 Available endpoints:
 
 - `GET /admin`
 - `POST /admin/routes/canary`
 - `POST /admin/routes/rollback`
+- `POST /beta/onboardings`
 - `POST /organizations`
 - `GET /organizations/:id/billing-statement`
 - `GET /organizations/:id/billing-invoices`

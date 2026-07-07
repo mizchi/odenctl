@@ -3,6 +3,7 @@ import type {
   ApiKey,
   ApiScope,
   Artifact,
+  BetaOnboarding,
   CanaryDecision,
   CapabilityPolicy,
   CustomDomain,
@@ -299,6 +300,21 @@ export interface CreateApiKeyInput {
 export interface CreateApiKeyOutput {
   apiKey: ApiKey;
   token: string;
+}
+
+export interface CreateBetaOnboardingInput {
+  organizationId?: string;
+  organizationName: string;
+  userId?: string;
+  userEmail: string;
+  userName?: string;
+  projectId?: string;
+  projectName: string;
+  role?: ProjectRole;
+  apiKeyId?: string;
+  apiKeyName?: string;
+  scopes?: ApiScope[];
+  defaultHost?: string;
 }
 
 export interface AuthenticateApiTokenInput {
@@ -768,6 +784,42 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
   async function listProjectApiKeys(input: ListProjectApiKeysInput): Promise<ApiKey[]> {
     await requireProject(repository, input.projectId);
     return repository.listProjectApiKeys(input.projectId);
+  }
+
+  async function createBetaOnboarding(input: CreateBetaOnboardingInput): Promise<BetaOnboarding> {
+    const organization = await createOrganization({
+      id: input.organizationId,
+      name: input.organizationName,
+    });
+    const user = await createUser({
+      id: input.userId,
+      email: input.userEmail,
+      name: input.userName,
+    });
+    const project = await createProject({
+      id: input.projectId,
+      organizationId: organization.id,
+      name: input.projectName,
+    });
+    const membership = await addProjectMembership({
+      projectId: project.id,
+      userId: user.id,
+      role: input.role ?? "owner",
+    });
+    const deployKey = await createApiKey({
+      id: input.apiKeyId,
+      projectId: project.id,
+      name: input.apiKeyName ?? "Beta deploy key",
+      scopes: input.scopes ?? ["read", "write", "publish"],
+    });
+    return betaOnboardingBundle({
+      organization,
+      user,
+      project,
+      membership,
+      deployKey,
+      defaultHost: input.defaultHost,
+    });
   }
 
   async function authenticateApiToken(
@@ -1902,6 +1954,7 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
     listProjectMemberships,
     createApiKey,
     listProjectApiKeys,
+    createBetaOnboarding,
     authenticateApiToken,
     recordUsageEvent,
     getProjectUsageSummary,
@@ -2350,6 +2403,42 @@ function snapshotId(generatedAt: string, routes: RouteSnapshot["routes"]): strin
 
 function hashApiToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
+}
+
+function betaOnboardingBundle(input: {
+  organization: Organization;
+  user: User;
+  project: Project;
+  membership: ProjectMembership;
+  deployKey: CreateApiKeyOutput;
+  defaultHost?: string;
+}): BetaOnboarding {
+  const host = input.defaultHost ? normalizeHost(input.defaultHost) : `${input.project.id}.wasmplane.local`;
+  return {
+    organization: input.organization,
+    user: input.user,
+    project: input.project,
+    membership: input.membership,
+    deployKey: input.deployKey,
+    checklist: [
+      { id: "organization", title: "Create organization", done: true },
+      { id: "user", title: "Create owner user", done: true },
+      { id: "project", title: "Create project", done: true },
+      { id: "owner-membership", title: "Grant owner membership", done: true },
+      { id: "deploy-key", title: "Issue deploy API key", done: true },
+      { id: "first-deploy", title: "Deploy the first WASI p3 component", done: false },
+      { id: "usage-review", title: "Review usage and quota reports", done: false },
+      { id: "billing-review", title: "Review billing statement", done: false },
+    ],
+    next: {
+      tokenEnv: "WASMPLANE_CONTROL_PLANE_TOKEN",
+      deployCommand:
+        `WASMPLANE_CONTROL_PLANE_TOKEN=<deploy-token> pnpm wasmplane deploy --project-id ${input.project.id} --component ./worker.component.wasm --host ${host}`,
+      usageUrl: `/projects/${encodeURIComponent(input.project.id)}/usage`,
+      billingUrl: `/projects/${encodeURIComponent(input.project.id)}/billing-statement`,
+      apiKeysUrl: `/projects/${encodeURIComponent(input.project.id)}/api-keys`,
+    },
+  };
 }
 
 function customDomainVerificationRecordName(host: string): string {

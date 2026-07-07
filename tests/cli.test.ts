@@ -6,11 +6,13 @@ import { join } from "node:path";
 import { test } from "node:test";
 import {
   deployComponent,
+  parseOnboardArgs,
   parseDevArgs,
   parseDeployArgs,
   parseMigrateArgs,
   parseNewWorkerArgs,
   parseVolumeSqliteArgs,
+  runOnboardCommand,
   runDevCommand,
   runMigrateCommand,
   runNewWorkerCommand,
@@ -233,6 +235,88 @@ test("CLI deploy args read token from environment", () => {
   );
 
   assert.equal(input.token, "env-secret");
+});
+
+test("CLI onboard beta creates a tenant bootstrap bundle", async () => {
+  const input = parseOnboardArgs([
+    "beta",
+    "--organization-id",
+    "org_acme",
+    "--organization-name",
+    "Acme",
+    "--user-email",
+    "owner@acme.example",
+    "--project-id",
+    "prj_acme",
+    "--project-name",
+    "Acme API",
+    "--host",
+    "api.acme.example",
+    "--token",
+    "admin-token",
+  ], { WASMPLANE_CONTROL_PLANE_URL: "https://control.example" });
+  const calls: Array<{ path: string; method: string; headers: Record<string, string>; body: any }> = [];
+
+  const result = await runOnboardCommand({
+    ...input,
+    fetch: async (url, init) => {
+      const parsed = new URL(url);
+      calls.push({
+        path: parsed.pathname,
+        method: init?.method ?? "GET",
+        headers: init?.headers ?? {},
+        body: JSON.parse(init?.body ?? "{}"),
+      });
+      return jsonResponse(201, {
+        organization: { id: "org_acme", name: "Acme", createdAt: "2026-07-07T00:00:00.000Z" },
+        user: { id: "usr_1", email: "owner@acme.example", createdAt: "2026-07-07T00:00:00.000Z" },
+        project: {
+          id: "prj_acme",
+          organizationId: "org_acme",
+          name: "Acme API",
+          createdAt: "2026-07-07T00:00:00.000Z",
+        },
+        membership: {
+          projectId: "prj_acme",
+          userId: "usr_1",
+          role: "owner",
+          createdAt: "2026-07-07T00:00:00.000Z",
+        },
+        deployKey: {
+          apiKey: {
+            id: "key_1",
+            organizationId: "org_acme",
+            projectId: "prj_acme",
+            name: "Beta deploy key",
+            scopes: ["read", "write", "publish"],
+            createdAt: "2026-07-07T00:00:00.000Z",
+          },
+          token: "wmp_secret",
+        },
+        checklist: [],
+        next: {
+          tokenEnv: "WASMPLANE_CONTROL_PLANE_TOKEN",
+          deployCommand:
+            "WASMPLANE_CONTROL_PLANE_TOKEN=<deploy-token> pnpm wasmplane deploy --project-id prj_acme --component ./worker.component.wasm --host api.acme.example",
+          usageUrl: "/projects/prj_acme/usage",
+          billingUrl: "/projects/prj_acme/billing-statement",
+        },
+      });
+    },
+  });
+
+  assert.deepEqual(calls.map((call) => [call.method, call.path]), [["POST", "/beta/onboardings"]]);
+  assert.equal(calls[0]?.headers.authorization, "Bearer admin-token");
+  assert.deepEqual(calls[0]?.body, {
+    organizationId: "org_acme",
+    organizationName: "Acme",
+    userEmail: "owner@acme.example",
+    projectId: "prj_acme",
+    projectName: "Acme API",
+    defaultHost: "api.acme.example",
+  });
+  assert.equal(result.project.id, "prj_acme");
+  assert.equal(result.deployKey.token, "wmp_secret");
 });
 
 test("CLI deploy diff compares current route snapshot with the new deployment", async () => {

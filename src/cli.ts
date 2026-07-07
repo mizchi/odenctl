@@ -31,6 +31,7 @@ import {
   MVP_WASI_PROFILE,
   MVP_WORKER_WORLD,
   MVP_WORKER_WORLD_VERSION,
+  type ApiScope,
   type CapabilityPolicy,
   type RouteSnapshot,
   type RouteSnapshotEntry,
@@ -128,6 +129,25 @@ export interface VolumeSqliteCommandInput {
   maxPendingWritesPerDatabase?: number;
   keepLatest?: number;
   olderThanMs?: number;
+}
+
+export interface OnboardCommandInput {
+  kind: "beta";
+  controlPlaneUrl: string;
+  token?: string;
+  organizationId?: string;
+  organizationName: string;
+  userId?: string;
+  userEmail: string;
+  userName?: string;
+  projectId?: string;
+  projectName: string;
+  role?: "owner" | "developer" | "viewer";
+  apiKeyId?: string;
+  apiKeyName?: string;
+  scopes?: ApiScope[];
+  defaultHost?: string;
+  fetch?: FetchFunction;
 }
 
 export type FetchFunction = (input: string, init?: any) => Promise<FetchResponseLike>;
@@ -673,6 +693,117 @@ export async function runNewWorkerCommand(input: NewWorkerCommandInput): Promise
   return materializeWorkerTemplate(input);
 }
 
+export function parseOnboardArgs(
+  args: string[],
+  env: Record<string, string | undefined> = process.env,
+): OnboardCommandInput {
+  const [kind, ...rest] = args;
+  if (kind !== "beta") {
+    throw new Error("usage: wasmplane onboard beta --organization-name <name> --user-email <email> --project-name <name>");
+  }
+  const input: Partial<OnboardCommandInput> = {
+    kind,
+    controlPlaneUrl: env.WASMPLANE_CONTROL_PLANE_URL ?? "http://127.0.0.1:8787",
+    token: env.WASMPLANE_CONTROL_PLANE_TOKEN,
+  };
+  for (let index = 0; index < rest.length; index += 1) {
+    const flag = rest[index];
+    const value = rest[index + 1];
+    switch (flag) {
+      case "--control-plane-url":
+        input.controlPlaneUrl = requiredValue(flag, value);
+        index += 1;
+        break;
+      case "--token":
+        input.token = requiredValue(flag, value);
+        index += 1;
+        break;
+      case "--organization-id":
+        input.organizationId = requiredValue(flag, value);
+        index += 1;
+        break;
+      case "--organization-name":
+        input.organizationName = requiredValue(flag, value);
+        index += 1;
+        break;
+      case "--user-id":
+        input.userId = requiredValue(flag, value);
+        index += 1;
+        break;
+      case "--user-email":
+        input.userEmail = requiredValue(flag, value);
+        index += 1;
+        break;
+      case "--user-name":
+        input.userName = requiredValue(flag, value);
+        index += 1;
+        break;
+      case "--project-id":
+        input.projectId = requiredValue(flag, value);
+        index += 1;
+        break;
+      case "--project-name":
+        input.projectName = requiredValue(flag, value);
+        index += 1;
+        break;
+      case "--role":
+        input.role = parseProjectRole(requiredValue(flag, value));
+        index += 1;
+        break;
+      case "--api-key-id":
+        input.apiKeyId = requiredValue(flag, value);
+        index += 1;
+        break;
+      case "--api-key-name":
+        input.apiKeyName = requiredValue(flag, value);
+        index += 1;
+        break;
+      case "--scope":
+        input.scopes = [...(input.scopes ?? []), parseApiScope(requiredValue(flag, value))];
+        index += 1;
+        break;
+      case "--scopes":
+        input.scopes = requiredValue(flag, value).split(",").map((scope) => parseApiScope(scope.trim()));
+        index += 1;
+        break;
+      case "--host":
+        input.defaultHost = requiredValue(flag, value);
+        index += 1;
+        break;
+      default:
+        throw new Error(`unknown onboard argument ${flag}`);
+    }
+  }
+  if (!input.organizationName) {
+    throw new Error("expected --organization-name <name>");
+  }
+  if (!input.userEmail) {
+    throw new Error("expected --user-email <email>");
+  }
+  if (!input.projectName) {
+    throw new Error("expected --project-name <name>");
+  }
+  return input as OnboardCommandInput;
+}
+
+export async function runOnboardCommand(input: OnboardCommandInput) {
+  const fetchImpl = input.fetch ?? fetch;
+  return postJson(fetchImpl, input.controlPlaneUrl, "/beta/onboardings", input.token, omitUndefined({
+    organizationId: input.organizationId,
+    organizationName: input.organizationName,
+    userId: input.userId,
+    userEmail: input.userEmail,
+    userName: input.userName,
+    projectId: input.projectId,
+    projectName: input.projectName,
+    role: input.role,
+    apiKeyId: input.apiKeyId,
+    apiKeyName: input.apiKeyName,
+    scopes: input.scopes,
+    defaultHost: input.defaultHost,
+  }));
+}
+
 export function parseVolumeSqliteArgs(args: string[]): VolumeSqliteCommandInput {
   const [action, ...rest] = args;
   if (!isVolumeSqliteAction(action)) {
@@ -979,6 +1110,24 @@ function parseLimit(value: string): Partial<RuntimeLimits> {
   return { [key]: number };
 }
 
+function parseApiScope(value: string): ApiScope {
+  if (value === "*" || value === "read" || value === "write" || value === "publish") {
+    return value;
+  }
+  throw new Error(`unknown api scope ${value}`);
+}
+
+function parseProjectRole(value: string): "owner" | "developer" | "viewer" {
+  if (value === "owner" || value === "developer" || value === "viewer") {
+    return value;
+  }
+  throw new Error(`unknown project role ${value}`);
+}
+
+function omitUndefined<T extends Record<string, unknown>>(value: T): Partial<T> {
+  return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined)) as Partial<T>;
+}
+
 function parseEnvBinding(value: string): [string, string] {
   const separator = value.indexOf("=");
   const key = separator >= 0 ? value.slice(0, separator) : "";
@@ -1079,6 +1228,10 @@ function printNewWorkerResult(result: WorkerTemplateResult) {
   );
 }
 
+function printOnboardResult(result: Awaited<ReturnType<typeof runOnboardCommand>>) {
+  console.log(JSON.stringify(result, null, 2));
+}
+
 function printVolumeSqliteResult(result: Awaited<ReturnType<typeof runVolumeSqliteCommand>>) {
   console.log(JSON.stringify(result, null, 2));
 }
@@ -1106,12 +1259,16 @@ async function main() {
     printNewWorkerResult(await runNewWorkerCommand(parseNewWorkerArgs(args)));
     return;
   }
+  if (command === "onboard") {
+    printOnboardResult(await runOnboardCommand(parseOnboardArgs(args)));
+    return;
+  }
   if (command === "volume-sqlite") {
     printVolumeSqliteResult(await runVolumeSqliteCommand(parseVolumeSqliteArgs(args)));
     return;
   }
   throw new Error(
-    "usage: wasmplane <deploy|dev|migrate|new|volume-sqlite> ...",
+    "usage: wasmplane <deploy|dev|migrate|new|onboard|volume-sqlite> ...",
   );
 }
 

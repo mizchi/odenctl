@@ -59,6 +59,35 @@ export interface ApiKey {
   revokedAt?: string;
 }
 
+export interface BetaOnboardingDeployKey {
+  apiKey: ApiKey;
+  token: string;
+}
+
+export interface BetaOnboardingChecklistItem {
+  id: string;
+  title: string;
+  done: boolean;
+}
+
+export interface BetaOnboardingNextSteps {
+  tokenEnv: "WASMPLANE_CONTROL_PLANE_TOKEN";
+  deployCommand: string;
+  usageUrl: string;
+  billingUrl: string;
+  apiKeysUrl: string;
+}
+
+export interface BetaOnboarding {
+  organization: Organization;
+  user: User;
+  project: Project;
+  membership: ProjectMembership;
+  deployKey: BetaOnboardingDeployKey;
+  checklist: BetaOnboardingChecklistItem[];
+  next: BetaOnboardingNextSteps;
+}
+
 export type UsageDimensions = Record<string, string | number | boolean>;
 
 export interface UsageEvent {

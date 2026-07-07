@@ -179,6 +179,42 @@ test("HTTP API awaits async control-plane methods", async () => {
   }
 });
 
+test("HTTP API creates beta onboarding bundles", async () => {
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+  });
+  const app = createHttpApp({ controlPlane: control });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const onboarding = await postJson(baseUrl, "/beta/onboardings", {
+      organizationId: "org_acme",
+      organizationName: "Acme",
+      userEmail: "owner@acme.example",
+      projectId: "prj_acme",
+      projectName: "Acme API",
+      defaultHost: "api.acme.example",
+    });
+
+    assert.equal(onboarding.organization.id, "org_acme");
+    assert.equal(onboarding.user.email, "owner@acme.example");
+    assert.equal(onboarding.project.id, "prj_acme");
+    assert.equal(onboarding.membership.role, "owner");
+    assert.deepEqual(onboarding.deployKey.apiKey.scopes, ["read", "write", "publish"]);
+    assert.match(onboarding.deployKey.token, /^wmp_[a-z0-9]{32}$/);
+    assert.match(onboarding.next.deployCommand, /pnpm wasmplane deploy/);
+    assert.match(onboarding.next.usageUrl, /\/projects\/prj_acme\/usage$/);
+  } finally {
+    await app.close();
+  }
+});
+
 test("HTTP API exposes project quota usage", async () => {
   const control = createControlPlane({
     repository: createMemoryRepository(),

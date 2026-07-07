@@ -63,6 +63,7 @@ export interface HttpAppOptions {
     listProjectMemberships(input: any): MaybePromise<unknown>;
     createApiKey(input: any): MaybePromise<unknown>;
     listProjectApiKeys(input: any): MaybePromise<unknown>;
+    createBetaOnboarding(input: any): MaybePromise<unknown>;
     authenticateApiToken?(input: any): MaybePromise<ApiToken | undefined>;
     recordUsageEvent(input: any): MaybePromise<unknown>;
     getProjectUsageSummary(input: any): MaybePromise<unknown>;
@@ -304,6 +305,10 @@ export function createHttpApp(options: HttpAppOptions) {
       }
       if (method === "POST" && url.pathname === "/api-keys") {
         writeJson(response, 201, await options.controlPlane.createApiKey(await readJson(request)));
+        return;
+      }
+      if (method === "POST" && url.pathname === "/beta/onboardings") {
+        writeJson(response, 201, await options.controlPlane.createBetaOnboarding(await readJson(request)));
         return;
       }
       if (method === "POST" && url.pathname === "/usage/events") {
