@@ -12,6 +12,19 @@ export type ApiScope = "*" | "read" | "write" | "publish";
 export type ProjectRole = "owner" | "developer" | "viewer";
 export type ProjectMembershipInviteStatus = "pending" | "accepted";
 export type OrganizationBillingProvider = "none" | "stripe" | "manual";
+export type CustomerAuditAction =
+  | "api_key.created"
+  | "api_key.revoked"
+  | "api_key.rotated"
+  | "project_member.added"
+  | "project_member.accepted"
+  | "project_member.role_updated"
+  | "project_member.removed"
+  | "custom_domain.created"
+  | "custom_domain.deleted"
+  | "billing_invoice.issued"
+  | "deployment.created"
+  | "route.pointed";
 export type OrganizationPaymentStatus =
   | "payment_pending"
   | "trialing"
@@ -137,6 +150,18 @@ export interface BetaOnboarding {
   deployKey: BetaOnboardingDeployKey;
   checklist: BetaOnboardingChecklistItem[];
   next: BetaOnboardingNextSteps;
+}
+
+export interface CustomerAuditEvent {
+  id: string;
+  organizationId?: string;
+  projectId?: string;
+  action: CustomerAuditAction;
+  targetType: string;
+  targetId: string;
+  actor?: string;
+  metadata?: Record<string, unknown>;
+  createdAt: string;
 }
 
 export type UsageDimensions = Record<string, string | number | boolean>;

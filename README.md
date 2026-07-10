@@ -47,8 +47,11 @@ endpoints except `GET /healthz`; this legacy token has all scopes. For scoped to
 `reader=read;publisher=publish,read;writer=write,read`. Supported scopes are `read`, `write`,
 `publish`, and `*`. Once a bootstrap token is configured, project-scoped API keys stored in the
 control-plane repository can also authenticate requests; API key values are returned only at creation
-time, while the repository stores a SHA-256 token hash. Set `WASMPLANE_AUDIT_LOG=/data/audit.jsonl`
-to append authenticated mutation audit events as JSONL.
+time, while the repository stores a SHA-256 token hash. Rotate active keys with
+`POST /api-keys/:id/rotate`; the response returns the replacement token and atomically revokes the
+previous key. Retire leaked keys with `POST /api-keys/:id/revoke`; revoked keys remain listed for
+audit visibility but no longer authenticate. Set `WASMPLANE_AUDIT_LOG=/data/audit.jsonl` to append
+authenticated mutation audit events as JSONL.
 Set `WASMPLANE_RUNTIME_TOKEN` on the control plane to sign route snapshot publishes sent to runtime
 nodes.
 Set `WASMPLANE_RUNTIME_IDENTITY_KEYS` on the control plane and runtime nodes as a comma-separated
@@ -82,6 +85,11 @@ Set `WASMPLANE_BILLING_INVOCATION_PER_MILLION_USD`,
 `WASMPLANE_BILLING_STORAGE_GB_MONTH_USD`, and `WASMPLANE_BILLING_SQLITE_UNIT_USD` to expose
 invoice-ready calendar-month usage statements from `GET /projects/:id/billing-statement` and
 organization rollups from `GET /organizations/:id/billing-statement`.
+`GET /projects/:id/settings` renders a customer-facing read surface that aggregates project API
+keys, usage quota status, billing statement totals, custom domains, and recent audit history while
+linking back to the underlying JSON endpoints. Customer-visible audit ledgers are available from
+`GET /projects/:id/audit-events` and `GET /organizations/:id/audit-events`; they record API key,
+member, custom domain, billing invoice, deployment, and route actions.
 Set `WASMPLANE_BILLING_MONTHLY_USD_LIMITS` to comma-separated `project=usd` entries to reject
 usage events that would exceed a project's calendar-month spend budget. Current budget status is
 available from `GET /projects/:id/billing-budget`.
@@ -1102,6 +1110,7 @@ Available endpoints:
 - `GET /organizations/:id/billing-statement`
 - `GET /organizations/:id/billing-invoices`
 - `POST /organizations/:id/billing-invoices`
+- `GET /organizations/:id/audit-events`
 - `GET /billing-invoices/:id`
 - `GET /billing-invoices/:id/export`
 - `GET /billing-invoices/:id/retention-policy`
@@ -1112,13 +1121,20 @@ Available endpoints:
 - `POST /projects`
 - `POST /projects/:id/memberships`
 - `GET /projects/:id/memberships`
+- `PATCH /projects/:id/memberships/:userId`
+- `DELETE /projects/:id/memberships/:userId`
 - `POST /projects/:id/memberships/:userId/accept`
+- `GET /projects/:id/settings`
+- `GET /projects/:id/audit-events`
 - `POST /api-keys`
 - `GET /projects/:id/api-keys`
+- `POST /api-keys/:id/revoke`
+- `POST /api-keys/:id/rotate`
 - `POST /usage/events`
 - `GET /projects/:id/usage`
 - `POST /custom-domains`
 - `GET /projects/:id/custom-domains`
+- `DELETE /custom-domains/:id`
 - `POST /custom-domains/:id/verify`
 - `POST /custom-domains/:id/tls`
 - `POST /custom-domains/:id/tls/complete`

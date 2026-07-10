@@ -61,12 +61,19 @@ export interface HttpAppOptions {
     createUser(input: any): MaybePromise<unknown>;
     verifyUserEmail(input: any): MaybePromise<unknown>;
     createProject(input: any): MaybePromise<unknown>;
+    getProject(input: any): MaybePromise<unknown>;
+    listProjectCustomerAuditEvents(input: any): MaybePromise<unknown>;
+    listOrganizationCustomerAuditEvents(input: any): MaybePromise<unknown>;
     addProjectMembership(input: any): MaybePromise<unknown>;
     listProjectMemberships(input: any): MaybePromise<unknown>;
+    updateProjectMembershipRole(input: any): MaybePromise<unknown>;
+    removeProjectMembership(input: any): MaybePromise<unknown>;
     acceptProjectMembershipInvite(input: any): MaybePromise<unknown>;
     requestProductionQuotaIncrease(input: any): MaybePromise<unknown>;
     createApiKey(input: any): MaybePromise<unknown>;
     listProjectApiKeys(input: any): MaybePromise<unknown>;
+    revokeApiKey(input: any): MaybePromise<unknown>;
+    rotateApiKey(input: any): MaybePromise<unknown>;
     createBetaOnboarding(input: any): MaybePromise<unknown>;
     authenticateApiToken?(input: any): MaybePromise<ApiToken | undefined>;
     recordUsageEvent(input: any): MaybePromise<unknown>;
@@ -85,6 +92,7 @@ export interface HttpAppOptions {
     pruneBillingInvoices(input: any): MaybePromise<unknown>;
     createCustomDomain(input: any): MaybePromise<unknown>;
     listProjectCustomDomains(input: any): MaybePromise<unknown>;
+    deleteCustomDomain(input: any): MaybePromise<unknown>;
     verifyCustomDomainOwnership(input: any): MaybePromise<unknown>;
     requestCustomDomainTlsProvisioning(input: any): MaybePromise<unknown>;
     completeCustomDomainTlsProvisioning(input: any): MaybePromise<unknown>;
@@ -223,6 +231,24 @@ export function createHttpApp(options: HttpAppOptions) {
         writeHtml(response, 200, await renderAdminPage(options, url.searchParams.get("notice")));
         return;
       }
+      const projectSettings = projectSettingsMatch(method, url.pathname);
+      if (projectSettings) {
+        writeHtml(response, 200, await renderProjectSettingsPage(options, projectSettings.projectId, url.searchParams));
+        return;
+      }
+      const projectCustomerAuditEvents = projectCustomerAuditEventsMatch(method, url.pathname);
+      if (projectCustomerAuditEvents) {
+        writeJson(
+          response,
+          200,
+          {
+            events: await options.controlPlane.listProjectCustomerAuditEvents({
+              projectId: projectCustomerAuditEvents.projectId,
+            }),
+          },
+        );
+        return;
+      }
       if (method === "POST" && url.pathname === "/admin/routes/canary") {
         const form = await readForm(request);
         await options.controlPlane.startRouteCanary({
@@ -304,6 +330,19 @@ export function createHttpApp(options: HttpAppOptions) {
         );
         return;
       }
+      const organizationCustomerAuditEvents = organizationCustomerAuditEventsMatch(method, url.pathname);
+      if (organizationCustomerAuditEvents) {
+        writeJson(
+          response,
+          200,
+          {
+            events: await options.controlPlane.listOrganizationCustomerAuditEvents({
+              organizationId: organizationCustomerAuditEvents.organizationId,
+            }),
+          },
+        );
+        return;
+      }
       const listOrganizationBillingInvoices = listOrganizationBillingInvoicesMatch(method, url.pathname);
       if (listOrganizationBillingInvoices) {
         writeJson(
@@ -342,6 +381,23 @@ export function createHttpApp(options: HttpAppOptions) {
       }
       if (method === "POST" && url.pathname === "/api-keys") {
         writeJson(response, 201, await options.controlPlane.createApiKey(await readJson(request)));
+        return;
+      }
+      const apiKeyRevoke = apiKeyRevokeMatch(method, url.pathname);
+      if (apiKeyRevoke) {
+        writeJson(response, 200, await options.controlPlane.revokeApiKey(apiKeyRevoke));
+        return;
+      }
+      const apiKeyRotate = apiKeyRotateMatch(method, url.pathname);
+      if (apiKeyRotate) {
+        writeJson(
+          response,
+          200,
+          await options.controlPlane.rotateApiKey({
+            ...(await readJson(request)),
+            id: apiKeyRotate.id,
+          }),
+        );
         return;
       }
       if (method === "POST" && url.pathname === "/beta/onboardings") {
@@ -456,6 +512,11 @@ export function createHttpApp(options: HttpAppOptions) {
         return;
       }
       const customDomainVerify = customDomainVerifyMatch(method, url.pathname);
+      const customDomain = customDomainMatch(method, url.pathname);
+      if (customDomain) {
+        writeJson(response, 200, await options.controlPlane.deleteCustomDomain(customDomain));
+        return;
+      }
       if (customDomainVerify) {
         writeJson(
           response,
@@ -493,12 +554,25 @@ export function createHttpApp(options: HttpAppOptions) {
       }
       const projectMemberships = projectMembershipsMatch(method, url.pathname);
       const projectMembershipInviteAcceptance = projectMembershipInviteAcceptanceMatch(method, url.pathname);
+      const projectMembership = projectMembershipMatch(method, url.pathname);
       if (projectMembershipInviteAcceptance) {
         writeJson(
           response,
           200,
           await options.controlPlane.acceptProjectMembershipInvite(projectMembershipInviteAcceptance),
         );
+        return;
+      }
+      if (projectMembership && method === "PATCH") {
+        const input = objectRecord(await readJson(request));
+        writeJson(response, 200, await options.controlPlane.updateProjectMembershipRole({
+          ...projectMembership,
+          role: input.role,
+        }));
+        return;
+      }
+      if (projectMembership && method === "DELETE") {
+        writeJson(response, 200, await options.controlPlane.removeProjectMembership(projectMembership));
         return;
       }
       if (projectMemberships && method === "POST") {
@@ -1370,6 +1444,178 @@ function runtimeLogsEndpoint(baseUrl: string, searchParams: URLSearchParams): st
   return `${baseUrl.replace(/\/+$/, "")}/__runtime/logs${suffix}`;
 }
 
+async function renderProjectSettingsPage(
+  options: HttpAppOptions,
+  projectId: string,
+  searchParams: URLSearchParams,
+): Promise<string> {
+  const at = searchParams.get("at") ?? undefined;
+  const [project, apiKeys, quotaReport, billingStatement, domains, auditEvents] = await Promise.all([
+    options.controlPlane.getProject({ projectId }),
+    options.controlPlane.listProjectApiKeys({ projectId }),
+    options.controlPlane.getProjectUsageQuotaReport({ projectId, at }),
+    options.controlPlane.getProjectBillingStatement({ projectId, at }),
+    options.controlPlane.listProjectCustomDomains({ projectId }),
+    options.controlPlane.listProjectCustomerAuditEvents({ projectId }),
+  ]);
+  const projectRecord = dataRecord(project, "project");
+  const projectName = stringValue(projectRecord.name);
+  const organizationId = optionalStringValue(projectRecord.organizationId);
+  const encodedProjectId = encodeURIComponent(projectId);
+  const apiKeysList = Array.isArray(apiKeys) ? apiKeys.map((key) => dataRecord(key, "api key")) : [];
+  const domainList = Array.isArray(domains) ? domains.map((domain) => dataRecord(domain, "custom domain")) : [];
+  const auditList = Array.isArray(auditEvents) ? auditEvents.map((event) => dataRecord(event, "audit event")) : [];
+  const quota = dataRecord(quotaReport, "usage quota report");
+  const usage = dataRecord(quota.usage, "usage quota report usage");
+  const enforcement = dataRecord(quota.enforcement, "usage quota report enforcement");
+  const billing = dataRecord(billingStatement, "billing statement");
+  const lineItems = Array.isArray(billing.lineItems)
+    ? billing.lineItems.map((item) => dataRecord(item, "billing statement line item"))
+    : [];
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${htmlEscape(projectName)} settings</title>
+  <style>
+    :root { color-scheme: light; --ink: #18202f; --muted: #64748b; --line: #d8dee8; --bg: #f7f9fc; --accent: #0f766e; --warn: #b45309; --bad: #b91c1c; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 14px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: var(--ink); background: var(--bg); }
+    header { background: #ffffff; border-bottom: 1px solid var(--line); padding: 18px 28px 14px; position: sticky; top: 0; z-index: 1; }
+    h1 { font-size: 22px; margin: 0 0 6px; letter-spacing: 0; }
+    h2 { font-size: 16px; margin: 0 0 12px; letter-spacing: 0; }
+    nav { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 12px; }
+    nav a, .json-link { color: var(--accent); font-weight: 650; text-decoration: none; }
+    main { max-width: 1120px; margin: 0 auto; padding: 22px 28px 48px; }
+    section { margin: 0 0 28px; }
+    table { width: 100%; border-collapse: collapse; background: #ffffff; border: 1px solid var(--line); }
+    th, td { border-bottom: 1px solid var(--line); padding: 8px 10px; text-align: left; vertical-align: top; }
+    th { color: #334155; background: #eef3f8; font-size: 12px; text-transform: uppercase; }
+    tr:last-child td { border-bottom: 0; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+    .muted { color: var(--muted); }
+    .ok { color: var(--accent); font-weight: 650; }
+    .warn { color: var(--warn); font-weight: 650; }
+    .bad { color: var(--bad); font-weight: 650; }
+    .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1px; border: 1px solid var(--line); background: var(--line); margin-bottom: 20px; }
+    .summary div { background: #ffffff; padding: 10px 12px; min-width: 0; }
+    .summary dt { color: var(--muted); font-size: 12px; text-transform: uppercase; margin-bottom: 4px; }
+    .summary dd { margin: 0; overflow-wrap: anywhere; }
+    .section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+    .empty { color: var(--muted); text-align: center; }
+    @media (max-width: 760px) {
+      header, main { padding-left: 14px; padding-right: 14px; }
+      table { display: block; overflow-x: auto; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Project settings</h1>
+    <div class="muted">${htmlEscape(projectName)} <code>${htmlEscape(projectId)}</code></div>
+    <nav>
+      <a href="#api-keys">API keys</a>
+      <a href="#usage">Usage</a>
+      <a href="#billing">Billing</a>
+      <a href="#domains">Domains</a>
+      <a href="#audit">Audit</a>
+    </nav>
+  </header>
+  <main>
+    <dl class="summary">
+      <div><dt>Project</dt><dd>${htmlEscape(projectName)}</dd></div>
+      <div><dt>Project ID</dt><dd><code>${htmlEscape(projectId)}</code></dd></div>
+      <div><dt>Organization</dt><dd>${organizationId ? `<code>${htmlEscape(organizationId)}</code>` : '<span class="muted">none</span>'}</dd></div>
+      <div><dt>Period</dt><dd><code>${htmlEscape(periodKey(quota))}</code></dd></div>
+    </dl>
+
+    <section id="api-keys">
+      <div class="section-heading">
+        <h2>API keys</h2>
+        <a class="json-link" href="/projects/${encodedProjectId}/api-keys">JSON</a>
+      </div>
+      <table>
+        <thead><tr><th>Name</th><th>Key</th><th>Scopes</th><th>Last used</th><th>Status</th></tr></thead>
+        <tbody>${apiKeysList.length ? apiKeysList.map((key) => `
+          <tr>
+            <td>${htmlEscape(stringValue(key.name))}</td>
+            <td><code>${htmlEscape(stringValue(key.id))}</code></td>
+            <td>${htmlEscape(arrayStringValue(key.scopes).join(", "))}</td>
+            <td>${htmlEscape(optionalStringValue(key.lastUsedAt) ?? "never")}</td>
+            <td class="${key.revokedAt ? "bad" : "ok"}">${key.revokedAt ? "revoked" : "active"}</td>
+          </tr>`).join("") : emptyRow(5, "No API keys")}</tbody>
+      </table>
+    </section>
+
+    <section id="usage">
+      <div class="section-heading">
+        <h2>Usage</h2>
+        <a class="json-link" href="/projects/${encodedProjectId}/usage-quota">JSON</a>
+      </div>
+      <table>
+        <thead><tr><th>Metric</th><th>Used</th><th>Limit</th><th>Status</th></tr></thead>
+        <tbody>${usageMetricRows(usage, enforcement)}</tbody>
+      </table>
+    </section>
+
+    <section id="billing">
+      <div class="section-heading">
+        <h2>Billing</h2>
+        <a class="json-link" href="/projects/${encodedProjectId}/billing-statement">JSON</a>
+      </div>
+      <table>
+        <thead><tr><th>Metric</th><th>Quantity</th><th>Unit</th><th>Unit price</th><th>Amount</th></tr></thead>
+        <tbody>${lineItems.length ? lineItems.map((item) => `
+          <tr>
+            <td>${htmlEscape(stringValue(item.metric))}</td>
+            <td>${htmlEscape(numberText(item.quantity))}</td>
+            <td>${htmlEscape(stringValue(item.unit))}</td>
+            <td>${usdText(numberValue(item.unitPriceUsd))}</td>
+            <td>${usdText(numberValue(item.amountUsd))}</td>
+          </tr>`).join("") : emptyRow(5, "No billable line items")}</tbody>
+        <tfoot><tr><th colspan="4">Total</th><th>${usdText(numberValue(billing.totalUsd))}</th></tr></tfoot>
+      </table>
+    </section>
+
+    <section id="domains">
+      <div class="section-heading">
+        <h2>Domains</h2>
+        <a class="json-link" href="/projects/${encodedProjectId}/custom-domains">JSON</a>
+      </div>
+      <table>
+        <thead><tr><th>Host</th><th>Status</th><th>TLS</th><th>Verification record</th></tr></thead>
+        <tbody>${domainList.length ? domainList.map((domain) => `
+          <tr>
+            <td>${htmlEscape(stringValue(domain.host))}</td>
+            <td class="${domainStatusClass(optionalStringValue(domain.status))}">${htmlEscape(stringValue(domain.status))}</td>
+            <td>${htmlEscape(stringValue(domain.tlsStatus))}</td>
+            <td><code>${htmlEscape(stringValue(domain.verificationRecordName))}</code><br><code>${htmlEscape(stringValue(domain.verificationRecordValue))}</code></td>
+          </tr>`).join("") : emptyRow(4, "No custom domains")}</tbody>
+      </table>
+    </section>
+
+    <section id="audit">
+      <div class="section-heading">
+        <h2>Audit</h2>
+        <a class="json-link" href="/projects/${encodedProjectId}/audit-events">JSON</a>
+      </div>
+      <table>
+        <thead><tr><th>Action</th><th>Target</th><th>Recorded</th></tr></thead>
+        <tbody>${auditList.length ? auditList.slice(0, 20).map((event) => `
+          <tr>
+            <td>${htmlEscape(stringValue(event.action))}</td>
+            <td><code>${htmlEscape(stringValue(event.targetType))}:${htmlEscape(stringValue(event.targetId))}</code></td>
+            <td>${htmlEscape(stringValue(event.createdAt))}</td>
+          </tr>`).join("") : emptyRow(3, "No audit events")}</tbody>
+      </table>
+    </section>
+  </main>
+</body>
+</html>`;
+}
+
 async function renderAdminPage(options: HttpAppOptions, notice: string | null): Promise<string> {
   const [snapshot, runtimeNodes, publications, canaryDecisions] = await Promise.all([
     options.controlPlane.createRouteSnapshot(),
@@ -1672,6 +1918,80 @@ function emptyRow(columns: number, label: string): string {
   return `<tr><td class="empty" colspan="${columns}">${htmlEscape(label)}</td></tr>`;
 }
 
+function usageMetricRows(
+  usage: Record<string, unknown>,
+  enforcement: Record<string, unknown>,
+): string {
+  const metrics = [
+    "invocations",
+    "cpuMs",
+    "wallMs",
+    "memoryMbMs",
+    "egressBytes",
+    "storageBytes",
+    "sqliteUnits",
+  ];
+  return metrics.map((metric) => {
+    const state = typeof enforcement[metric] === "object" && enforcement[metric] !== null
+      ? enforcement[metric] as Record<string, unknown>
+      : {};
+    const status = optionalStringValue(state.status) ?? "unlimited";
+    const limit = numberValue(state.limit);
+    return `
+          <tr>
+            <td>${htmlEscape(metric)}</td>
+            <td>${htmlEscape(numberText(numberValue(usage[metric])))}</td>
+            <td>${limit === undefined ? '<span class="muted">unlimited</span>' : htmlEscape(numberText(limit))}</td>
+            <td class="${quotaStatusClass(status)}">${htmlEscape(status)}</td>
+          </tr>`;
+  }).join("");
+}
+
+function periodKey(report: Record<string, unknown>): string {
+  if (typeof report.period !== "object" || report.period === null) {
+    return "";
+  }
+  return optionalStringValue((report.period as Record<string, unknown>).key) ?? "";
+}
+
+function stringValue(value: unknown): string {
+  return typeof value === "string" ? value : String(value ?? "");
+}
+
+function optionalStringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function arrayStringValue(value: unknown): string[] {
+  return Array.isArray(value) ? value.map(stringValue) : [];
+}
+
+function numberValue(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function numberText(value: number | undefined): string {
+  return value === undefined ? "0" : value.toLocaleString("en-US");
+}
+
+function usdText(value: number | undefined): string {
+  return `$${(value ?? 0).toFixed(2)}`;
+}
+
+function quotaStatusClass(status: string): string {
+  if (status === "exceeded") {
+    return "bad";
+  }
+  return status === "ok" ? "ok" : "muted";
+}
+
+function domainStatusClass(status: string | undefined): string {
+  if (status === "active" || status === "verified") {
+    return "ok";
+  }
+  return status === "tls_failed" ? "bad" : "warn";
+}
+
 function htmlEscape(value: string): string {
   return value.replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
@@ -1795,6 +2115,20 @@ function organizationBillingStatementMatch(method: string, pathname: string): { 
     return undefined;
   }
   const match = /^\/organizations\/([^/]+)\/billing-statement$/.exec(pathname);
+  if (!match) {
+    return undefined;
+  }
+  return { organizationId: decodeURIComponent(match[1]) };
+}
+
+function organizationCustomerAuditEventsMatch(
+  method: string,
+  pathname: string,
+): { organizationId: string } | undefined {
+  if (method !== "GET") {
+    return undefined;
+  }
+  const match = /^\/organizations\/([^/]+)\/audit-events$/.exec(pathname);
   if (!match) {
     return undefined;
   }
@@ -1936,6 +2270,17 @@ function customDomainVerifyMatch(method: string, pathname: string): { id: string
   return { id: decodeURIComponent(match[1]) };
 }
 
+function customDomainMatch(method: string, pathname: string): { id: string } | undefined {
+  if (method !== "DELETE") {
+    return undefined;
+  }
+  const match = /^\/custom-domains\/([^/]+)$/.exec(pathname);
+  if (!match) {
+    return undefined;
+  }
+  return { id: decodeURIComponent(match[1]) };
+}
+
 function customDomainTlsMatch(method: string, pathname: string): { id: string } | undefined {
   if (method !== "POST") {
     return undefined;
@@ -1994,11 +2339,69 @@ function projectMembershipInviteAcceptanceMatch(
   return { projectId: decodeURIComponent(match[1]), userId: decodeURIComponent(match[2]) };
 }
 
+function projectMembershipMatch(
+  method: string,
+  pathname: string,
+): { projectId: string; userId: string } | undefined {
+  if (method !== "PATCH" && method !== "DELETE") {
+    return undefined;
+  }
+  const match = /^\/projects\/([^/]+)\/memberships\/([^/]+)$/.exec(pathname);
+  if (!match) {
+    return undefined;
+  }
+  return { projectId: decodeURIComponent(match[1]), userId: decodeURIComponent(match[2]) };
+}
+
 function projectApiKeysMatch(method: string, pathname: string): { projectId: string } | undefined {
   if (method !== "GET") {
     return undefined;
   }
   const match = /^\/projects\/([^/]+)\/api-keys$/.exec(pathname);
+  if (!match) {
+    return undefined;
+  }
+  return { projectId: decodeURIComponent(match[1]) };
+}
+
+function apiKeyRevokeMatch(method: string, pathname: string): { id: string } | undefined {
+  if (method !== "POST") {
+    return undefined;
+  }
+  const match = /^\/api-keys\/([^/]+)\/revoke$/.exec(pathname);
+  if (!match) {
+    return undefined;
+  }
+  return { id: decodeURIComponent(match[1]) };
+}
+
+function apiKeyRotateMatch(method: string, pathname: string): { id: string } | undefined {
+  if (method !== "POST") {
+    return undefined;
+  }
+  const match = /^\/api-keys\/([^/]+)\/rotate$/.exec(pathname);
+  if (!match) {
+    return undefined;
+  }
+  return { id: decodeURIComponent(match[1]) };
+}
+
+function projectSettingsMatch(method: string, pathname: string): { projectId: string } | undefined {
+  if (method !== "GET") {
+    return undefined;
+  }
+  const match = /^\/projects\/([^/]+)\/settings$/.exec(pathname);
+  if (!match) {
+    return undefined;
+  }
+  return { projectId: decodeURIComponent(match[1]) };
+}
+
+function projectCustomerAuditEventsMatch(method: string, pathname: string): { projectId: string } | undefined {
+  if (method !== "GET") {
+    return undefined;
+  }
+  const match = /^\/projects\/([^/]+)\/audit-events$/.exec(pathname);
   if (!match) {
     return undefined;
   }
@@ -2149,6 +2552,13 @@ async function readText(request: any): Promise<string> {
 function objectRecord(value: unknown): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new ControlPlaneError("validation", "request body must be an object");
+  }
+  return value as Record<string, unknown>;
+}
+
+function dataRecord(value: unknown, label: string): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new ControlPlaneError("validation", `${label} must be an object`);
   }
   return value as Record<string, unknown>;
 }

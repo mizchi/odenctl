@@ -142,6 +142,30 @@ test("manages tenant memberships and project scoped API keys", () => {
     createdAt: fixedNow(),
   });
   assert.deepEqual(control.listProjectMemberships({ projectId: project.id }), [membership]);
+  control.acceptProjectMembershipInvite({ projectId: project.id, userId: user.id });
+  const bob = control.createUser({ id: "usr_bob", email: "bob@example.com", name: "Bob" });
+  control.addProjectMembership({ projectId: project.id, userId: bob.id, role: "owner" });
+  control.acceptProjectMembershipInvite({ projectId: project.id, userId: bob.id });
+  const demotedOwner = control.updateProjectMembershipRole({
+    projectId: project.id,
+    userId: user.id,
+    role: "developer",
+  });
+  assert.equal(demotedOwner.role, "developer");
+  assert.equal(control.removeProjectMembership({ projectId: project.id, userId: user.id }).role, "developer");
+  assert.throws(
+    () =>
+      control.updateProjectMembershipRole({
+        projectId: project.id,
+        userId: bob.id,
+        role: "developer",
+      }),
+    /project must keep at least one owner/,
+  );
+  assert.throws(
+    () => control.removeProjectMembership({ projectId: project.id, userId: bob.id }),
+    /project must keep at least one owner/,
+  );
   assert.match(createdKey.token, /^wmp_[a-z0-9]{32}$/);
   assert.deepEqual(createdKey.apiKey, {
     id: "key_read",
@@ -161,6 +185,40 @@ test("manages tenant memberships and project scoped API keys", () => {
     organizationId: "org_acme",
     projectId: "prj_acme",
   });
+  assert.deepEqual(control.revokeApiKey({ id: "key_read" }), {
+    ...createdKey.apiKey,
+    lastUsedAt: fixedNow(),
+    revokedAt: fixedNow(),
+  });
+  assert.equal(control.authenticateApiToken({ token: createdKey.token }), undefined);
+  assert.deepEqual(control.listProjectApiKeys({ projectId: project.id }), [{
+    ...createdKey.apiKey,
+    lastUsedAt: fixedNow(),
+    revokedAt: fixedNow(),
+  }]);
+  const rotatingKey = control.createApiKey({
+    id: "key_rotate",
+    projectId: project.id,
+    name: "Rotating key",
+    scopes: ["write"],
+  });
+  const rotated = control.rotateApiKey({
+    id: rotatingKey.apiKey.id,
+    replacementId: "key_rotated",
+  });
+  assert.equal(rotated.revokedApiKey.revokedAt, fixedNow());
+  assert.deepEqual(rotated.replacement.apiKey, {
+    id: "key_rotated",
+    organizationId: "org_acme",
+    projectId: "prj_acme",
+    name: "Rotating key",
+    scopes: ["write"],
+    createdAt: fixedNow(),
+  });
+  assert.match(rotated.replacement.token, /^wmp_[a-z0-9]{32}$/);
+  assert.notEqual(rotated.replacement.token, rotatingKey.token);
+  assert.equal(control.authenticateApiToken({ token: rotatingKey.token }), undefined);
+  assert.equal(control.authenticateApiToken({ token: rotated.replacement.token })?.apiKeyId, "key_rotated");
   assert.equal(control.authenticateApiToken({ token: "wmp_missing" }), undefined);
 });
 
@@ -208,6 +266,130 @@ test("control plane tracks organization billing profile and payment status", () 
         paymentStatus: "unknown",
       }),
     /payment status/,
+  );
+});
+
+test("control plane records customer-visible audit history for tenant operations", () => {
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+    projectBillingRates: {
+      invocationsPerMillionUsd: 1,
+    },
+  });
+
+  const organization = control.createOrganization({ id: "org_customer_audit", name: "Customer Audit Org" });
+  const owner = control.createUser({ id: "usr_audit_owner", email: "owner-audit@example.com" });
+  const member = control.createUser({ id: "usr_audit_member", email: "member-audit@example.com" });
+  const project = control.createProject({
+    id: "prj_customer_audit",
+    organizationId: organization.id,
+    name: "customer audit",
+  });
+  control.addProjectMembership({ projectId: project.id, userId: owner.id, role: "owner" });
+  control.acceptProjectMembershipInvite({ projectId: project.id, userId: owner.id });
+  control.addProjectMembership({ projectId: project.id, userId: member.id, role: "developer" });
+  control.acceptProjectMembershipInvite({ projectId: project.id, userId: member.id });
+  control.updateProjectMembershipRole({ projectId: project.id, userId: member.id, role: "viewer" });
+  control.removeProjectMembership({ projectId: project.id, userId: member.id });
+
+  const key = control.createApiKey({
+    id: "key_audit",
+    projectId: project.id,
+    name: "Audit key",
+    scopes: ["read"],
+  });
+  const rotatingKey = control.createApiKey({
+    id: "key_audit_rotate",
+    projectId: project.id,
+    name: "Audit rotate key",
+    scopes: ["write"],
+  });
+  const rotated = control.rotateApiKey({
+    id: rotatingKey.apiKey.id,
+    replacementId: "key_audit_rotated",
+  });
+  control.revokeApiKey({ id: key.apiKey.id });
+
+  const domain = control.createCustomDomain({
+    id: "dom_audit",
+    projectId: project.id,
+    host: "audit.example.dev",
+  });
+  control.deleteCustomDomain({ id: domain.id });
+
+  control.recordUsageEvent({
+    id: "use_audit_invocation",
+    projectId: project.id,
+    metric: "invocation",
+    quantity: 1_000_000,
+    recordedAt: "2026-07-01T00:00:00.000Z",
+  });
+  const invoice = control.issueOrganizationBillingInvoice({
+    id: "inv_audit_july",
+    organizationId: organization.id,
+    at: "2026-07-15T00:00:00.000Z",
+  });
+  const artifact = control.createArtifact({
+    id: "art_audit",
+    projectId: project.id,
+    digest: digest("audit"),
+    location: "oci://registry.example.com/mizchi/audit:v1",
+    sizeBytes: 42,
+  });
+  const deployment = control.createDeployment({
+    ...seedDeployment("dep_audit", artifact.id),
+    projectId: project.id,
+  });
+  const route = control.pointRoute({
+    id: "rte_audit",
+    projectId: project.id,
+    host: "audit.example.dev",
+    pathPrefix: "/",
+    deploymentId: deployment.id,
+  });
+
+  const projectEvents = control.listProjectCustomerAuditEvents({ projectId: project.id });
+  const projectActions = new Set(projectEvents.map((event) => event.action));
+  for (const action of [
+    "api_key.created",
+    "api_key.rotated",
+    "api_key.revoked",
+    "project_member.added",
+    "project_member.accepted",
+    "project_member.role_updated",
+    "project_member.removed",
+    "custom_domain.created",
+    "custom_domain.deleted",
+    "deployment.created",
+    "route.pointed",
+  ]) {
+    assert.equal(projectActions.has(action), true, `missing ${action}`);
+  }
+  assert.equal(projectEvents.every((event) => event.projectId === project.id), true);
+  assert.equal(projectEvents.every((event) => event.organizationId === organization.id), true);
+  assert.equal(projectEvents.every((event) => event.createdAt === fixedNow()), true);
+  assert.deepEqual(
+    projectEvents.find((event) => event.action === "api_key.rotated")?.metadata,
+    { replacementId: rotated.replacement.apiKey.id },
+  );
+  assert.deepEqual(
+    projectEvents.find((event) => event.action === "project_member.role_updated")?.metadata,
+    { fromRole: "developer", toRole: "viewer", userId: member.id },
+  );
+  assert.deepEqual(
+    projectEvents.find((event) => event.action === "route.pointed")?.metadata,
+    { host: route.host, pathPrefix: route.pathPrefix, deploymentId: deployment.id },
+  );
+
+  const organizationEvents = control.listOrganizationCustomerAuditEvents({ organizationId: organization.id });
+  assert.equal(
+    organizationEvents.some((event) =>
+      event.action === "billing_invoice.issued" && event.targetId === invoice.id &&
+      event.metadata?.periodKey === "2026-07"
+    ),
+    true,
   );
 });
 
@@ -1597,6 +1779,22 @@ test("async control plane manages tenant API keys and usage meters", async () =>
   });
 
   assert.equal((await control.authenticateApiToken({ token: key.token }))?.apiKeyId, "key_async");
+  assert.equal((await control.revokeApiKey({ id: key.apiKey.id })).revokedAt, fixedNow());
+  assert.equal(await control.authenticateApiToken({ token: key.token }), undefined);
+  const rotating = await control.createApiKey({
+    id: "key_async_rotate",
+    projectId: project.id,
+    name: "Async rotating key",
+    scopes: ["read"],
+  });
+  const rotated = await control.rotateApiKey({
+    id: rotating.apiKey.id,
+    replacementId: "key_async_rotated",
+  });
+  assert.equal(rotated.revokedApiKey.revokedAt, fixedNow());
+  assert.equal(rotated.replacement.apiKey.id, "key_async_rotated");
+  assert.equal(await control.authenticateApiToken({ token: rotating.token }), undefined);
+  assert.equal((await control.authenticateApiToken({ token: rotated.replacement.token }))?.apiKeyId, "key_async_rotated");
   assert.deepEqual(await control.listProjectMemberships({ projectId: project.id }), [{
     projectId: project.id,
     userId: user.id,
@@ -2026,6 +2224,17 @@ test("control plane manages custom domain verification and TLS hooks", () => {
     deploymentId: deployment.id,
   });
   assert.equal(route.host, domain.host);
+  assert.throws(
+    () => control.deleteCustomDomain({ id: domain.id }),
+    /custom domain app\.example\.dev still has routes/,
+  );
+  const unused = control.createCustomDomain({
+    id: "dom_unused",
+    projectId: project.id,
+    host: "unused.example.dev",
+  });
+  assert.deepEqual(control.deleteCustomDomain({ id: unused.id }), unused);
+  assert.deepEqual(control.listProjectCustomDomains({ projectId: project.id }).map((item) => item.id), [domain.id]);
 
   const other = control.createProject({ id: "prj_other_domain", name: "other domain" });
   const otherArtifact = control.createArtifact({
@@ -3194,6 +3403,7 @@ test("sqlite repository records schema migrations and upgrades existing database
     "202607030003_edge_worker_release_operations",
     "202607070001_organization_billing_profile",
     "202607080001_invite_email_quota_gate",
+    "202607100001_customer_audit_events",
   ]);
   assert.ok(routeColumns.includes("targets_json"));
   const artifactColumns = db
@@ -3232,6 +3442,10 @@ test("sqlite repository records schema migrations and upgrades existing database
     .prepare("pragma table_info(project_memberships)")
     .all()
     .map((row: any) => row.name);
+  const auditColumns = db
+    .prepare("pragma table_info(customer_audit_events)")
+    .all()
+    .map((row: any) => row.name);
   assert.ok(projectColumns.includes("organization_id"));
   assert.ok(organizationColumns.includes("billing_provider"));
   assert.ok(organizationColumns.includes("billing_customer_id"));
@@ -3242,6 +3456,8 @@ test("sqlite repository records schema migrations and upgrades existing database
   assert.ok(membershipColumns.includes("invite_status"));
   assert.ok(membershipColumns.includes("invited_at"));
   assert.ok(membershipColumns.includes("accepted_at"));
+  assert.ok(auditColumns.includes("action"));
+  assert.ok(auditColumns.includes("metadata_json"));
   assert.equal(db.prepare("select count(*) as count from organizations").get().count, 0);
   assert.equal(db.prepare("select count(*) as count from users").get().count, 0);
   assert.equal(db.prepare("select count(*) as count from project_memberships").get().count, 0);

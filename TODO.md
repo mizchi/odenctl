@@ -333,4 +333,12 @@ Production readiness tasks, in implementation order.
 - [x] Add a `wasmplane onboard beta` CLI for invite-only tenant bootstrap.
 - [x] Add billing provider/customer ids and payment status to organization records.
 - [x] Add invite acceptance and owner email verification before production quota increases.
-- [ ] Add a customer-facing project settings surface for API keys, usage, billing, and domains.
+- [x] Add a customer-facing project settings surface for API keys, usage, billing, and domains.
+
+## 41. Customer self-service hardening
+
+- [x] Add API key revocation for leaked or retired project deploy keys.
+- [x] Add API key rotation that returns a replacement token and revokes the previous key atomically.
+- [x] Add project member removal and role update APIs with owner-safety checks.
+- [x] Add custom domain removal with route ownership checks.
+- [x] Add customer-visible audit history for key, member, domain, billing, and deploy actions.

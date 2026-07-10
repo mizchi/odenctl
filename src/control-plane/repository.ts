@@ -3,6 +3,7 @@ import type {
   ApiKey,
   Artifact,
   CanaryDecision,
+  CustomerAuditEvent,
   CustomDomain,
   DeployPreview,
   Deployment,
@@ -14,6 +15,7 @@ import type {
   ProductionQuotaIncrease,
   Project,
   ProjectMembership,
+  ProjectRole,
   RoutePointer,
   RouteSnapshotPublication,
   RuntimeNode,
@@ -39,14 +41,21 @@ export interface ControlPlaneRepository {
   createProjectMembership(membership: ProjectMembership): ProjectMembership;
   listProjectMemberships(projectId: string): ProjectMembership[];
   acceptProjectMembershipInvite(projectId: string, userId: string, acceptedAt: string): ProjectMembership;
+  updateProjectMembershipRole(projectId: string, userId: string, role: ProjectRole): ProjectMembership;
+  deleteProjectMembership(projectId: string, userId: string): ProjectMembership;
   createApiKey(apiKey: ApiKey, tokenHash: string): ApiKey;
   getApiKeyByTokenHash(tokenHash: string): ApiKey | undefined;
   listProjectApiKeys(projectId: string): ApiKey[];
   updateApiKeyLastUsed(id: string, lastUsedAt: string): ApiKey;
+  revokeApiKey(id: string, revokedAt: string): ApiKey;
+  rotateApiKey(input: RepositoryApiKeyRotationInput): RepositoryApiKeyRotation;
   createUsageEvent(event: UsageEvent): UsageEvent;
   getUsageEvent(id: string): UsageEvent | undefined;
   getProjectUsageSummary(projectId: string, from?: string, to?: string): ProjectUsageSummary;
   createProductionQuotaIncrease(increase: ProductionQuotaIncrease): ProductionQuotaIncrease;
+  createCustomerAuditEvent(event: CustomerAuditEvent): CustomerAuditEvent;
+  listProjectCustomerAuditEvents(projectId: string): CustomerAuditEvent[];
+  listOrganizationCustomerAuditEvents(organizationId: string): CustomerAuditEvent[];
   createBillingInvoice(invoice: OrganizationBillingInvoice): OrganizationBillingInvoice;
   getBillingInvoice(id: string): OrganizationBillingInvoice | undefined;
   getOrganizationBillingInvoiceByPeriod(
@@ -68,6 +77,7 @@ export interface ControlPlaneRepository {
   getCustomDomainByHost(host: string): CustomDomain | undefined;
   listProjectCustomDomains(projectId: string): CustomDomain[];
   updateCustomDomain(domain: CustomDomain): CustomDomain;
+  deleteCustomDomain(id: string): CustomDomain;
   createDeployPreview(preview: DeployPreview): DeployPreview;
   getDeployPreview(id: string): DeployPreview | undefined;
   listProjectDeployPreviews(projectId: string): DeployPreview[];
@@ -126,6 +136,19 @@ export interface ProjectResourceUsage {
   secrets: number;
   kvNamespaces: number;
   durableObjectNamespaces: number;
+}
+
+export interface RepositoryApiKeyRotationInput {
+  id: string;
+  replacementId: string;
+  replacementName?: string;
+  tokenHash: string;
+  rotatedAt: string;
+}
+
+export interface RepositoryApiKeyRotation {
+  revokedApiKey: ApiKey;
+  apiKey: ApiKey;
 }
 
 export function createMemoryRepository(): ControlPlaneRepository {
@@ -312,6 +335,30 @@ class SqliteControlPlaneRepository implements ControlPlaneRepository {
     return membershipFromRow(row);
   }
 
+  updateProjectMembershipRole(projectId: string, userId: string, role: ProjectRole): ProjectMembership {
+    const result = this.db
+      .prepare("update project_memberships set role = ? where project_id = ? and user_id = ?")
+      .run(role, projectId, userId);
+    if (result.changes === 0) {
+      throw new ControlPlaneError("not_found", `project membership ${projectId}/${userId} was not found`);
+    }
+    const row = this.db
+      .prepare("select * from project_memberships where project_id = ? and user_id = ?")
+      .get(projectId, userId);
+    return membershipFromRow(row);
+  }
+
+  deleteProjectMembership(projectId: string, userId: string): ProjectMembership {
+    const row = this.db
+      .prepare("select * from project_memberships where project_id = ? and user_id = ?")
+      .get(projectId, userId);
+    if (!row) {
+      throw new ControlPlaneError("not_found", `project membership ${projectId}/${userId} was not found`);
+    }
+    this.db.prepare("delete from project_memberships where project_id = ? and user_id = ?").run(projectId, userId);
+    return membershipFromRow(row);
+  }
+
   createApiKey(apiKey: ApiKey, tokenHash: string): ApiKey {
     try {
       this.db
@@ -366,6 +413,74 @@ class SqliteControlPlaneRepository implements ControlPlaneRepository {
     }
     const row = this.db.prepare("select * from api_keys where id = ?").get(id);
     return apiKeyFromRow(row);
+  }
+
+  revokeApiKey(id: string, revokedAt: string): ApiKey {
+    const result = this.db
+      .prepare("update api_keys set revoked_at = coalesce(revoked_at, ?) where id = ?")
+      .run(revokedAt, id);
+    if (result.changes === 0) {
+      throw new ControlPlaneError("not_found", `api key ${id} was not found`);
+    }
+    const row = this.db.prepare("select * from api_keys where id = ?").get(id);
+    return apiKeyFromRow(row);
+  }
+
+  rotateApiKey(input: RepositoryApiKeyRotationInput): RepositoryApiKeyRotation {
+    this.db.exec("begin");
+    try {
+      const existingRow = this.db.prepare("select * from api_keys where id = ?").get(input.id);
+      if (!existingRow) {
+        throw new ControlPlaneError("not_found", `api key ${input.id} was not found`);
+      }
+      const existing = apiKeyFromRow(existingRow);
+      if (existing.revokedAt) {
+        throw new ControlPlaneError("validation", `api key ${input.id} is already revoked`);
+      }
+      const replacement: ApiKey = {
+        id: input.replacementId,
+        ...(existing.organizationId ? { organizationId: existing.organizationId } : {}),
+        ...(existing.projectId ? { projectId: existing.projectId } : {}),
+        name: input.replacementName ?? existing.name,
+        scopes: existing.scopes,
+        createdAt: input.rotatedAt,
+      };
+      this.db
+        .prepare(
+          `insert into api_keys (
+            id,
+            organization_id,
+            project_id,
+            name,
+            token_hash,
+            scopes_json,
+            created_at,
+            last_used_at,
+            revoked_at
+          ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          replacement.id,
+          replacement.organizationId ?? null,
+          replacement.projectId ?? null,
+          replacement.name,
+          input.tokenHash,
+          JSON.stringify(replacement.scopes),
+          replacement.createdAt,
+          null,
+          null,
+        );
+      this.db.prepare("update api_keys set revoked_at = ? where id = ?").run(input.rotatedAt, input.id);
+      const revokedRow = this.db.prepare("select * from api_keys where id = ?").get(input.id);
+      this.db.exec("commit");
+      return { revokedApiKey: apiKeyFromRow(revokedRow), apiKey: replacement };
+    } catch (error) {
+      this.db.exec("rollback");
+      if (error instanceof ControlPlaneError) {
+        throw error;
+      }
+      throw writeError("api key", input.replacementId, error);
+    }
   }
 
   createUsageEvent(event: UsageEvent): UsageEvent {
@@ -460,6 +575,61 @@ class SqliteControlPlaneRepository implements ControlPlaneRepository {
     } catch (error) {
       throw writeError("production quota increase", increase.id, error);
     }
+  }
+
+  createCustomerAuditEvent(event: CustomerAuditEvent): CustomerAuditEvent {
+    try {
+      this.db
+        .prepare(
+          `insert into customer_audit_events (
+            id,
+            organization_id,
+            project_id,
+            action,
+            target_type,
+            target_id,
+            actor,
+            metadata_json,
+            created_at
+          ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          event.id,
+          event.organizationId ?? null,
+          event.projectId ?? null,
+          event.action,
+          event.targetType,
+          event.targetId,
+          event.actor ?? null,
+          event.metadata ? JSON.stringify(event.metadata) : null,
+          event.createdAt,
+        );
+      return event;
+    } catch (error) {
+      throw writeError("customer audit event", event.id, error);
+    }
+  }
+
+  listProjectCustomerAuditEvents(projectId: string): CustomerAuditEvent[] {
+    return this.db
+      .prepare(
+        `select * from customer_audit_events
+         where project_id = ?
+         order by created_at desc, id desc`,
+      )
+      .all(projectId)
+      .map(customerAuditEventFromRow);
+  }
+
+  listOrganizationCustomerAuditEvents(organizationId: string): CustomerAuditEvent[] {
+    return this.db
+      .prepare(
+        `select * from customer_audit_events
+         where organization_id = ?
+         order by created_at desc, id desc`,
+      )
+      .all(organizationId)
+      .map(customerAuditEventFromRow);
   }
 
   createBillingInvoice(invoice: OrganizationBillingInvoice): OrganizationBillingInvoice {
@@ -822,6 +992,15 @@ class SqliteControlPlaneRepository implements ControlPlaneRepository {
       throw new ControlPlaneError("not_found", `custom domain ${domain.id} was not found`);
     }
     return this.getCustomDomain(domain.id) as CustomDomain;
+  }
+
+  deleteCustomDomain(id: string): CustomDomain {
+    const domain = this.getCustomDomain(id);
+    if (!domain) {
+      throw new ControlPlaneError("not_found", `custom domain ${id} was not found`);
+    }
+    this.db.prepare("delete from custom_domains where id = ?").run(id);
+    return domain;
   }
 
   createDeployPreview(preview: DeployPreview): DeployPreview {
@@ -1660,6 +1839,20 @@ function usageEventFromRow(row: any): UsageEvent {
   };
 }
 
+function customerAuditEventFromRow(row: any): CustomerAuditEvent {
+  return {
+    id: row.id,
+    ...(row.organization_id ? { organizationId: row.organization_id } : {}),
+    ...(row.project_id ? { projectId: row.project_id } : {}),
+    action: row.action,
+    targetType: row.target_type,
+    targetId: row.target_id,
+    ...(row.actor ? { actor: row.actor } : {}),
+    ...(row.metadata_json ? { metadata: JSON.parse(row.metadata_json) } : {}),
+    createdAt: row.created_at,
+  };
+}
+
 function customDomainFromRow(row: any): CustomDomain {
   return {
     id: row.id,
@@ -2084,6 +2277,26 @@ create index if not exists usage_events_project_time_idx
 
 create index if not exists usage_events_org_time_idx
   on usage_events (organization_id, recorded_at);
+
+create table if not exists customer_audit_events (
+  id text primary key,
+  organization_id text,
+  project_id text,
+  action text not null,
+  target_type text not null,
+  target_id text not null,
+  actor text,
+  metadata_json text,
+  created_at text not null,
+  foreign key (organization_id) references organizations(id),
+  foreign key (project_id) references projects(id)
+);
+
+create index if not exists customer_audit_events_project_idx
+  on customer_audit_events (project_id, created_at desc, id desc);
+
+create index if not exists customer_audit_events_org_idx
+  on customer_audit_events (organization_id, created_at desc, id desc);
 
 create table if not exists billing_invoices (
   id text primary key,
@@ -2872,6 +3085,32 @@ const migrations: SchemaMigration[] = [
 
         create index if not exists production_quota_increases_org_idx
           on production_quota_increases (organization_id, created_at desc, id desc);
+      `);
+    },
+  },
+  {
+    id: "202607100001_customer_audit_events",
+    apply(db) {
+      db.exec(`
+        create table if not exists customer_audit_events (
+          id text primary key,
+          organization_id text,
+          project_id text,
+          action text not null,
+          target_type text not null,
+          target_id text not null,
+          actor text,
+          metadata_json text,
+          created_at text not null,
+          foreign key (organization_id) references organizations(id),
+          foreign key (project_id) references projects(id)
+        );
+
+        create index if not exists customer_audit_events_project_idx
+          on customer_audit_events (project_id, created_at desc, id desc);
+
+        create index if not exists customer_audit_events_org_idx
+          on customer_audit_events (organization_id, created_at desc, id desc);
       `);
     },
   },

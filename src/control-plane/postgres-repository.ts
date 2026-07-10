@@ -1,11 +1,16 @@
 import { readFile } from "node:fs/promises";
 import pg from "pg";
 import type { AsyncControlPlaneRepository } from "./async-service.ts";
-import type { ProjectResourceUsage } from "./repository.ts";
+import type {
+  ProjectResourceUsage,
+  RepositoryApiKeyRotation,
+  RepositoryApiKeyRotationInput,
+} from "./repository.ts";
 import type {
   ApiKey,
   Artifact,
   CanaryDecision,
+  CustomerAuditEvent,
   CustomDomain,
   DeployPreview,
   Deployment,
@@ -17,6 +22,7 @@ import type {
   ProductionQuotaIncrease,
   Project,
   ProjectMembership,
+  ProjectRole,
   ProjectUsageSummary,
   RoutePointer,
   RouteSnapshotPublication,
@@ -277,6 +283,34 @@ export class PostgresControlPlaneRepository implements AsyncControlPlaneReposito
     return membershipFromRow(result.rows[0]);
   }
 
+  async updateProjectMembershipRole(
+    projectId: string,
+    userId: string,
+    role: ProjectRole,
+  ): Promise<ProjectMembership> {
+    const result = await this.pool.query(
+      `update project_memberships set role = $1
+       where project_id = $2 and user_id = $3
+       returning *`,
+      [role, projectId, userId],
+    );
+    if (!result.rows[0]) {
+      throw new ControlPlaneError("not_found", `project membership ${projectId}/${userId} was not found`);
+    }
+    return membershipFromRow(result.rows[0]);
+  }
+
+  async deleteProjectMembership(projectId: string, userId: string): Promise<ProjectMembership> {
+    const result = await this.pool.query(
+      "delete from project_memberships where project_id = $1 and user_id = $2 returning *",
+      [projectId, userId],
+    );
+    if (!result.rows[0]) {
+      throw new ControlPlaneError("not_found", `project membership ${projectId}/${userId} was not found`);
+    }
+    return membershipFromRow(result.rows[0]);
+  }
+
   async createApiKey(apiKey: ApiKey, tokenHash: string): Promise<ApiKey> {
     try {
       await this.pool.query(
@@ -333,6 +367,83 @@ export class PostgresControlPlaneRepository implements AsyncControlPlaneReposito
       throw new ControlPlaneError("not_found", `api key ${id} was not found`);
     }
     return apiKeyFromRow(result.rows[0]);
+  }
+
+  async revokeApiKey(id: string, revokedAt: string): Promise<ApiKey> {
+    const result = await this.pool.query(
+      `update api_keys set revoked_at = coalesce(revoked_at, $1)
+       where id = $2
+       returning *`,
+      [revokedAt, id],
+    );
+    if (result.rowCount === 0) {
+      throw new ControlPlaneError("not_found", `api key ${id} was not found`);
+    }
+    return apiKeyFromRow(result.rows[0]);
+  }
+
+  async rotateApiKey(input: RepositoryApiKeyRotationInput): Promise<RepositoryApiKeyRotation> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("begin");
+      const existingResult = await client.query("select * from api_keys where id = $1 for update", [input.id]);
+      if (!existingResult.rows[0]) {
+        throw new ControlPlaneError("not_found", `api key ${input.id} was not found`);
+      }
+      const existing = apiKeyFromRow(existingResult.rows[0]);
+      if (existing.revokedAt) {
+        throw new ControlPlaneError("validation", `api key ${input.id} is already revoked`);
+      }
+      const replacement: ApiKey = {
+        id: input.replacementId,
+        ...(existing.organizationId ? { organizationId: existing.organizationId } : {}),
+        ...(existing.projectId ? { projectId: existing.projectId } : {}),
+        name: input.replacementName ?? existing.name,
+        scopes: existing.scopes,
+        createdAt: input.rotatedAt,
+      };
+      await client.query(
+        `insert into api_keys (
+          id,
+          organization_id,
+          project_id,
+          name,
+          token_hash,
+          scopes_json,
+          created_at,
+          last_used_at,
+          revoked_at
+        ) values ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9)`,
+        [
+          replacement.id,
+          replacement.organizationId ?? null,
+          replacement.projectId ?? null,
+          replacement.name,
+          input.tokenHash,
+          JSON.stringify(replacement.scopes),
+          replacement.createdAt,
+          null,
+          null,
+        ],
+      );
+      const revokedResult = await client.query(
+        "update api_keys set revoked_at = $1 where id = $2 returning *",
+        [input.rotatedAt, input.id],
+      );
+      await client.query("commit");
+      return {
+        revokedApiKey: apiKeyFromRow(revokedResult.rows[0]),
+        apiKey: replacement,
+      };
+    } catch (error) {
+      await client.query("rollback");
+      if (isControlPlaneError(error)) {
+        throw error;
+      }
+      throw writeError("api key", input.replacementId, error);
+    } finally {
+      client.release();
+    }
   }
 
   async createUsageEvent(event: UsageEvent): Promise<UsageEvent> {
@@ -430,6 +541,58 @@ export class PostgresControlPlaneRepository implements AsyncControlPlaneReposito
     } catch (error) {
       throw writeError("production quota increase", increase.id, error);
     }
+  }
+
+  async createCustomerAuditEvent(event: CustomerAuditEvent): Promise<CustomerAuditEvent> {
+    try {
+      await this.pool.query(
+        `insert into customer_audit_events (
+          id,
+          organization_id,
+          project_id,
+          action,
+          target_type,
+          target_id,
+          actor,
+          metadata_json,
+          created_at
+        ) values ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9)`,
+        [
+          event.id,
+          event.organizationId ?? null,
+          event.projectId ?? null,
+          event.action,
+          event.targetType,
+          event.targetId,
+          event.actor ?? null,
+          event.metadata ? JSON.stringify(event.metadata) : null,
+          event.createdAt,
+        ],
+      );
+      return event;
+    } catch (error) {
+      throw writeError("customer audit event", event.id, error);
+    }
+  }
+
+  async listProjectCustomerAuditEvents(projectId: string): Promise<CustomerAuditEvent[]> {
+    const result = await this.pool.query(
+      `select * from customer_audit_events
+       where project_id = $1
+       order by created_at desc, id desc`,
+      [projectId],
+    );
+    return result.rows.map(customerAuditEventFromRow);
+  }
+
+  async listOrganizationCustomerAuditEvents(organizationId: string): Promise<CustomerAuditEvent[]> {
+    const result = await this.pool.query(
+      `select * from customer_audit_events
+       where organization_id = $1
+       order by created_at desc, id desc`,
+      [organizationId],
+    );
+    return result.rows.map(customerAuditEventFromRow);
   }
 
   async createBillingInvoice(
@@ -806,6 +969,14 @@ export class PostgresControlPlaneRepository implements AsyncControlPlaneReposito
     );
     if (result.rowCount === 0) {
       throw new ControlPlaneError("not_found", `custom domain ${domain.id} was not found`);
+    }
+    return customDomainFromRow(result.rows[0]);
+  }
+
+  async deleteCustomDomain(id: string): Promise<CustomDomain> {
+    const result = await this.pool.query("delete from custom_domains where id = $1 returning *", [id]);
+    if (!result.rows[0]) {
+      throw new ControlPlaneError("not_found", `custom domain ${id} was not found`);
     }
     return customDomainFromRow(result.rows[0]);
   }
@@ -1749,6 +1920,20 @@ function routeFromRow(row: any): RoutePointer {
       ? jsonValue(row.targets_json)
       : [{ deploymentId: row.deployment_id, weight: 100 }],
     updatedAt: row.updated_at,
+  };
+}
+
+function customerAuditEventFromRow(row: any): CustomerAuditEvent {
+  return {
+    id: row.id,
+    ...(row.organization_id ? { organizationId: row.organization_id } : {}),
+    ...(row.project_id ? { projectId: row.project_id } : {}),
+    action: row.action,
+    targetType: row.target_type,
+    targetId: row.target_id,
+    ...(row.actor ? { actor: row.actor } : {}),
+    ...(row.metadata_json ? { metadata: jsonValue(row.metadata_json) } : {}),
+    createdAt: row.created_at,
   };
 }
 

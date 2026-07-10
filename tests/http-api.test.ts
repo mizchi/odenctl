@@ -251,6 +251,160 @@ test("HTTP API creates beta onboarding bundles", async () => {
   }
 });
 
+test("HTTP API renders customer-facing project settings", async () => {
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+    projectUsageQuotas: {
+      prj_settings: {
+        invocations: 1000,
+        cpuMs: 5000,
+      },
+    },
+    projectBillingRates: {
+      invocationsPerMillionUsd: 20,
+      cpuMsPerMillionUsd: 1,
+    },
+  });
+  const app = createHttpApp({ controlPlane: control });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const organization = await postJson(baseUrl, "/organizations", {
+      id: "org_settings",
+      name: "Settings Org",
+    });
+    const project = await postJson(baseUrl, "/projects", {
+      id: "prj_settings",
+      organizationId: organization.id,
+      name: "Customer Portal",
+    });
+    await postJson(baseUrl, "/api-keys", {
+      id: "key_settings",
+      projectId: project.id,
+      name: "Deploy Reader",
+      scopes: ["read", "publish"],
+    });
+    await postJson(baseUrl, "/usage/events", {
+      id: "use_settings_invocation",
+      projectId: project.id,
+      metric: "invocation",
+      quantity: 17,
+    });
+    await postJson(baseUrl, "/usage/events", {
+      id: "use_settings_cpu",
+      projectId: project.id,
+      metric: "cpu_ms",
+      quantity: 321,
+    });
+    await postJson(baseUrl, "/custom-domains", {
+      id: "dom_settings",
+      projectId: project.id,
+      host: "app.example.com",
+    });
+
+    const response = await fetch(`${baseUrl}/projects/${project.id}/settings`);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("content-type"), "text/html; charset=utf-8");
+    const html = await response.text();
+    assert.match(html, /Project settings/);
+    assert.match(html, /Customer Portal/);
+    assert.match(html, /prj_settings/);
+    assert.match(html, /API keys/);
+    assert.match(html, /Deploy Reader/);
+    assert.match(html, /read, publish/);
+    assert.match(html, /Usage/);
+    assert.match(html, /17/);
+    assert.match(html, /321/);
+    assert.match(html, /Billing/);
+    assert.match(html, /\$0\.00/);
+    assert.match(html, /Domains/);
+    assert.match(html, /app\.example\.com/);
+    assert.match(html, /pending_verification/);
+    assert.match(html, /href="\/projects\/prj_settings\/api-keys"/);
+    assert.match(html, /href="\/projects\/prj_settings\/usage-quota"/);
+    assert.match(html, /href="\/projects\/prj_settings\/billing-statement"/);
+    assert.match(html, /href="\/projects\/prj_settings\/custom-domains"/);
+  } finally {
+    await app.close();
+  }
+});
+
+test("HTTP API exposes customer-visible audit events", async () => {
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+    projectBillingRates: {
+      invocationsPerMillionUsd: 1,
+    },
+  });
+  const app = createHttpApp({ controlPlane: control });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const organization = await postJson(baseUrl, "/organizations", {
+      id: "org_http_audit",
+      name: "HTTP Audit Org",
+    });
+    const project = await postJson(baseUrl, "/projects", {
+      id: "prj_http_audit",
+      organizationId: organization.id,
+      name: "HTTP Audit",
+    });
+    const key = await postJson(baseUrl, "/api-keys", {
+      id: "key_http_audit",
+      projectId: project.id,
+      name: "HTTP Audit Key",
+      scopes: ["read"],
+    });
+    await postJsonOk(baseUrl, `/api-keys/${key.apiKey.id}/revoke`, {});
+    await postJson(baseUrl, "/usage/events", {
+      id: "use_http_audit_invocation",
+      projectId: project.id,
+      metric: "invocation",
+      quantity: 1_000_000,
+      recordedAt: "2026-07-01T00:00:00.000Z",
+    });
+    const invoice = await postJson(baseUrl, `/organizations/${organization.id}/billing-invoices`, {
+      id: "inv_http_audit_july",
+      at: "2026-07-15T00:00:00.000Z",
+    });
+
+    const projectResponse = await fetch(`${baseUrl}/projects/${project.id}/audit-events`);
+    assert.equal(projectResponse.status, 200);
+    const projectAudit = await projectResponse.json();
+    assert.deepEqual(
+      projectAudit.events.map((event: any) => event.action).sort(),
+      ["api_key.created", "api_key.revoked"],
+    );
+    assert.equal(projectAudit.events[0].projectId, project.id);
+    assert.equal(projectAudit.events[0].organizationId, organization.id);
+
+    const organizationResponse = await fetch(`${baseUrl}/organizations/${organization.id}/audit-events`);
+    assert.equal(organizationResponse.status, 200);
+    const organizationAudit = await organizationResponse.json();
+    assert.equal(
+      organizationAudit.events.some((event: any) =>
+        event.action === "billing_invoice.issued" && event.targetId === invoice.id &&
+        event.metadata.periodKey === "2026-07"
+      ),
+      true,
+    );
+  } finally {
+    await app.close();
+  }
+});
+
 test("HTTP API gates production quota increases on accepted and verified owners", async () => {
   const control = createControlPlane({
     repository: createMemoryRepository(),
@@ -311,6 +465,66 @@ test("HTTP API gates production quota increases on accepted and verified owners"
     );
     assert.equal(increase.status, "approved");
     assert.deepEqual(increase.requestedQuotas, { maxDeployments: 20, maxRoutes: 10 });
+  } finally {
+    await app.close();
+  }
+});
+
+test("HTTP API updates and removes project memberships without orphaning owners", async () => {
+  const control = createControlPlane({
+    repository: createMemoryRepository(),
+    idGenerator: sequenceIds(),
+    now: fixedNow,
+  });
+  const app = createHttpApp({ controlPlane: control });
+  const server = await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    await postJson(baseUrl, "/users", { id: "usr_http_owner_a", email: "owner-a@example.com" });
+    await postJson(baseUrl, "/users", { id: "usr_http_owner_b", email: "owner-b@example.com" });
+    const project = await postJson(baseUrl, "/projects", { id: "prj_http_members", name: "members" });
+    await postJson(baseUrl, `/projects/${project.id}/memberships`, {
+      userId: "usr_http_owner_a",
+      role: "owner",
+    });
+    await postJsonOk(baseUrl, `/projects/${project.id}/memberships/usr_http_owner_a/accept`, {});
+    await postJson(baseUrl, `/projects/${project.id}/memberships`, {
+      userId: "usr_http_owner_b",
+      role: "owner",
+    });
+    await postJsonOk(baseUrl, `/projects/${project.id}/memberships/usr_http_owner_b/accept`, {});
+
+    const demote = await fetch(`${baseUrl}/projects/${project.id}/memberships/usr_http_owner_a`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ role: "developer" }),
+    });
+    assert.equal(demote.status, 200);
+    assert.equal((await demote.json()).role, "developer");
+
+    const remove = await fetch(`${baseUrl}/projects/${project.id}/memberships/usr_http_owner_a`, {
+      method: "DELETE",
+    });
+    assert.equal(remove.status, 200);
+    assert.equal((await remove.json()).userId, "usr_http_owner_a");
+
+    const blockedDemote = await fetch(`${baseUrl}/projects/${project.id}/memberships/usr_http_owner_b`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ role: "developer" }),
+    });
+    assert.equal(blockedDemote.status, 400);
+    assert.match((await blockedDemote.json()).error.message, /project must keep at least one owner/);
+
+    const blockedRemove = await fetch(`${baseUrl}/projects/${project.id}/memberships/usr_http_owner_b`, {
+      method: "DELETE",
+    });
+    assert.equal(blockedRemove.status, 400);
+    assert.match((await blockedRemove.json()).error.message, /project must keep at least one owner/);
   } finally {
     await app.close();
   }
@@ -966,6 +1180,48 @@ test("HTTP API manages custom domain verification and TLS hooks", async () => {
     });
     assert.equal(active.status, "active");
     assert.equal(active.tlsStatus, "provisioned");
+
+    const artifact = await postJson(baseUrl, "/artifacts", {
+      projectId: project.id,
+      digest: digest("http-domain"),
+      location: "oci://registry.example.com/mizchi/http-domain:v1",
+      sizeBytes: 42,
+    });
+    const deployment = await postJson(baseUrl, "/deployments", {
+      projectId: project.id,
+      artifactId: artifact.id,
+      world: "myedge:runtime/worker@0.1.0",
+      runtime: { backend: "wasmtime", version: "wasmtime-43", wasi: "wasip3" },
+      limits: {
+        cpuMs: 50,
+        memoryMb: 64,
+        wallMs: 1000,
+        requestBytes: 1048576,
+        subrequests: 20,
+        hostCalls: 100,
+        responseBytes: 1048576,
+      },
+      capabilities: { outboundHttp: { enabled: false, allow: [] }, kv: [], secrets: [] },
+    });
+    await putJson(baseUrl, "/routes", {
+      projectId: project.id,
+      host: active.host,
+      pathPrefix: "/",
+      deploymentId: deployment.id,
+    });
+
+    const blockedDelete = await fetch(`${baseUrl}/custom-domains/${domain.id}`, { method: "DELETE" });
+    assert.equal(blockedDelete.status, 400);
+    assert.match((await blockedDelete.json()).error.message, /still has routes/);
+
+    const unused = await postJson(baseUrl, "/custom-domains", {
+      id: "dom_http_unused",
+      projectId: project.id,
+      host: "unused-http.example.dev",
+    });
+    const deleted = await fetch(`${baseUrl}/custom-domains/${unused.id}`, { method: "DELETE" });
+    assert.equal(deleted.status, 200);
+    assert.equal((await deleted.json()).id, unused.id);
   } finally {
     await app.close();
   }
@@ -1460,6 +1716,12 @@ test("HTTP API accepts DB-backed scoped API keys", async () => {
     name: "Reader",
     scopes: ["read"],
   });
+  const rotatingKey = control.createApiKey({
+    id: "key_http_rotate",
+    projectId: project.id,
+    name: "Rotating Reader",
+    scopes: ["read"],
+  });
   const app = createHttpApp({ controlPlane: control, apiToken: "bootstrap-admin" });
   const server = await app.listen({ port: 0, host: "127.0.0.1" });
   const address = server.address();
@@ -1487,6 +1749,46 @@ test("HTTP API accepts DB-backed scoped API keys", async () => {
       body: JSON.stringify({ name: "should fail" }),
     });
     assert.equal(write.status, 403);
+
+    const rotated = await fetch(`${baseUrl}/api-keys/${rotatingKey.apiKey.id}/rotate`, {
+      method: "POST",
+      headers: jsonHeaders("bootstrap-admin"),
+      body: JSON.stringify({ replacementId: "key_http_rotated" }),
+    });
+    assert.equal(rotated.status, 200);
+    const rotation = await rotated.json();
+    assert.equal(rotation.revokedApiKey.revokedAt, fixedNow());
+    assert.equal(rotation.replacement.apiKey.id, "key_http_rotated");
+    assert.match(rotation.replacement.token, /^wmp_[a-z0-9]{32}$/);
+
+    const oldRotatedDenied = await fetch(`${baseUrl}/projects/${project.id}/quota-usage`, {
+      headers: { authorization: `Bearer ${rotatingKey.token}` },
+    });
+    assert.equal(oldRotatedDenied.status, 401);
+
+    const newRotatedRead = await fetch(`${baseUrl}/projects/${project.id}/quota-usage`, {
+      headers: { authorization: `Bearer ${rotation.replacement.token}` },
+    });
+    assert.equal(newRotatedRead.status, 200);
+
+    const revoked = await fetch(`${baseUrl}/api-keys/${key.apiKey.id}/revoke`, {
+      method: "POST",
+      headers: jsonHeaders("bootstrap-admin"),
+      body: JSON.stringify({}),
+    });
+    assert.equal(revoked.status, 200);
+    assert.equal((await revoked.json()).revokedAt, fixedNow());
+
+    const deniedAfterRevoke = await fetch(`${baseUrl}/projects/${project.id}/quota-usage`, {
+      headers: { authorization: `Bearer ${key.token}` },
+    });
+    assert.equal(deniedAfterRevoke.status, 401);
+
+    const settings = await fetch(`${baseUrl}/projects/${project.id}/settings`, {
+      headers: { authorization: "Bearer bootstrap-admin" },
+    });
+    assert.equal(settings.status, 200);
+    assert.match(await settings.text(), /revoked/);
   } finally {
     await app.close();
   }

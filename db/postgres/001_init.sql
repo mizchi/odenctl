@@ -87,6 +87,31 @@ create table if not exists usage_events (
   recorded_at text not null
 );
 
+create table if not exists customer_audit_events (
+  id text primary key,
+  organization_id text references organizations(id),
+  project_id text references projects(id),
+  action text not null check (action in (
+    'api_key.created',
+    'api_key.revoked',
+    'api_key.rotated',
+    'project_member.added',
+    'project_member.accepted',
+    'project_member.role_updated',
+    'project_member.removed',
+    'custom_domain.created',
+    'custom_domain.deleted',
+    'billing_invoice.issued',
+    'deployment.created',
+    'route.pointed'
+  )),
+  target_type text not null,
+  target_id text not null,
+  actor text,
+  metadata_json jsonb,
+  created_at text not null
+);
+
 create table if not exists billing_invoices (
   id text primary key,
   organization_id text not null references organizations(id),
@@ -408,6 +433,12 @@ create index if not exists usage_events_project_time_idx
 
 create index if not exists usage_events_org_time_idx
   on usage_events (organization_id, recorded_at);
+
+create index if not exists customer_audit_events_project_idx
+  on customer_audit_events (project_id, created_at desc, id desc);
+
+create index if not exists customer_audit_events_org_idx
+  on customer_audit_events (organization_id, created_at desc, id desc);
 
 create index if not exists billing_invoices_org_issued_idx
   on billing_invoices (organization_id, issued_at desc, id desc);

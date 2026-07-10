@@ -6,6 +6,8 @@ import type {
   BetaOnboarding,
   CanaryDecision,
   CapabilityPolicy,
+  CustomerAuditAction,
+  CustomerAuditEvent,
   CustomDomain,
   DeployPreview,
   DeployPreviewEnvironment,
@@ -85,7 +87,11 @@ import {
 import { ControlPlaneError } from "./errors.ts";
 import type { ApiToken } from "./authz.ts";
 import type { SecretCipher } from "./secret-encryption.ts";
-import type { ProjectResourceUsage } from "./repository.ts";
+import type {
+  ProjectResourceUsage,
+  RepositoryApiKeyRotation,
+  RepositoryApiKeyRotationInput,
+} from "./repository.ts";
 import { enforceProjectQuota, type ProjectQuotaResource, type ProjectQuotas } from "./quotas.ts";
 import type { ArtifactSignatureVerifier } from "./artifact-signing.ts";
 import {
@@ -167,14 +173,21 @@ export interface AsyncControlPlaneRepository {
   createProjectMembership(membership: ProjectMembership): Promise<ProjectMembership>;
   listProjectMemberships(projectId: string): Promise<ProjectMembership[]>;
   acceptProjectMembershipInvite(projectId: string, userId: string, acceptedAt: string): Promise<ProjectMembership>;
+  updateProjectMembershipRole(projectId: string, userId: string, role: ProjectRole): Promise<ProjectMembership>;
+  deleteProjectMembership(projectId: string, userId: string): Promise<ProjectMembership>;
   createApiKey(apiKey: ApiKey, tokenHash: string): Promise<ApiKey>;
   getApiKeyByTokenHash(tokenHash: string): Promise<ApiKey | undefined>;
   listProjectApiKeys(projectId: string): Promise<ApiKey[]>;
   updateApiKeyLastUsed(id: string, lastUsedAt: string): Promise<ApiKey>;
+  revokeApiKey(id: string, revokedAt: string): Promise<ApiKey>;
+  rotateApiKey(input: RepositoryApiKeyRotationInput): Promise<RepositoryApiKeyRotation>;
   createUsageEvent(event: UsageEvent): Promise<UsageEvent>;
   getUsageEvent(id: string): Promise<UsageEvent | undefined>;
   getProjectUsageSummary(projectId: string, from?: string, to?: string): Promise<ProjectUsageSummary>;
   createProductionQuotaIncrease(increase: ProductionQuotaIncrease): Promise<ProductionQuotaIncrease>;
+  createCustomerAuditEvent(event: CustomerAuditEvent): Promise<CustomerAuditEvent>;
+  listProjectCustomerAuditEvents(projectId: string): Promise<CustomerAuditEvent[]>;
+  listOrganizationCustomerAuditEvents(organizationId: string): Promise<CustomerAuditEvent[]>;
   createBillingInvoice(invoice: OrganizationBillingInvoice): Promise<OrganizationBillingInvoice>;
   getBillingInvoice(id: string): Promise<OrganizationBillingInvoice | undefined>;
   getOrganizationBillingInvoiceByPeriod(
@@ -196,6 +209,7 @@ export interface AsyncControlPlaneRepository {
   getCustomDomainByHost(host: string): Promise<CustomDomain | undefined>;
   listProjectCustomDomains(projectId: string): Promise<CustomDomain[]>;
   updateCustomDomain(domain: CustomDomain): Promise<CustomDomain>;
+  deleteCustomDomain(id: string): Promise<CustomDomain>;
   createDeployPreview(preview: DeployPreview): Promise<DeployPreview>;
   getDeployPreview(id: string): Promise<DeployPreview | undefined>;
   listProjectDeployPreviews(projectId: string): Promise<DeployPreview[]>;
@@ -276,6 +290,18 @@ export interface CreateProjectInput {
   name: string;
 }
 
+export interface GetProjectInput {
+  projectId: string;
+}
+
+export interface ListProjectCustomerAuditEventsInput {
+  projectId: string;
+}
+
+export interface ListOrganizationCustomerAuditEventsInput {
+  organizationId: string;
+}
+
 export interface CreateOrganizationInput {
   id?: string;
   name: string;
@@ -312,6 +338,17 @@ export interface AddProjectMembershipInput {
 
 export interface ListProjectMembershipsInput {
   projectId: string;
+}
+
+export interface UpdateProjectMembershipRoleInput {
+  projectId: string;
+  userId: string;
+  role: ProjectRole;
+}
+
+export interface RemoveProjectMembershipInput {
+  projectId: string;
+  userId: string;
 }
 
 export interface AcceptProjectMembershipInviteInput {
@@ -360,6 +397,21 @@ export interface AuthenticateApiTokenInput {
 
 export interface ListProjectApiKeysInput {
   projectId: string;
+}
+
+export interface RevokeApiKeyInput {
+  id: string;
+}
+
+export interface RotateApiKeyInput {
+  id: string;
+  replacementId?: string;
+  replacementName?: string;
+}
+
+export interface RotateApiKeyOutput {
+  revokedApiKey: ApiKey;
+  replacement: CreateApiKeyOutput;
 }
 
 export interface RecordUsageEventInput {
@@ -476,6 +528,10 @@ export interface CreateCustomDomainInput {
 
 export interface ListProjectCustomDomainsInput {
   projectId: string;
+}
+
+export interface DeleteCustomDomainInput {
+  id: string;
 }
 
 export interface VerifyCustomDomainOwnershipInput {
@@ -742,6 +798,31 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
   const admissionPolicy = options.admissionPolicy;
   const edgeWorkerDeployer = options.edgeWorkerDeployer ?? createMockCloudflareWorkerDeployer();
 
+  async function recordCustomerAuditEvent(input: {
+    organizationId?: string;
+    projectId?: string;
+    action: CustomerAuditAction;
+    targetType: string;
+    targetId: string;
+    actor?: string;
+    metadata?: Record<string, unknown>;
+  }): Promise<CustomerAuditEvent> {
+    const project = input.projectId ? await requireProject(repository, input.projectId) : undefined;
+    const organizationId = input.organizationId ?? project?.organizationId;
+    const event: CustomerAuditEvent = {
+      id: defaultIdGenerator("aud"),
+      ...(organizationId ? { organizationId } : {}),
+      ...(project ? { projectId: project.id } : {}),
+      action: input.action,
+      targetType: input.targetType,
+      targetId: input.targetId,
+      ...(input.actor ? { actor: input.actor } : {}),
+      ...(input.metadata ? { metadata: input.metadata } : {}),
+      createdAt: now(),
+    };
+    return repository.createCustomerAuditEvent(event);
+  }
+
   async function createOrganization(input: CreateOrganizationInput): Promise<Organization> {
     const createdAt = now();
     const organization: Organization = {
@@ -808,12 +889,30 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
     return repository.createProject(project);
   }
 
+  async function getProject(input: GetProjectInput): Promise<Project> {
+    return requireProject(repository, input.projectId);
+  }
+
+  async function listProjectCustomerAuditEvents(
+    input: ListProjectCustomerAuditEventsInput,
+  ): Promise<CustomerAuditEvent[]> {
+    await requireProject(repository, input.projectId);
+    return repository.listProjectCustomerAuditEvents(input.projectId);
+  }
+
+  async function listOrganizationCustomerAuditEvents(
+    input: ListOrganizationCustomerAuditEventsInput,
+  ): Promise<CustomerAuditEvent[]> {
+    await requireOrganization(repository, input.organizationId);
+    return repository.listOrganizationCustomerAuditEvents(input.organizationId);
+  }
+
   async function addProjectMembership(
     input: AddProjectMembershipInput,
   ): Promise<ProjectMembership> {
-    await requireProject(repository, input.projectId);
+    const project = await requireProject(repository, input.projectId);
     await requireUser(repository, input.userId);
-    return repository.createProjectMembership({
+    const membership = await repository.createProjectMembership({
       projectId: input.projectId,
       userId: input.userId,
       role: normalizeProjectRole(input.role),
@@ -821,6 +920,15 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
       invitedAt: now(),
       createdAt: now(),
     });
+    await recordCustomerAuditEvent({
+      organizationId: project.organizationId,
+      projectId: project.id,
+      action: "project_member.added",
+      targetType: "project_member",
+      targetId: membership.userId,
+      metadata: { role: membership.role, userId: membership.userId },
+    });
+    return membership;
   }
 
   async function listProjectMemberships(
@@ -830,12 +938,60 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
     return repository.listProjectMemberships(input.projectId);
   }
 
+  async function updateProjectMembershipRole(
+    input: UpdateProjectMembershipRoleInput,
+  ): Promise<ProjectMembership> {
+    const project = await requireProject(repository, input.projectId);
+    await requireUser(repository, input.userId);
+    const role = normalizeProjectRole(input.role);
+    const current = await requireProjectMembership(repository, input.projectId, input.userId);
+    if (current.role === "owner" && role !== "owner") {
+      await assertProjectKeepsOwner(repository, current);
+    }
+    const membership = await repository.updateProjectMembershipRole(input.projectId, input.userId, role);
+    await recordCustomerAuditEvent({
+      organizationId: project.organizationId,
+      projectId: project.id,
+      action: "project_member.role_updated",
+      targetType: "project_member",
+      targetId: membership.userId,
+      metadata: { fromRole: current.role, toRole: membership.role, userId: membership.userId },
+    });
+    return membership;
+  }
+
+  async function removeProjectMembership(input: RemoveProjectMembershipInput): Promise<ProjectMembership> {
+    const project = await requireProject(repository, input.projectId);
+    await requireUser(repository, input.userId);
+    const current = await requireProjectMembership(repository, input.projectId, input.userId);
+    await assertProjectKeepsOwner(repository, current);
+    const membership = await repository.deleteProjectMembership(input.projectId, input.userId);
+    await recordCustomerAuditEvent({
+      organizationId: project.organizationId,
+      projectId: project.id,
+      action: "project_member.removed",
+      targetType: "project_member",
+      targetId: membership.userId,
+      metadata: { role: membership.role, userId: membership.userId },
+    });
+    return membership;
+  }
+
   async function acceptProjectMembershipInvite(
     input: AcceptProjectMembershipInviteInput,
   ): Promise<ProjectMembership> {
-    await requireProject(repository, input.projectId);
+    const project = await requireProject(repository, input.projectId);
     await requireUser(repository, input.userId);
-    return repository.acceptProjectMembershipInvite(input.projectId, input.userId, now());
+    const membership = await repository.acceptProjectMembershipInvite(input.projectId, input.userId, now());
+    await recordCustomerAuditEvent({
+      organizationId: project.organizationId,
+      projectId: project.id,
+      action: "project_member.accepted",
+      targetType: "project_member",
+      targetId: membership.userId,
+      metadata: { role: membership.role, userId: membership.userId },
+    });
+    return membership;
   }
 
   async function requestProductionQuotaIncrease(
@@ -893,15 +1049,67 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
       scopes: normalizeApiScopes(input.scopes),
       createdAt: now(),
     };
-    return {
-      apiKey: await repository.createApiKey(apiKey, hashApiToken(token)),
-      token,
-    };
+    const created = await repository.createApiKey(apiKey, hashApiToken(token));
+    await recordCustomerAuditEvent({
+      organizationId: created.organizationId,
+      projectId: created.projectId,
+      action: "api_key.created",
+      targetType: "api_key",
+      targetId: created.id,
+      metadata: { scopes: created.scopes },
+    });
+    return { apiKey: created, token };
   }
 
   async function listProjectApiKeys(input: ListProjectApiKeysInput): Promise<ApiKey[]> {
     await requireProject(repository, input.projectId);
     return repository.listProjectApiKeys(input.projectId);
+  }
+
+  async function revokeApiKey(input: RevokeApiKeyInput): Promise<ApiKey> {
+    const id = optionalId(input.id, "api key id");
+    if (!id) {
+      throw new ControlPlaneError("validation", "api key id is required");
+    }
+    const revoked = await repository.revokeApiKey(id, now());
+    await recordCustomerAuditEvent({
+      organizationId: revoked.organizationId,
+      projectId: revoked.projectId,
+      action: "api_key.revoked",
+      targetType: "api_key",
+      targetId: revoked.id,
+    });
+    return revoked;
+  }
+
+  async function rotateApiKey(input: RotateApiKeyInput): Promise<RotateApiKeyOutput> {
+    const id = optionalId(input.id, "api key id");
+    if (!id) {
+      throw new ControlPlaneError("validation", "api key id is required");
+    }
+    const token = `wmp_${randomBytes(16).toString("hex")}`;
+    const rotated = await repository.rotateApiKey({
+      id,
+      replacementId: optionalId(input.replacementId, "replacement api key id") ?? idGenerator("key"),
+      ...(input.replacementName === undefined ? {} : { replacementName: normalizeApiKeyName(input.replacementName) }),
+      tokenHash: hashApiToken(token),
+      rotatedAt: now(),
+    });
+    await recordCustomerAuditEvent({
+      organizationId: rotated.revokedApiKey.organizationId,
+      projectId: rotated.revokedApiKey.projectId,
+      action: "api_key.rotated",
+      targetType: "api_key",
+      targetId: rotated.revokedApiKey.id,
+      metadata: { replacementId: rotated.apiKey.id },
+    });
+    return {
+      revokedApiKey: rotated.revokedApiKey,
+      replacement: {
+        apiKey: rotated.apiKey,
+        token,
+      },
+    };
   }
 
   async function createBetaOnboarding(input: CreateBetaOnboardingInput): Promise<BetaOnboarding> {
@@ -1129,6 +1337,13 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
     });
     try {
       const created = await repository.createBillingInvoice(invoice);
+      await recordCustomerAuditEvent({
+        organizationId: created.organizationId,
+        action: "billing_invoice.issued",
+        targetType: "billing_invoice",
+        targetId: created.id,
+        metadata: { periodKey: created.periodKey, totalUsd: created.totalUsd },
+      });
       await enqueueBillingInvoiceWebhook(created);
       return created;
     } catch (error) {
@@ -1315,7 +1530,17 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
       createdAt: now(),
       updatedAt: now(),
     };
-    return repository.createCustomDomain(domain);
+    const created = await repository.createCustomDomain(domain);
+    const project = await requireProject(repository, created.projectId);
+    await recordCustomerAuditEvent({
+      organizationId: project.organizationId,
+      projectId: created.projectId,
+      action: "custom_domain.created",
+      targetType: "custom_domain",
+      targetId: created.id,
+      metadata: { host: created.host },
+    });
+    return created;
   }
 
   async function listProjectCustomDomains(
@@ -1323,6 +1548,29 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
   ): Promise<CustomDomain[]> {
     await requireProject(repository, input.projectId);
     return repository.listProjectCustomDomains(input.projectId);
+  }
+
+  async function deleteCustomDomain(input: DeleteCustomDomainInput): Promise<CustomDomain> {
+    const domain = await requireCustomDomain(repository, input.id);
+    const routes = (await repository.listRoutes()).filter((route) => route.host === domain.host);
+    const foreignRoute = routes.find((route) => route.projectId !== domain.projectId);
+    if (foreignRoute) {
+      throw new ControlPlaneError("validation", `custom domain ${domain.host} has a route owned by another project`);
+    }
+    if (routes.length > 0) {
+      throw new ControlPlaneError("validation", `custom domain ${domain.host} still has routes`);
+    }
+    const deleted = await repository.deleteCustomDomain(domain.id);
+    const project = await requireProject(repository, deleted.projectId);
+    await recordCustomerAuditEvent({
+      organizationId: project.organizationId,
+      projectId: deleted.projectId,
+      action: "custom_domain.deleted",
+      targetType: "custom_domain",
+      targetId: deleted.id,
+      metadata: { host: deleted.host },
+    });
+    return deleted;
   }
 
   async function verifyCustomDomainOwnership(
@@ -1611,7 +1859,17 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
       capabilities,
       createdAt: now(),
     };
-    return repository.createDeployment(deployment);
+    const created = await repository.createDeployment(deployment);
+    const project = await requireProject(repository, created.projectId);
+    await recordCustomerAuditEvent({
+      organizationId: project.organizationId,
+      projectId: created.projectId,
+      action: "deployment.created",
+      targetType: "deployment",
+      targetId: created.id,
+      metadata: { artifactId: created.artifactId, world: created.world, worldVersion: created.worldVersion },
+    });
+    return created;
   }
 
   async function createEdgeWorkerRelease(
@@ -1863,7 +2121,17 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
       targets,
       updatedAt: now(),
     };
-    return repository.upsertRoute(route);
+    const pointed = await repository.upsertRoute(route);
+    const project = await requireProject(repository, pointed.projectId);
+    await recordCustomerAuditEvent({
+      organizationId: project.organizationId,
+      projectId: pointed.projectId,
+      action: "route.pointed",
+      targetType: "route",
+      targetId: pointed.id,
+      metadata: { host: pointed.host, pathPrefix: pointed.pathPrefix, deploymentId: pointed.deploymentId },
+    });
+    return pointed;
   }
 
   async function startRouteCanary(input: StartRouteCanaryInput): Promise<RoutePointer> {
@@ -2070,12 +2338,19 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
     createUser,
     verifyUserEmail,
     createProject,
+    getProject,
+    listProjectCustomerAuditEvents,
+    listOrganizationCustomerAuditEvents,
     addProjectMembership,
     listProjectMemberships,
+    updateProjectMembershipRole,
+    removeProjectMembership,
     acceptProjectMembershipInvite,
     requestProductionQuotaIncrease,
     createApiKey,
     listProjectApiKeys,
+    revokeApiKey,
+    rotateApiKey,
     createBetaOnboarding,
     authenticateApiToken,
     recordUsageEvent,
@@ -2098,6 +2373,7 @@ export function createAsyncControlPlane(options: AsyncControlPlaneOptions) {
     pruneBillingInvoices,
     createCustomDomain,
     listProjectCustomDomains,
+    deleteCustomDomain,
     verifyCustomDomainOwnership,
     requestCustomDomainTlsProvisioning,
     completeCustomDomainTlsProvisioning,
@@ -2316,6 +2592,35 @@ async function requireProject(repository: AsyncControlPlaneRepository, id: strin
     throw new ControlPlaneError("not_found", `project ${id} was not found`);
   }
   return project;
+}
+
+async function requireProjectMembership(
+  repository: AsyncControlPlaneRepository,
+  projectId: string,
+  userId: string,
+): Promise<ProjectMembership> {
+  const membership = (await repository.listProjectMemberships(projectId)).find((item) => item.userId === userId);
+  if (!membership) {
+    throw new ControlPlaneError("not_found", `project membership ${projectId}/${userId} was not found`);
+  }
+  return membership;
+}
+
+async function assertProjectKeepsOwner(
+  repository: AsyncControlPlaneRepository,
+  current: ProjectMembership,
+): Promise<void> {
+  if (current.role !== "owner") {
+    return;
+  }
+  const otherOwners = (await repository.listProjectMemberships(current.projectId))
+    .filter((membership) => membership.userId !== current.userId && membership.role === "owner");
+  if (otherOwners.length === 0) {
+    throw new ControlPlaneError("validation", "project must keep at least one owner");
+  }
+  if (current.inviteStatus === "accepted" && !otherOwners.some((membership) => membership.inviteStatus === "accepted")) {
+    throw new ControlPlaneError("validation", "project must keep at least one accepted owner");
+  }
 }
 
 async function productionQuotaReadinessChecks(input: {
