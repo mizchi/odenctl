@@ -2,7 +2,7 @@
 mod bindings;
 
 use bindings::Guest;
-use bindings::myedge::runtime::bridge;
+use bindings::wasmplane::sample::bridge;
 
 struct Component;
 

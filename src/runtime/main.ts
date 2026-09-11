@@ -46,7 +46,6 @@ const port = Number.parseInt(process.env.RUNTIME_PORT ?? "8788", 10);
 const host = process.env.RUNTIME_HOST ?? "127.0.0.1";
 const cacheDir = process.env.WASMPLANE_CACHE_DIR ?? ".wasmplane/cache";
 const artifactCacheDir = process.env.WASMPLANE_ARTIFACT_CACHE_DIR ?? ".wasmplane/runtime-artifacts";
-const kvStoreDir = process.env.WASMPLANE_KV_STORE_DIR ?? ".wasmplane/kv";
 const hostBin = process.env.WASMPLANE_WASIP3_HOST_BIN ?? "target/debug/wasmplane-wasip3-host";
 const hostDaemonEnabled = process.env.WASMPLANE_WASIP3_HOST_DAEMON === "1";
 const hostDaemonPort = Number.parseInt(process.env.WASMPLANE_WASIP3_HOST_DAEMON_PORT ?? "8790", 10);
@@ -124,7 +123,6 @@ if (hostDaemonEnabled) {
   await startWasip3HostDaemon({
     hostBin,
     port: hostDaemonPort,
-    kvStoreDir,
     runtimeArgs: hostDaemonServeArgs,
   });
 }
@@ -140,7 +138,7 @@ const app = createRuntimeNodeApp({
   supervisor,
   invoker: hostDaemonUrl
     ? createWasip3HostDaemonInvoker({ url: hostDaemonUrl })
-    : createWasip3HostInvoker({ hostBin, kvStoreDir }),
+    : createWasip3HostInvoker({ hostBin }),
   managementToken: runtimeManagementToken,
   managementIdentityKeys: runtimeIdentityKeys,
   maxConcurrentInvocations: runtimeConcurrency,
@@ -203,7 +201,6 @@ console.log(`wasmplane ${MVP_WASI_PROFILE} runtime node listening on http://${ho
 async function startWasip3HostDaemon(input: {
   hostBin: string;
   port: number;
-  kvStoreDir: string;
   runtimeArgs: string[];
 }): Promise<ChildProcess> {
   const child = spawn(input.hostBin, [
@@ -212,8 +209,6 @@ async function startWasip3HostDaemon(input: {
     "127.0.0.1",
     "--port",
     String(input.port),
-    "--kv-store-dir",
-    input.kvStoreDir,
     ...input.runtimeArgs,
   ], { stdio: ["ignore", "inherit", "inherit"] });
   process.once("exit", () => child.kill());

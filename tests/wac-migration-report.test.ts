@@ -12,7 +12,7 @@ import {
 
 test("WAC migration report analyzes the runtime worker WIT blocker shape", () => {
   const analysis = analyzeWacRuntimeWorkerWit("worker.wit", `
-package myedge:runtime@0.1.0;
+package test:component@0.1.0;
 
 interface http {
   resource incoming-body {
@@ -122,7 +122,7 @@ test("WAC migration args parse output and format", () => {
     {
       format: "json",
       output: "reports/wac.json",
-      runtimeWorkerWit: "examples/rust-moonbit-release/wit/worker.wit",
+      runtimeWorkerWit: "wit/standard-http/deps/http.wit",
       timeoutMs: 1000,
     },
   );

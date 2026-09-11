@@ -31,7 +31,7 @@ export interface WasmtimeSupervisorSpec {
   };
   worker: {
     deploymentId: string;
-    world: "myedge:runtime/worker@0.1.0";
+    world: "wasi:http/service@0.3.0";
   };
   limits?: Deployment["limits"];
 }
@@ -71,7 +71,7 @@ export interface WasmtimeCliBackendOptions {
 export function createWasmtimeCliBackend(options: WasmtimeCliBackendOptions): RuntimeBackend {
   const wasmtimeBin = options.wasmtimeBin ?? "wasmtime";
   const wasmToolsBin = options.wasmToolsBin ?? "wasm-tools";
-  const witPath = options.witPath ?? join(process.cwd(), "wit/myedge-runtime.wit");
+  const witPath = options.witPath ?? join(process.cwd(), "wit/standard-http");
   const world = options.world ?? MVP_WORKER_WORLD;
   const validateWorld = options.validateWorld ?? true;
   const commandRunner = options.commandRunner ?? createSpawnCommandRunner();
@@ -103,7 +103,7 @@ export function createWasmtimeCliBackend(options: WasmtimeCliBackendOptions): Ru
         if (validateWorld) {
           await commandRunner.run(
             wasmToolsBin,
-            ["component", "targets", witPath, "--world", world, request.artifact.path],
+            ["component", "targets", witPath, "--world", "service", request.artifact.path],
             { timeoutMs: Math.max(1000, request.limits.wallMs * 2) },
           );
         }

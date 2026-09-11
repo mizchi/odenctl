@@ -2299,7 +2299,6 @@ function route(
     wallMs: deploymentId.includes("timeout") ? 10 : 1000,
     requestBytes: deploymentId.includes("tiny_request") ? 4 : 1048576,
     subrequests: 20,
-    hostCalls: 100,
     responseBytes: deploymentId.includes("small") ? 4 : 1048576,
   };
   const capabilities = {

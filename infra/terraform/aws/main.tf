@@ -22,7 +22,6 @@ locals {
     { name = "CONTROL_PLANE_URL", value = "https://${var.control_host}" },
     { name = "WASMPLANE_CACHE_DIR", value = "/tmp/wasmplane/cache" },
     { name = "WASMPLANE_ARTIFACT_CACHE_DIR", value = "/tmp/wasmplane/artifacts" },
-    { name = "WASMPLANE_KV_STORE_DIR", value = "/tmp/wasmplane/kv" },
     { name = "WASMPLANE_WASIP3_HOST_BIN", value = "/usr/local/bin/wasmplane-wasip3-host" },
     { name = "WASMPLANE_WASIP3_HOST_DAEMON", value = "1" },
     { name = "WASMPLANE_WASIP3_HOST_DAEMON_ROUTES", value = "1" },

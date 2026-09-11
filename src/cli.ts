@@ -166,7 +166,6 @@ const defaultLimits: RuntimeLimits = {
   requestBytes: 1048576,
   responseBytes: 1048576,
   subrequests: 20,
-  hostCalls: 100,
 };
 
 class HttpRequestError extends Error {
@@ -1146,7 +1145,6 @@ function isLimitKey(key: string): key is keyof RuntimeLimits {
     "requestBytes",
     "responseBytes",
     "subrequests",
-    "hostCalls",
   ].includes(key);
 }
 

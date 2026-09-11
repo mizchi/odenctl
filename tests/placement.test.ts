@@ -248,7 +248,7 @@ function snapshot(projectIds: string[]): RouteSnapshot {
       projectId,
       deploymentId: `dep_${projectId}`,
       targets: [{ deploymentId: `dep_${projectId}`, weight: 100 }],
-      world: "myedge:runtime/worker@0.1.0",
+      world: "wasi:http/service@0.3.0",
       runtime: { backend: "wasmtime", version: "wasmtime-43", wasi: "wasip3" },
       limits: {
         cpuMs: 50,
@@ -256,7 +256,6 @@ function snapshot(projectIds: string[]): RouteSnapshot {
         wallMs: 1000,
         requestBytes: 1048576,
         subrequests: 20,
-        hostCalls: 100,
         responseBytes: 1048576,
       },
       capabilities: {

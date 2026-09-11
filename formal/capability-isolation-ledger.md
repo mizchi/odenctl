@@ -1,9 +1,12 @@
 # Capability Isolation Formal Ledger
 
+Scope update: guest service/state bindings were removed with the custom WIT. This ledger covers
+control-plane policy relations only. Use runtime integration tests for standard WASI capability enforcement.
+
 source:
   docs / code / tests:
   - Cloudflare Workers isolate/security model: isolates share a runtime process but rely on memory isolation and API-level capability design.
-  - `wit/myedge-runtime.wit`: guest worker imports for KV, secrets, durable objects, outbound HTTP, and service binding calls.
+  - Control-plane policy only; the custom guest service/state imports were removed.
   - `src/control-plane/contracts.ts`: `CapabilityPolicy` and capability normalization.
   - `src/control-plane/service.ts`, `src/control-plane/async-service.ts`: deployment-time target validation.
   - `src/control-plane/admission.ts`: production admission guardrails.
@@ -30,7 +33,7 @@ decision:
   design invariant.
 
 implementation:
-  `service.fetch(binding, req)` is the only service-call host import. `WorkerHost` resolves only configured service bindings; unknown bindings return 403.
+  The control plane models explicit service grants. The standard WASI node rejects these removed bindings; this model does not establish runtime service reachability.
 
 lock:
   `regression-service-binding-required` and `deployment service bindings explicitly grant cross-project worker calls`.
@@ -58,7 +61,7 @@ decision:
   security boundary.
 
 implementation:
-  The formal relation ignores `outboundHttp.allow` when deciding service access. Runtime service calls use `service.fetch`, not `outbound.fetch`.
+  The formal relation ignores `outboundHttp.allow` when deciding service access. This is a control-plane policy relation, not a network isolation proof: WASI HTTP can reach any permitted origin.
 
 lock:
   `regression-outbound-http-is-not-service-access`.

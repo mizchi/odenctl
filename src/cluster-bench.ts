@@ -150,7 +150,6 @@ const defaultLimits: RuntimeLimits = {
   requestBytes: 1048576,
   responseBytes: 1048576,
   subrequests: 20,
-  hostCalls: 100,
 };
 
 const defaultCapabilities: CapabilityPolicy = {
@@ -563,7 +562,6 @@ async function startRuntimeCluster(
       const id = `runtime-${index + 1}`;
       const cacheDir = await mkdtemp(join(tmpdir(), `wasmplane-cluster-${id}-cwasm-`));
       const artifactCacheDir = await mkdtemp(join(tmpdir(), `wasmplane-cluster-${id}-artifacts-`));
-      const kvStoreDir = await mkdtemp(join(tmpdir(), `wasmplane-cluster-${id}-kv-`));
       const poolingArgs = clusterHostPoolingArgs(options);
       const precompiledCompileArgs = options.hostDaemonUrl ? poolingArgs : [];
       const cacheVariant = clusterEngineCacheVariant([
@@ -583,7 +581,7 @@ async function startRuntimeCluster(
         }),
         invoker: options.hostDaemonUrl
           ? createWasip3HostDaemonInvoker({ url: options.hostDaemonUrl })
-          : createWasip3HostInvoker({ hostBin: options.hostBin, kvStoreDir }),
+          : createWasip3HostInvoker({ hostBin: options.hostBin }),
         maxConcurrentInvocations: options.maxConcurrentInvocations,
         eventBufferSize: 1000,
       });

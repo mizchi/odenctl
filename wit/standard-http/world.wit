@@ -1,0 +1,7 @@
+package wasmplane:standard-http;
+
+// Rust wasm32-wasip2 std imports coexist with a standard WASIp3 service export.
+world service {
+  include wasi:http/service@0.3.0;
+  include wasi:cli/imports@0.2.9;
+}

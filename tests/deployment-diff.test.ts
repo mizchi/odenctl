@@ -75,7 +75,6 @@ function routeEntry(input: {
     requestBytes: 1048576,
     responseBytes: 1048576,
     subrequests: 20,
-    hostCalls: 100,
     ...input.limits,
   };
   const capabilities = {

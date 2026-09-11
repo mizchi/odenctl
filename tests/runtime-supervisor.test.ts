@@ -807,7 +807,6 @@ test("wasmtime CLI backend precompiles async component artifacts and reuses cach
       wallMs: 1000,
       requestBytes: 1048576,
       subrequests: 20,
-      hostCalls: 100,
       responseBytes: 1048576,
     },
     capabilities: {
@@ -838,7 +837,6 @@ test("wasmtime CLI backend precompiles async component artifacts and reuses cach
       wallMs: 1000,
       requestBytes: 1048576,
       subrequests: 20,
-      hostCalls: 100,
       responseBytes: 1048576,
     },
     capabilities: {
@@ -897,7 +895,6 @@ test("wasmtime CLI backend validates components against the wasip3 worker world 
       wallMs: 1000,
       requestBytes: 1048576,
       subrequests: 20,
-      hostCalls: 100,
       responseBytes: 1048576,
     },
     capabilities: {
@@ -920,9 +917,9 @@ test("wasmtime CLI backend validates components against the wasip3 worker world 
   assert.deepEqual(calls[0]?.args.slice(0, 5), [
     "component",
     "targets",
-    join(process.cwd(), "wit/myedge-runtime.wit"),
+    join(process.cwd(), "wit/standard-http"),
     "--world",
-    MVP_WORKER_WORLD,
+    "service",
   ]);
   assert.equal(calls[0]?.args.at(-1), componentPath);
   assert.equal(calls[1]?.command, "wasmtime");
@@ -991,9 +988,9 @@ test("wasip3 host backend can run strict WIT target validation when requested", 
   assert.deepEqual(calls[0]?.args.slice(0, 5), [
     "component",
     "targets",
-    join(process.cwd(), "wit/myedge-runtime.wit"),
+    join(process.cwd(), "wit/standard-http"),
     "--world",
-    MVP_WORKER_WORLD,
+    "service",
   ]);
   assert.equal(calls[1]?.command, "wasmplane-wasip3-host");
 });
@@ -1033,8 +1030,6 @@ test("wasip3 host daemon args include explicit instance reuse contract", () => {
   const args = wasip3HostDaemonRuntimeArgsFromEnv({
     WASMPLANE_WASIP3_HOST_MAX_PREPARED_COMPONENTS: "512",
     WASMPLANE_WASIP3_HOST_MAX_CONCURRENT_INVOCATIONS: "64",
-    WASMPLANE_WASIP3_EXPERIMENTAL_INSTANCE_REUSE: "2",
-    WASMPLANE_WASIP3_INSTANCE_REUSE_CONTRACT: " stateless-v1 ",
   }, ["--pooling-total-component-instances", "64"]);
 
   assert.deepEqual(args, [
@@ -1042,10 +1037,6 @@ test("wasip3 host daemon args include explicit instance reuse contract", () => {
     "512",
     "--max-concurrent-invocations",
     "64",
-    "--experimental-instance-reuse",
-    "2",
-    "--instance-reuse-contract",
-    "stateless-v1",
     "--pooling-total-component-instances",
     "64",
   ]);
@@ -1136,7 +1127,6 @@ test("wasip3 host invoker delegates HTTP requests to the Rust host invoke comman
         wallMs: 1000,
         requestBytes: 1048576,
         subrequests: 20,
-        hostCalls: 100,
         responseBytes: 1048576,
       },
       capabilities: {
@@ -1181,8 +1171,6 @@ test("wasip3 host invoker delegates HTTP requests to the Rust host invoke comman
     "1048576",
     "--subrequests",
     "20",
-    "--host-calls",
-    "100",
     "--capabilities",
     JSON.stringify({
       outboundHttp: { enabled: false, allow: [] },
@@ -1227,7 +1215,6 @@ test("wasip3 host daemon invoker sends requests to the embedded host service", a
         wallMs: 1000,
         requestBytes: 1048576,
         subrequests: 20,
-        hostCalls: 100,
         responseBytes: 1048576,
       },
       capabilities: {
@@ -1262,7 +1249,6 @@ test("wasip3 host daemon invoker sends requests to the embedded host service", a
       requestBytes: 1048576,
       responseBytes: 1048576,
       subrequests: 20,
-      hostCalls: 100,
     },
     capabilities: {
       outboundHttp: { enabled: false, allow: [] },
@@ -1304,44 +1290,6 @@ test("wasip3 host daemon invoker reports daemon failures as invoke errors", asyn
   );
 });
 
-test("wasip3 host invoker passes a persistent KV store directory", async () => {
-  const calls: Array<{ command: string; args: string[] }> = [];
-  const invoker = createWasip3HostInvoker({
-    hostBin: "wasmplane-wasip3-host",
-    kvStoreDir: "/tmp/wasmplane-kv",
-    commandRunner: {
-      async run(command, args) {
-        calls.push({ command, args });
-        return {
-          stdout: JSON.stringify({ status: 200, headers: [], body: "ok" }),
-          stderr: "",
-        };
-      },
-    },
-  });
-
-  await invoker.invoke({
-    deploymentId: "dep_worker",
-    component: {
-      deploymentId: "dep_worker",
-      backend: "wasmtime",
-      componentPath: "/tmp/worker.component.wasm",
-      precompiledPath: "/tmp/worker.component.cwasm",
-      cached: false,
-      projectId: "prj_worker",
-      limits: compileRequest("/tmp/worker.component.wasm", digest("component")).limits,
-      capabilities: compileRequest("/tmp/worker.component.wasm", digest("component")).capabilities,
-    },
-    method: "GET",
-    uri: "http://hello.example.dev/",
-    headers: [],
-    body: Buffer.from(""),
-  });
-
-  assert.equal(calls[0]?.command, "wasmplane-wasip3-host");
-  assert.deepEqual(calls[0]?.args.slice(-2), ["--kv-store-dir", "/tmp/wasmplane-kv"]);
-});
-
 test("wasip3 host invoker reports host command failures as invoke errors", async () => {
   const invoker = createWasip3HostInvoker({
     commandRunner: {
@@ -1377,9 +1325,9 @@ async function buildAsyncWorkerComponent(dir: string): Promise<string> {
   await execFileAsync("wasm-tools", [
     "component",
     "embed",
-    join(process.cwd(), "wit/myedge-runtime.wit"),
+    join(process.cwd(), "wit/standard-http"),
     "--world",
-    "worker",
+    "service",
     "--dummy-names",
     "legacy",
     "--async-stackful",
@@ -1409,7 +1357,6 @@ function compileRequest(componentPath: string, componentDigest: string) {
       wallMs: 1000,
       requestBytes: 1048576,
       subrequests: 20,
-      hostCalls: 100,
       responseBytes: 1048576,
     },
     capabilities: {
@@ -1458,7 +1405,6 @@ function route(
       wallMs: 1000,
       requestBytes: 1048576,
       subrequests: 20,
-      hostCalls: 100,
       responseBytes: 1048576,
     },
     capabilities: {
@@ -1495,7 +1441,6 @@ function snapshotTarget(
       wallMs: 1000,
       requestBytes: 1048576,
       subrequests: 20,
-      hostCalls: 100,
       responseBytes: 1048576,
     },
     capabilities: {

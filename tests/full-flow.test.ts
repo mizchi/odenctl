@@ -70,29 +70,13 @@ test(
         location: pathToFileURL(absoluteComponentPath).href,
         sizeBytes: (await readFile(absoluteComponentPath)).byteLength,
       });
-      await postJson(controlBaseUrl, "/secrets", {
-        id: "sec_api_key",
-        projectId: project.id,
-        name: "API key",
-        value: "super-secret",
-      });
-      await postJson(controlBaseUrl, "/kv-namespaces", {
-        id: "kv_main",
-        projectId: project.id,
-        name: "Main KV",
-      });
-      await postJson(controlBaseUrl, "/durable-object-namespaces", {
-        id: "do_rooms",
-        projectId: project.id,
-        name: "Rooms",
-      });
       const deployment = await postJson(controlBaseUrl, "/deployments", {
         projectId: project.id,
         artifactId: artifact.id,
-        world: "myedge:runtime/worker@0.1.0",
+        world: "wasi:http/service@0.3.0",
         runtime: {
           backend: "wasmtime",
-          version: "wasmtime-42",
+          version: "wasmtime-48.0.2",
           wasi: "wasip3",
         },
         limits: {
@@ -101,14 +85,10 @@ test(
           wallMs: 10000,
           requestBytes: 1048576,
           subrequests: 20,
-          hostCalls: 100,
           responseBytes: 1048576,
         },
         capabilities: {
           outboundHttp: { enabled: true, allow: [`${upstream.baseUrl}/`] },
-          kv: [{ binding: "MAIN", namespaceId: "kv_main" }],
-          durableObjects: [{ binding: "ROOMS", namespaceId: "do_rooms" }],
-          secrets: [{ binding: "API_KEY", secretId: "sec_api_key" }],
         },
       });
       await putJson(controlBaseUrl, "/routes", {
@@ -132,7 +112,7 @@ test(
       assert.equal(response.headers.get("x-wasmplane-deployment"), deployment.id);
       assert.equal(await response.text(), "hello from wasmplane: GET http://hello.example.dev/");
 
-      const capabilityResponse = await fetch(`${runtimeBaseUrl}/capabilities`, {
+      const capabilityResponse = await fetch(`${runtimeBaseUrl}/fetch`, {
         headers: {
           "x-forwarded-host": "hello.example.dev",
           "x-upstream-url": `${upstream.baseUrl}/probe`,
@@ -143,7 +123,7 @@ test(
       }
       assert.equal(
         await capabilityResponse.text(),
-        "capabilities: kv=checked durable=checked/deleted=false secret-len=12 outbound=upstream-ok",
+        "upstream-ok",
       );
     } finally {
       await controlApp.close();

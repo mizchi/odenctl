@@ -100,9 +100,9 @@ test("project tooling keeps Wasm E2E portable", async () => {
     assert.doesNotMatch(githubWorkflow, /cargo install wasm-tools/);
     assert.doesNotMatch(githubWorkflow, /cargo install wit-bindgen-cli/);
   }
-  assert.match(ciToolInstaller, /WASMPLANE_WASMTIME_VERSION:-42\.0\.1/);
-  assert.match(ciToolInstaller, /WASMPLANE_WASM_TOOLS_VERSION:-1\.245\.1/);
-  assert.match(ciToolInstaller, /WASMPLANE_WIT_BINDGEN_VERSION:-0\.51\.0/);
+  assert.match(ciToolInstaller, /WASMPLANE_WASMTIME_VERSION:-48\.0\.2/);
+  assert.match(ciToolInstaller, /WASMPLANE_WASM_TOOLS_VERSION:-1\.259\.0/);
+  assert.match(ciToolInstaller, /WASMPLANE_WIT_BINDGEN_VERSION:-0\.62\.0/);
   assert.match(ciToolInstaller, /GITHUB_PATH/);
   assert.match(ciToolInstaller, /wasmtime --version/);
   assert.match(ciToolInstaller, /wasm-tools --version/);
@@ -286,7 +286,7 @@ test("Rust and MoonBit release sample composes a runtime worker", async () => {
   assert.doesNotMatch(sampleReadme, /wac currently panics/);
   assert.match(workerWit, /interface bridge/);
   assert.match(workerWit, /import bridge/);
-  assert.match(workerWit, /export handle: async func\(req: request\) -> response/);
+  assert.match(rustLib, /wasip3::http::service::export!/);
   assert.match(wacCallerWit, /world wac-caller/);
   assert.match(wacCallerWit, /import bridge/);
   assert.match(wacCallerWit, /export answer: func\(\) -> u32/);
@@ -297,7 +297,7 @@ test("Rust and MoonBit release sample composes a runtime worker", async () => {
   assert.match(rustLib, /bridge::ping\(35\)/);
   assert.match(wacCallerCargo, /name = "rust-moonbit-wac-caller"/);
   assert.match(wacCallerLib, /bridge::ping\(35\)/);
-  assert.match(moonbitModule, /"name": "myedge\/runtime"/);
+  assert.match(moonbitModule, /"name": "wasmplane\/sample"/);
   assert.match(moonbitPing, /pub fn ping\(value : UInt\) -> UInt/);
 });
 

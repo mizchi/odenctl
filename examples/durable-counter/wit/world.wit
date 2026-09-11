@@ -1,0 +1,6 @@
+package wasmplane:example;
+
+world counter {
+  import wasmplane:durable/objects@0.1.0;
+  export wasi:cli/run@0.3.0;
+}

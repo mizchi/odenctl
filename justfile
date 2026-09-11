@@ -3,13 +3,12 @@ set shell := ["bash", "-cu"]
 wac_git_url := env_var_or_default("WASMPLANE_WAC_GIT_URL", "https://github.com/mizchi/wac")
 wac_git_ref_arg := env_var_or_default("WASMPLANE_WAC_GIT_REF_ARG", "--tag wasmplane-wac-0.10.1-p1")
 wasi_adapter := env_var_or_default("WASI_PREVIEW1_ADAPTER", "node_modules/@bytecodealliance/jco/lib/wasi_snapshot_preview1.reactor.wasm")
-guest_wasm := "examples/hello-worker/target/wasm32-wasip1/debug/hello_worker.wasm"
-guest_component := "examples/hello-worker/target/wasm32-wasip1/debug/hello_worker.component.wasm"
+guest_component := "examples/hello-worker/target/wasm32-wasip2/debug/hello_worker.wasm"
 rust_interop_wasm := "examples/rust-interop/target/wasm32-wasip1/debug/rust_interop.wasm"
 rust_interop_component := "examples/rust-interop/target/wasm32-wasip1/debug/rust_interop.component.wasm"
 moonbit_interop_component := "examples/moonbit-interop/target/moonbit-interop.component.wasm"
 sample_rust_moonbit_dir := "examples/rust-moonbit-release"
-sample_rust_moonbit_rust_wasm := sample_rust_moonbit_dir + "/rust-worker/target/wasm32-wasip1/release/rust_moonbit_release_worker.wasm"
+sample_rust_moonbit_rust_wasm := sample_rust_moonbit_dir + "/rust-worker/target/wasm32-wasip2/release/rust_moonbit_release_worker.wasm"
 sample_rust_moonbit_rust_component := sample_rust_moonbit_dir + "/target/rust-worker.component.wasm"
 sample_rust_moonbit_wac_caller_wasm := sample_rust_moonbit_dir + "/rust-wac-caller/target/wasm32-wasip1/release/rust_moonbit_wac_caller.wasm"
 sample_rust_moonbit_wac_caller_component := sample_rust_moonbit_dir + "/target/rust-wac-caller.component.wasm"
@@ -71,6 +70,10 @@ rust-coverage:
 e2e: rust-build guest-build
     WASMPLANE_E2E_COMPONENT="{{ guest_component }}" WASMPLANE_E2E_HOST_BIN="target/debug/wasmplane-wasip3-host" node --experimental-strip-types --test tests/full-flow.test.ts
 
+worker-async-test: rust-build guest-build standalone-http-p3-build
+    WASMPLANE_STANDARD_COMPONENT="{{justfile_directory()}}/examples/standard-http-p3/target/wasm32-wasip2/debug/standalone_http_p3_example.wasm" WASMPLANE_WORKER_COMPONENT="{{justfile_directory()}}/{{ guest_component }}" cargo test -p wasmplane-runtime-core --test standard_node -- --ignored
+    WASMPLANE_WORKER_HOST_BIN=target/debug/wasmplane-wasip3-host WASMPLANE_WORKER_COMPONENT="{{ guest_component }}" node --experimental-strip-types --test tests/worker-daemon-async.test.ts
+
 deps:
     pnpm install --frozen-lockfile
 
@@ -80,17 +83,92 @@ rust-test:
 rust-build:
     cargo build -p wasmplane-wasip3-host
 
+# Standard WASI component, independent of the control plane.
+standalone-http-build:
+    rustup target add wasm32-wasip2
+    cargo build --manifest-path examples/standard-http/Cargo.toml --target wasm32-wasip2
+
+standalone-http-p3-build:
+    rustup target add wasm32-wasip2
+    cargo build --manifest-path examples/standard-http-p3/Cargo.toml --target wasm32-wasip2
+
+standalone-test: rust-build standalone-http-build standalone-http-p3-build
+    WASMPLANE_STANDALONE_BIN=target/debug/wasmplane WASMPLANE_STANDALONE_HTTP_COMPONENT=examples/standard-http/target/wasm32-wasip2/debug/standalone_http_example.wasm WASMPLANE_STANDALONE_HTTP_P3_COMPONENT=examples/standard-http-p3/target/wasm32-wasip2/debug/standalone_http_p3_example.wasm node --experimental-strip-types --test tests/standalone-runtime.test.ts
+
+# One WIT lifecycle contract, two guest SDKs, shared conformance tests.
+service-rust-build:
+    rustup target add wasm32-wasip2
+    cargo build --locked --manifest-path examples/service-rust/Cargo.toml --target wasm32-wasip2
+
+service-moonbit-build:
+    node scripts/build-service-moonbit.mjs
+
+service-test: rust-build service-rust-build service-moonbit-build
+    WASMPLANE_SERVICE_BIN=target/debug/wasmplane WASMPLANE_SERVICE_RUST=examples/service-rust/target/wasm32-wasip2/debug/service_rust.wasm WASMPLANE_SERVICE_MOONBIT=examples/service-moonbit/target/service.wasm node --experimental-strip-types --test tests/service-runtime.test.ts tests/app-manifest.test.ts
+
+app-build manifest: rust-build
+    target/debug/wasmplane build {{quote(manifest)}}
+
+app-start manifest: rust-build
+    target/debug/wasmplane start {{quote(manifest)}}
+
+app-dev manifest="examples/service-rust/app.json": rust-build
+    target/debug/wasmplane dev {{quote(manifest)}}
+
+durable-counter-build:
+    rustup target add wasm32-wasip2
+    mkdir -p examples/durable-counter/wit/deps/durable
+    cp wit/durable/objects.wit examples/durable-counter/wit/deps/durable/objects.wit
+    cargo build --manifest-path examples/durable-counter/Cargo.toml --target wasm32-wasip2
+
+celld-test: rust-build durable-counter-build
+    test -n "${WASMPLANE_CELLD_BIN:-}" || (echo "WASMPLANE_CELLD_BIN must point to celld 0.4.1" >&2; exit 1)
+    WASMPLANE_STANDALONE_BIN=target/debug/wasmplane WASMPLANE_DURABLE_COMPONENT=examples/durable-counter/target/wasm32-wasip2/debug/durable_counter_example.wasm node --experimental-strip-types --test tests/celld-integration.test.ts
+
+# Build a separate guest so benchmarking never replaces the normal counter example.
+celld-bench-build:
+    cargo build --release -p wasmplane-wasip3-host --bin wasmplane
+    rustup target add wasm32-wasip2
+    mkdir -p examples/durable-counter/wit/deps/durable
+    cp wit/durable/objects.wit examples/durable-counter/wit/deps/durable/objects.wit
+    cargo build --manifest-path examples/durable-counter/Cargo.toml --target wasm32-wasip2 --release --features benchmark --target-dir examples/durable-counter/target/benchmark
+
+# Run against disposable local celld; pass --output to save a JSON report.
+celld-bench *args: celld-bench-build
+    node --experimental-strip-types src/celld-bench.ts {{args}}
+
+celld-bench-test: celld-bench-build
+    WASMPLANE_CELLD_BIN="${WASMPLANE_CELLD_BIN:-celld}" WASMPLANE_BENCH_HOST_BIN=target/release/wasmplane node --experimental-strip-types --test tests/celld-bench.test.ts
+
+run component *args:
+    cargo run -p wasmplane-wasip3-host --bin wasmplane -- run {{quote(component)}} {{args}}
+
+serve component *args:
+    cargo run -p wasmplane-wasip3-host --bin wasmplane -- serve {{quote(component)}} {{args}}
+
+# Minimal CLI components: handwritten WAT and a three-line MoonBit implementation.
+minimal-wat-build:
+    mkdir -p examples/minimal-command/target
+    wasm-tools parse examples/minimal-command/command.wat -o examples/minimal-command/target/wat.wasm
+    wasm-tools validate examples/minimal-command/target/wat.wasm
+
+minimal-moonbit-build:
+    wit-bindgen moonbit examples/minimal-command/command.wit --world command --out-dir examples/minimal-command/target/moonbit
+    cp examples/minimal-command/command.mbt examples/minimal-command/target/moonbit/gen/interface/wasi/cli/run/implementation.mbt
+    cd examples/minimal-command/target/moonbit && moon build --target wasm --release
+    wasm-tools component embed examples/minimal-command/command.wit examples/minimal-command/target/moonbit/_build/wasm/release/build/gen/gen.wasm --world command --encoding utf16 -o examples/minimal-command/target/moonbit.embedded.wasm
+    wasm-tools component new examples/minimal-command/target/moonbit.embedded.wasm -o examples/minimal-command/target/moonbit.wasm
+    wasm-tools validate examples/minimal-command/target/moonbit.wasm
+
+minimal-smoke: rust-build minimal-wat-build minimal-moonbit-build
+    WASMPLANE_MINIMAL_BIN=target/debug/wasmplane node --experimental-strip-types --test tests/minimal-command.test.ts
+
 wac-install:
     if command -v wac >/dev/null 2>&1; then wac --version; else cargo install --git "{{ wac_git_url }}" {{ wac_git_ref_arg }} --locked wac-cli; fi
 
-guest-bindings:
-    wit-bindgen rust examples/hello-worker/wit --world worker --out-dir /tmp/wasmplane-wbg --async all
-    cp /tmp/wasmplane-wbg/worker.rs examples/hello-worker/src/bindings.rs
-
-guest-build: deps guest-bindings
-    RUSTC=$(rustup which rustc --toolchain stable) rustup run stable cargo build --manifest-path examples/hello-worker/Cargo.toml --target wasm32-wasip1
-    test -f "{{ wasi_adapter }}"
-    wasm-tools component new "{{ guest_wasm }}" --adapt "{{ wasi_adapter }}" -o "{{ guest_component }}"
+guest-build:
+    rustup target add wasm32-wasip2
+    cargo build --manifest-path examples/hello-worker/Cargo.toml --target wasm32-wasip2
     wasm-tools component wit "{{ guest_component }}" >/dev/null
 
 guest-invoke: rust-build guest-build
@@ -113,20 +191,17 @@ interop-smoke: interop-rust-build interop-moonbit-build
     wasmtime run --invoke 'ping("hello-rust")' "{{ rust_interop_component }}" | grep '"hello-rust"'
     wasmtime run --invoke 'ping("hello-moonbit")' "{{ moonbit_interop_component }}" | grep '"hello-moonbit"'
 
-sample-rust-moonbit-rust-bindings:
-    wit-bindgen rust "{{ sample_rust_moonbit_dir }}/wit/worker.wit" --world worker --out-dir /tmp/wasmplane-rust-moonbit-worker-wbg
-    cp /tmp/wasmplane-rust-moonbit-worker-wbg/worker.rs "{{ sample_rust_moonbit_dir }}/rust-worker/src/bindings.rs"
-
-sample-rust-moonbit-rust-build: sample-rust-moonbit-rust-bindings
-    RUSTC=$(rustup which rustc --toolchain stable) rustup run stable cargo build --manifest-path "{{ sample_rust_moonbit_dir }}/rust-worker/Cargo.toml" --target wasm32-wasip1 --release
-    test -f "{{ wasi_adapter }}"
+sample-rust-moonbit-rust-build:
+    rustup target add wasm32-wasip2
+    cargo build --manifest-path "{{ sample_rust_moonbit_dir }}/rust-worker/Cargo.toml" --target wasm32-wasip2 --release
     mkdir -p "{{ sample_rust_moonbit_dir }}/target"
-    wasm-tools component new "{{ sample_rust_moonbit_rust_wasm }}" --adapt "{{ wasi_adapter }}" -o "{{ sample_rust_moonbit_rust_component }}"
+    cp "{{ sample_rust_moonbit_rust_wasm }}" "{{ sample_rust_moonbit_rust_component }}"
     wasm-tools component wit "{{ sample_rust_moonbit_rust_component }}" >/dev/null
 
 sample-rust-moonbit-moonbit-bindings:
+    rm -f "{{ sample_rust_moonbit_dir }}/moonbit-ping/gen/gen_interface_wasmplane_sample_bridge_export.mbt" "{{ sample_rust_moonbit_dir }}/moonbit-ping/gen/world_ping_world_export.mbt"
     cd "{{ sample_rust_moonbit_dir }}/moonbit-ping" && wit-bindgen moonbit ../wit/ping.wit --world ping-world --out-dir . --derive-show --derive-eq
-    cp "{{ sample_rust_moonbit_dir }}/moonbit-ping/src/ping.mbt" "{{ sample_rust_moonbit_dir }}/moonbit-ping/gen/interface/myedge/runtime/bridge/stub.mbt"
+    cp "{{ sample_rust_moonbit_dir }}/moonbit-ping/src/ping.mbt" "{{ sample_rust_moonbit_dir }}/moonbit-ping/gen/interface/wasmplane/sample/bridge/stub.mbt"
 
 sample-rust-moonbit-moonbit-build: sample-rust-moonbit-moonbit-bindings
     cd "{{ sample_rust_moonbit_dir }}/moonbit-ping" && moon build --target wasm --release
@@ -302,4 +377,4 @@ runtime: rust-build
     pnpm runtime
 
 host-daemon: rust-build
-    target/debug/wasmplane-wasip3-host serve --host 127.0.0.1 --port 8790 --kv-store-dir .wasmplane/kv --max-prepared-components 512 --max-concurrent-invocations 64 --pooling-total-component-instances 64 --pooling-total-core-instances 256 --pooling-total-memories 64 --pooling-total-tables 128 --pooling-memory-mb 64
+    target/debug/wasmplane-wasip3-host serve --host 127.0.0.1 --port 8790 --max-prepared-components 512 --max-concurrent-invocations 64 --pooling-total-component-instances 64 --pooling-total-core-instances 256 --pooling-total-memories 64 --pooling-total-tables 128 --pooling-memory-mb 64

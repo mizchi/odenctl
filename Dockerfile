@@ -20,6 +20,7 @@ COPY src ./src
 COPY db ./db
 COPY wit ./wit
 COPY --from=rust-build /src/target/release/wasmplane-wasip3-host /usr/local/bin/wasmplane-wasip3-host
+COPY --from=rust-build /src/target/release/wasmplane /usr/local/bin/wasmplane
 
 ENV HOST=0.0.0.0 \
   PORT=8080 \

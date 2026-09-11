@@ -65,10 +65,6 @@ resource "google_cloud_run_v2_service" "runtime" {
         value = "/tmp/wasmplane/artifacts"
       }
       env {
-        name  = "WASMPLANE_KV_STORE_DIR"
-        value = "/tmp/wasmplane/kv"
-      }
-      env {
         name  = "WASMPLANE_WASIP3_HOST_BIN"
         value = "/usr/local/bin/wasmplane-wasip3-host"
       }

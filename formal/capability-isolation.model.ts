@@ -43,14 +43,14 @@ export function runCapabilityIsolationModel(): FormalCapabilityIsolationReport {
   return {
     source: [
       "Cloudflare Workers isolate/security model: same-process workers rely on isolate memory boundaries plus API-level capability design",
-      "wit/myedge-runtime.wit: service.fetch(binding, req) imports",
+      "control-plane policy model only; custom guest service/state bindings were removed",
       "src/control-plane/contracts.ts: CapabilityPolicy and normalizeCapabilities",
       "src/control-plane/service.ts and async-service.ts: deployment capability target validation",
       "src/control-plane/admission.ts: service allowlist admission policy",
-      "crates/wasip3-host/src/lib.rs: HostPolicy and WorkerHost service binding enforcement",
+      "crates/wasip3-host/src/main.rs: node rejects removed service/state bindings",
     ],
     tool: "bounded TypeScript capability relation model",
-    scope: "worker-to-worker access, project-scoped state resources, privileged host capabilities, and ambient outbound separation",
+    scope: "control-plane policy only (not WASI network reachability): worker-to-worker access, project-scoped state resources, privileged host capabilities, and ambient outbound separation",
     findings: [],
     sanity: [
       serviceBindingRequiredForWorkerAccess(),

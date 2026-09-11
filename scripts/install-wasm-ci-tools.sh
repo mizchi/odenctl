@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-wasmtime_version="${WASMPLANE_WASMTIME_VERSION:-42.0.1}"
-wasm_tools_version="${WASMPLANE_WASM_TOOLS_VERSION:-1.245.1}"
-wit_bindgen_version="${WASMPLANE_WIT_BINDGEN_VERSION:-0.51.0}"
+wasmtime_version="${WASMPLANE_WASMTIME_VERSION:-48.0.2}"
+wasm_tools_version="${WASMPLANE_WASM_TOOLS_VERSION:-1.259.0}"
+wit_bindgen_version="${WASMPLANE_WIT_BINDGEN_VERSION:-0.62.0}"
 
 case "$(uname -s)-$(uname -m)" in
   Linux-x86_64)
     platform="x86_64-linux"
+    ;;
+  Darwin-arm64)
+    platform="aarch64-macos"
     ;;
   *)
     echo "unsupported CI platform: $(uname -s)-$(uname -m)" >&2

@@ -2,7 +2,7 @@
 
 This sample builds one deployable wasmplane worker from two Component Model projects:
 
-- `rust-worker`: HTTP worker adapter for `myedge:runtime/worker@0.1.0`
+- `rust-worker`: HTTP worker adapter for `wasi:http/service@0.3.0`
 - `moonbit-ping`: MoonBit provider that exports `ping(value) -> value + 7`
 
 The Rust worker imports `ping`, calls it from the HTTP handler, then the build links the MoonBit

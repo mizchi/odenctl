@@ -1,0 +1,10 @@
+{
+  "name": "wasmplane-durable-gateway",
+  "main": "index.js",
+  "compatibility_date": "2026-09-01",
+  "vars": { "WASMPLANE_BINDINGS": "COUNTER" },
+  "durable_objects": {
+    "bindings": [{ "name": "COUNTER", "class_name": "Counter" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Counter"] }]
+}

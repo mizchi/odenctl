@@ -1,0 +1,10 @@
+// The standard WASI CLI entry point; no host imports are needed.
+package wasi:cli@0.2.0;
+
+interface run {
+  run: func() -> result;
+}
+
+world command {
+  export run;
+}

@@ -38,7 +38,6 @@ export interface Wasip3HostBackendOptions {
 export interface Wasip3HostInvokerOptions {
   hostBin?: string;
   hostArgsPrefix?: string[];
-  kvStoreDir?: string;
   commandRunner?: CommandRunner;
 }
 
@@ -101,8 +100,9 @@ export function wasip3HostDaemonRuntimeArgsFromEnv(
   const args: string[] = [];
   appendOptionalArg(args, "--max-prepared-components", env.WASMPLANE_WASIP3_HOST_MAX_PREPARED_COMPONENTS);
   appendOptionalArg(args, "--max-concurrent-invocations", env.WASMPLANE_WASIP3_HOST_MAX_CONCURRENT_INVOCATIONS);
-  appendOptionalArg(args, "--experimental-instance-reuse", env.WASMPLANE_WASIP3_EXPERIMENTAL_INSTANCE_REUSE);
-  appendOptionalArg(args, "--instance-reuse-contract", env.WASMPLANE_WASIP3_INSTANCE_REUSE_CONTRACT);
+  if (env.WASMPLANE_WASIP3_EXPERIMENTAL_INSTANCE_REUSE || env.WASMPLANE_WASIP3_INSTANCE_REUSE_CONTRACT) {
+    throw new RuntimeError("unsupported", "instance reuse was removed; standard WASI requests use a fresh Store");
+  }
   args.push(...poolingArgs);
   return args;
 }
@@ -138,7 +138,7 @@ export function createWasip3HostBackend(options: Wasip3HostBackendOptions): Runt
   const compileArgs = options.compileArgs ?? [];
   const cacheVariant = options.cacheVariant ? `-${safePathFragment(options.cacheVariant)}` : "";
   const wasmToolsBin = options.wasmToolsBin ?? "wasm-tools";
-  const witPath = options.witPath ?? join(process.cwd(), "wit/myedge-runtime.wit");
+  const witPath = options.witPath ?? join(process.cwd(), "wit/standard-http");
   const world = options.world ?? MVP_WORKER_WORLD;
   const validateWorld = options.validateWorld ?? false;
   const commandRunner = options.commandRunner ?? createSpawnCommandRunner();
@@ -161,7 +161,7 @@ export function createWasip3HostBackend(options: Wasip3HostBackendOptions): Runt
         if (validateWorld) {
           await commandRunner.run(
             wasmToolsBin,
-            ["component", "targets", witPath, "--world", world, request.artifact.path],
+            ["component", "targets", witPath, "--world", "service", request.artifact.path],
             { timeoutMs: Math.max(1000, request.limits.wallMs * 2) },
           );
         }
@@ -196,7 +196,6 @@ export function createWasip3HostBackend(options: Wasip3HostBackendOptions): Runt
 export function createWasip3HostInvoker(options: Wasip3HostInvokerOptions = {}): RuntimeInvoker {
   const hostBin = options.hostBin ?? "wasmplane-wasip3-host";
   const hostArgsPrefix = options.hostArgsPrefix ?? [];
-  const kvStoreDir = options.kvStoreDir;
   const commandRunner = options.commandRunner ?? createSpawnCommandRunner();
 
   return {
@@ -216,7 +215,6 @@ export function createWasip3HostInvoker(options: Wasip3HostInvokerOptions = {}):
           "--body",
           Buffer.from(request.body).toString("utf8"),
           ...invokePolicyArgs(request),
-          ...kvStoreArgs(kvStoreDir),
         ], { timeoutMs: request.component.limits?.wallMs });
         return parseInvokeResponse(result.stdout);
       } catch (error) {
@@ -256,7 +254,6 @@ export function createWasip3HostDaemonInvoker(options: Wasip3HostDaemonInvokerOp
                 requestBytes: request.component.limits.requestBytes,
                 responseBytes: request.component.limits.responseBytes,
                 subrequests: request.component.limits.subrequests,
-                hostCalls: request.component.limits.hostCalls,
               }
               : undefined,
             capabilities: request.component.capabilities,
@@ -372,9 +369,6 @@ function requiredCompiledComponent(
   return component;
 }
 
-function kvStoreArgs(kvStoreDir: string | undefined): string[] {
-  return kvStoreDir ? ["--kv-store-dir", kvStoreDir] : [];
-}
 
 function invokePolicyArgs(request: InvokeComponentRequest): string[] {
   const args: string[] = [];
@@ -385,7 +379,6 @@ function invokePolicyArgs(request: InvokeComponentRequest): string[] {
     args.push("--request-bytes", String(request.component.limits.requestBytes));
     args.push("--response-bytes", String(request.component.limits.responseBytes));
     args.push("--subrequests", String(request.component.limits.subrequests));
-    args.push("--host-calls", String(request.component.limits.hostCalls));
   }
   if (request.component.capabilities) {
     args.push("--capabilities", JSON.stringify(request.component.capabilities));

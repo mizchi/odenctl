@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "mode": "service",
+  "component": "target/wasm32-wasip2/debug/service_rust.wasm",
+  "listen": "127.0.0.1:8080",
+  "build": [["cargo", "build", "--locked", "--target", "wasm32-wasip2"]],
+  "watch": ["src", "Cargo.toml", "Cargo.lock", "../../sdk/rust", "../../wit/app", "../../wit/standard-http/deps"],
+  "runtime": { "timeout_ms": 2000, "max_concurrent_requests": 64 },
+  "service": { "startup_timeout_ms": 10000, "shutdown_timeout_ms": 10000 }
+}

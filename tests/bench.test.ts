@@ -48,6 +48,11 @@ test("load benchmark respects configured concurrency", async () => {
   assert.equal(maxActive, 3);
 });
 
+test("sub-millisecond batches keep their measured throughput", () => {
+  assert.equal(summarizeLatencies([0.1, 0.1], 0.5, 0).throughputRps, 4000);
+  assert.equal(summarizeLatencies([], 0, 0).throughputRps, 0);
+});
+
 test("host invoke args include component, request, limits, and capabilities", () => {
   const args = buildHostInvokeArgs({
     componentPath: "/tmp/worker.component.wasm",
@@ -62,7 +67,6 @@ test("host invoke args include component, request, limits, and capabilities", ()
       requestBytes: 1048576,
       responseBytes: 1048576,
       subrequests: 20,
-      hostCalls: 100,
     },
     capabilities: {
       outboundHttp: { enabled: false, allow: [] },

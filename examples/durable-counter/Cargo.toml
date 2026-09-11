@@ -1,0 +1,16 @@
+[package]
+name = "durable-counter-example"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+benchmark = ["dep:futures", "dep:serde_json"]
+
+[dependencies]
+wit-bindgen = { version = "=0.62.0", features = ["async"] }
+futures = { version = "0.3", default-features = false, features = ["alloc"], optional = true }
+serde_json = { version = "1", optional = true }

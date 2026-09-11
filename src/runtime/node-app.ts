@@ -1426,12 +1426,14 @@ function assertRuntime(value: unknown, field: string) {
 
 function assertLimits(value: unknown, field: string) {
   const limits = objectRecord(value, field);
+  if (Object.hasOwn(limits, "hostCalls")) {
+    throw new RuntimeError("validation", `${field}.hostCalls was removed with the custom worker WIT`);
+  }
   positiveInteger(limits.cpuMs, `${field}.cpuMs`);
   positiveInteger(limits.memoryMb, `${field}.memoryMb`);
   positiveInteger(limits.wallMs, `${field}.wallMs`);
   positiveInteger(limits.requestBytes, `${field}.requestBytes`);
   positiveInteger(limits.subrequests, `${field}.subrequests`);
-  positiveInteger(limits.hostCalls, `${field}.hostCalls`);
   positiveInteger(limits.responseBytes, `${field}.responseBytes`);
 }
 

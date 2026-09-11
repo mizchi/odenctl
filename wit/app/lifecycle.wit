@@ -1,0 +1,21 @@
+package wasmplane:app@0.1.0;
+
+/// One instance owns a service generation. HTTP handlers execute serially;
+/// async background tasks may interleave with a handler at await points.
+interface lifecycle {
+  /// Called once before accepting requests. May start background tasks.
+  start: async func() -> result<_, string>;
+  /// Called once after admitted requests drain. Release application resources.
+  /// A trap, deadline or forced shutdown discards the instance without this hook.
+  stop: async func() -> result<_, string>;
+}
+
+world lifecycle-hooks {
+  export lifecycle;
+}
+
+/// Shared application contract for every supported guest language.
+world service {
+  include wasi:http/service@0.3.0;
+  export lifecycle;
+}

@@ -1,0 +1,10 @@
+{
+  "import": [
+    { "path": "wasmplane/service-sdk/async-core", "alias": "async-core" },
+    { "path": "wasmplane/service-sdk/interface/wasi/http/types", "alias": "types" },
+    { "path": "wasmplane/service-sdk/interface/wasi/cli/stdout", "alias": "stdout" },
+    { "path": "wasmplane/service-sdk/interface/wasi/clocks/monotonic-clock", "alias": "clock" },
+    "moonbitlang/core/encoding/utf8"
+  ],
+  "supported-targets": "+wasm"
+}

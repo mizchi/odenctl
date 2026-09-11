@@ -83,7 +83,6 @@ export interface HostInvokeArgsInput {
   body: string;
   limits?: Partial<RuntimeLimits>;
   capabilities?: CapabilityPolicy;
-  kvStoreDir?: string;
 }
 
 const defaultLimits: RuntimeLimits = {
@@ -93,7 +92,6 @@ const defaultLimits: RuntimeLimits = {
   requestBytes: 1048576,
   responseBytes: 1048576,
   subrequests: 20,
-  hostCalls: 100,
 };
 
 const defaultCapabilities: CapabilityPolicy = {
@@ -286,7 +284,7 @@ export function summarizeLatencies(latencies: number[], elapsedMs: number, error
     count,
     errors,
     elapsedMs: round3(elapsedMs),
-    throughputRps: round3(count / Math.max(elapsedMs / 1000, 0.001)),
+    throughputRps: round3(elapsedMs > 0 ? count / (elapsedMs / 1000) : 0),
     minMs: round3(sorted[0] ?? 0),
     avgMs: round3(count === 0 ? 0 : total / count),
     p50Ms: round3(percentile(sorted, 0.50)),
@@ -333,14 +331,8 @@ export function buildHostInvokeArgs(input: HostInvokeArgsInput): string[] {
   if (input.limits?.subrequests !== undefined) {
     args.push("--subrequests", String(input.limits.subrequests));
   }
-  if (input.limits?.hostCalls !== undefined) {
-    args.push("--host-calls", String(input.limits.hostCalls));
-  }
   if (input.capabilities) {
     args.push("--capabilities", JSON.stringify(input.capabilities));
-  }
-  if (input.kvStoreDir) {
-    args.push("--kv-store-dir", input.kvStoreDir);
   }
   return args;
 }

@@ -537,7 +537,7 @@ function seedDeployment(control: any) {
     id: "dep_edge",
     projectId: project.id,
     artifactId: artifact.id,
-    world: "myedge:runtime/worker@0.1.0",
+    world: "wasi:http/service@0.3.0",
     runtime: {
       backend: "wasmtime",
       version: "wasmtime-43",
@@ -549,7 +549,6 @@ function seedDeployment(control: any) {
       wallMs: 1000,
       requestBytes: 1048576,
       subrequests: 20,
-      hostCalls: 100,
       responseBytes: 1048576,
     },
     capabilities: {

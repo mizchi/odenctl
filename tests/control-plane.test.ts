@@ -47,7 +47,7 @@ test("creates immutable wasmtime deployments with denied-by-default host capabil
     id: "dep_hello_v1",
     projectId: project.id,
     artifactId: artifact.id,
-    world: "myedge:runtime/worker@0.1.0",
+    world: "wasi:http/service@0.3.0",
     runtime: {
       backend: "wasmtime",
       version: "wasmtime-43",
@@ -59,7 +59,6 @@ test("creates immutable wasmtime deployments with denied-by-default host capabil
       wallMs: 1000,
       requestBytes: 1048576,
       subrequests: 20,
-      hostCalls: 100,
       responseBytes: 1048576,
     },
     capabilities: {
@@ -85,7 +84,7 @@ test("creates immutable wasmtime deployments with denied-by-default host capabil
         id: "dep_hello_v1",
         projectId: project.id,
         artifactId: artifact.id,
-        world: "myedge:runtime/worker@0.1.0",
+        world: "wasi:http/service@0.3.0",
         runtime: {
           backend: "wasmtime",
           version: "wasmtime-43",
@@ -97,7 +96,6 @@ test("creates immutable wasmtime deployments with denied-by-default host capabil
           wallMs: 1000,
           requestBytes: 1048576,
           subrequests: 20,
-          hostCalls: 100,
           responseBytes: 1048576,
         },
         capabilities: { outboundHttp: { enabled: false, allow: [] }, kv: [], secrets: [] },
@@ -1840,7 +1838,7 @@ test("async control plane preserves deployment validation", async () => {
         id: "dep_missing_secret",
         projectId: project.id,
         artifactId: "art_async",
-        world: "myedge:runtime/worker@0.1.0",
+        world: "wasi:http/service@0.3.0",
         runtime: {
           backend: "wasmtime",
           version: "wasmtime-43",
@@ -1852,7 +1850,6 @@ test("async control plane preserves deployment validation", async () => {
           wallMs: 1000,
           requestBytes: 1048576,
           subrequests: 20,
-          hostCalls: 100,
           responseBytes: 1048576,
         },
         capabilities: {
@@ -1952,8 +1949,8 @@ test("control plane admission policy gates artifacts and deployment capabilities
       requireArtifactSignature: true,
       allowedArtifactSignatureKeyIds: ["ci"],
       maxArtifactSizeBytes: 128,
-      allowedWorlds: ["myedge:runtime/worker@0.1.0"],
-      allowedWorldVersions: ["0.1.0"],
+      allowedWorlds: ["wasi:http/service@0.3.0"],
+      allowedWorldVersions: ["0.3.0"],
       allowedOutboundHttpPrefixes: ["https://api.example.com/v1"],
       allowedKvNamespaceIds: ["kv_allowed"],
       allowedDurableObjectNamespaceIds: ["do_allowed"],
@@ -3558,7 +3555,7 @@ function seedDeployment(id: string, artifactId = "art_v1") {
     id,
     projectId: "prj_hello",
     artifactId,
-    world: "myedge:runtime/worker@0.1.0",
+    world: "wasi:http/service@0.3.0",
     runtime: {
       backend: "wasmtime",
       version: "wasmtime-43",
@@ -3570,7 +3567,6 @@ function seedDeployment(id: string, artifactId = "art_v1") {
       wallMs: 1000,
       requestBytes: 1048576,
       subrequests: 20,
-      hostCalls: 100,
       responseBytes: 1048576,
     },
     capabilities: {

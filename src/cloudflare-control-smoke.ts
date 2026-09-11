@@ -164,7 +164,7 @@ export async function runCloudflareControlSmoke(
     id: input.deploymentId,
     projectId: input.projectId,
     artifactId: input.artifactId,
-    world: "myedge:runtime/worker@0.1.0",
+    world: "wasi:http/service@0.3.0",
     runtime: {
       backend: "wasmtime",
       version: "wasmtime-43",
@@ -176,7 +176,6 @@ export async function runCloudflareControlSmoke(
       wallMs: 1000,
       requestBytes: 1048576,
       subrequests: 20,
-      hostCalls: 100,
       responseBytes: 1048576,
     },
     capabilities: {

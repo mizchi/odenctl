@@ -3,7 +3,18 @@
 この文書は、wasmplane の現時点の設計をまとめる。前提は WASIp3 と
 Wasmtime component model で、WIT をプラットフォーム API の契約として扱う。
 
-## Goal
+## 採用する方向性（2026-09-11）
+
+単体で起動できる Wasm アプリランタイムを核にし、control plane からも同じ runtime core を
+利用する。Wasmtime は upstream 最新安定版または `mizchi/wasmtime-threads` を使う。
+Wasmtime 48.0.2 を採用し、`denoland/celld` の Durable Objects へ接続する gateway adapter を実装した。
+
+責務の分離、engine の選定、celld の契約と検証順序は
+[Standalone Wasm runtime direction](docs/runtime-direction.md) にまとめる。
+単体 CLI、権限設定、celld のローカル検証手順は [runtime guide](docs/standalone-runtime.md) を参照。
+旧独自 worker WIT は削除し、node adapter も標準 WASI HTTP を呼ぶ。以下は control plane の設計。
+
+## Current implementation goals
 
 wasmplane は、Cloudflare Workers に近い運用モデルを Wasmtime 上で構成するための
 Wasm hosting control plane である。主な目標は次の通り。
@@ -209,16 +220,13 @@ daemon の責務:
 - shared Wasmtime `Engine` を保持する
 - LRU-bounded prepared component cache を保持する
 - `.cwasm` を deserialize して instantiate する
-- default では request ごとに fresh `Store` / Instance を作る
+- request ごとに fresh `Store` / Instance を作る
 - WIT host imports を提供する
 - admission control で in-flight invoke 数を制御する
 - `/stats` と `/metrics` を公開する
 
-Store/Instance reuse は `--experimental-instance-reuse` / `WASMPLANE_WASIP3_EXPERIMENTAL_INSTANCE_REUSE`
-で明示的に有効化する実験機能である。成功した invocation の Store/Instance だけを idle pool に戻し、
-trap/timeout/error した instance は破棄する。component model は guest memory/global state を自動 reset
-しないため、production default は `WorkerPre` cache + fresh Store/Instance per request のままとし、
-reuse は stateless worker benchmark 用に限定する。高密度化の標準 path は Wasmtime pooling allocator で行う。
+request ごとに fresh Store/Instance を作る。prepared component の LRU と Wasmtime pooling allocator は
+継続利用する。旧独自 WIT の Store reuse/reset 契約は削除した。
 
 daemon endpoints:
 
@@ -249,36 +257,13 @@ cache variant を揃える。
 worker は arbitrary filesystem, arbitrary sockets, process spawn, arbitrary env を受け取らない。
 host capability は deployment policy として明示的に渡す。
 
-現在の capability:
+Wasm node で付与できる capability は標準 WASI HTTP outbound の origin allowlist。
+path prefix と redirect の自動追跡は使わない。旧 KV / Secrets / Durable storage / service binding は
+削除したため、有効な設定が渡された場合は拒否する。control-plane resource 管理と KMS、
+Node 側の storage facade は独立した API として残る。
 
-- outbound HTTP allowlist
-- KV namespace binding
-- secret binding
-- durable object namespace binding
-- service binding
-
-outbound HTTP は URL scheme/host/port/path prefix で検証し、redirect 先も再検証する。
-private/loopback/link-local address への DNS rebinding は拒否する。HTTPS から HTTP への downgrade
-redirect も拒否する。
-
-KV は binding name から physical namespace へ解決する。secret は binding name から secret handle
-を開き、`reveal` で host-loaded value を返す。secret value は route snapshot に載せず、API response
-にも出さない。control plane は configured secret cipher がある場合、repository persistence 前に
-secret value を AES-256-GCM envelope に暗号化する。runtime が repository-backed secrets を読む場合は、
-同じ KMS key 設定で envelope を復号してから worker binding に渡す。既存 plaintext secret は移行のため
-runtime 側でそのまま読める。envelope には key id を持たせ、復号は configured keyring から key id で
-選ぶ。online rotation では新 primary key で暗号化しつつ、旧 key を decrypt-only keyring に残す。
-external KMS は command provider 契約で接続し、provider は primary key id と decrypt keyring の JSON を
-返す。AWS KMS adapter は KMS ciphertext blob として wrap された data key を起動時に `Decrypt` で
-unwrap し、以後は in-memory data keyring で AES-GCM envelope を処理する。GCP Cloud KMS adapter は
-`cryptoKeys.decrypt`、Azure Key Vault adapter は `keys/{name}/{version}/decrypt` を使って同じ data key
-を unwrap する。
-
-service binding は `service.fetch(binding, req)` だけを worker-to-worker 呼び出し API として公開する。
-guest は target process や deployment 一覧を受け取らない。control plane は `binding`, `targetProjectId`,
-`url` を deployment contract に保存し、target project の存在と admission allowlist を検証する。runtime
-host は binding 名を internal service URL に解決し、guest が渡す URI は origin-form path/query のみ受け付ける。
-したがって outbound HTTP allowlist は外部 HTTP 用の capability であり、service access とは別の権限として扱う。
+standalone は環境変数・preopen directory を明示設定でき、celld の actor 呼び出しには
+`wasmplane:durable/objects@0.1.0` を使う。詳細は [runtime guide](docs/standalone-runtime.md)。
 
 ## Limits
 
@@ -289,7 +274,6 @@ deployment limits は runtime と host に渡される。
 - request bytes
 - response bytes
 - subrequest count
-- host call count
 - cpuMs
 
 `cpuMs` は Wasmtime epoch interruption で enforce する compute budget である。runtime は
@@ -509,13 +493,13 @@ node-local `.cwasm` cache、OTEL/metrics を運用できる基盤を優先する
   dead-letter/replay UI は未実装
 - Fly autoscaler lease/cooldown は in-memory/SQLite/Postgres store に対応したが、provider idempotency
   metadata は未実装
-- Store/Instance reuse は experimental flag のみで、guest state reset contract は未実装
+- node JSON/route adapter は body を上限内で蓄積する。standalone HTTP は streaming 対応
 - weekly perf regression は fixed budget check と任意の historical median trend check に対応したが、
   GitHub Actions 上で過去 artifact を自動取得する処理は未実装
 
 ## Next Implementation Priorities
 
-1. Safe guest reset contract for instance reuse
+1. celld fleet ownership transfer and recovery validation
 2. Provider idempotency metadata for autoscaling
 3. Durable route snapshot replica store
 4. Managed identity token providers for GCP/Azure KMS

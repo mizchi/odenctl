@@ -1,7 +1,7 @@
 import { ControlPlaneError } from "./errors.ts";
 
-export const MVP_WORKER_WORLD = "myedge:runtime/worker@0.1.0";
-export const MVP_WORKER_WORLD_VERSION = "0.1.0";
+export const MVP_WORKER_WORLD = "wasi:http/service@0.3.0";
+export const MVP_WORKER_WORLD_VERSION = "0.3.0";
 export const MVP_WASI_PROFILE = "wasip3";
 export const MVP_WASI_VERSION = MVP_WASI_PROFILE;
 export const MVP_RUNTIME_BACKEND = "wasmtime";
@@ -278,7 +278,6 @@ export interface RuntimeLimits {
   wallMs: number;
   requestBytes: number;
   subrequests: number;
-  hostCalls: number;
   responseBytes: number;
 }
 
@@ -920,13 +919,15 @@ export function normalizeRuntime(value: unknown): RuntimeSpec {
 
 export function normalizeLimits(value: unknown): RuntimeLimits {
   const record = objectRecord(value, "limits");
+  if (Object.hasOwn(record, "hostCalls")) {
+    throw new ControlPlaneError("validation", "limits.hostCalls was removed with the custom worker WIT");
+  }
   return {
     cpuMs: positiveInteger(record.cpuMs, "limits.cpuMs"),
     memoryMb: positiveInteger(record.memoryMb, "limits.memoryMb"),
     wallMs: positiveInteger(record.wallMs, "limits.wallMs"),
     requestBytes: positiveInteger(record.requestBytes, "limits.requestBytes"),
     subrequests: positiveInteger(record.subrequests, "limits.subrequests"),
-    hostCalls: positiveInteger(record.hostCalls, "limits.hostCalls"),
     responseBytes: positiveInteger(record.responseBytes, "limits.responseBytes"),
   };
 }

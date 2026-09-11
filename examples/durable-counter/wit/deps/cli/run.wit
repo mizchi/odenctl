@@ -1,0 +1,5 @@
+// The wasi:cli/run@0.3.0 contract, used by the example entry point.
+package wasi:cli@0.3.0;
+interface run {
+  run: async func() -> result;
+}

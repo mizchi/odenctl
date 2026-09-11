@@ -1,8 +1,12 @@
 [workspace]
-members = ["crates/wasip3-host"]
+members = ["crates/runtime-core", "crates/wasip3-host"]
 exclude = [
+  "sdk/rust",
+  "examples/service-rust",
+  "examples/standard-http",
+  "examples/standard-http-p3",
+  "examples/durable-counter",
   "examples/hello-worker",
-  "examples/reset-worker",
   "examples/rust-interop",
   "examples/rust-moonbit-release/rust-worker",
   "examples/rust-moonbit-release/rust-wac-caller",

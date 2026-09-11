@@ -1,0 +1,9 @@
+[package]
+name = "wasmplane-service-sdk"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+wasip3 = { version = "=0.9.0", features = ["async-spawn"] }
+wit-bindgen = { version = "=0.62.0", features = ["async"] }

@@ -421,15 +421,15 @@ function routeSnapshot(projectIds: string[]): RouteSnapshot {
       targets: [{
         deploymentId: `dep_${projectId}`,
         weight: 100,
-        world: "myedge:runtime/worker@0.1.0",
-        worldVersion: "0.1.0",
+        world: "wasi:http/service@0.3.0",
+        worldVersion: "0.3.0",
         runtime: { backend: "wasmtime", version: "wasmtime-43", wasi: "wasip3" },
         limits: limits(),
         capabilities: capabilities(),
         artifact: artifact(projectId),
       }],
-      world: "myedge:runtime/worker@0.1.0",
-      worldVersion: "0.1.0",
+      world: "wasi:http/service@0.3.0",
+      worldVersion: "0.3.0",
       runtime: { backend: "wasmtime", version: "wasmtime-43", wasi: "wasip3" },
       limits: limits(),
       capabilities: capabilities(),
@@ -446,7 +446,6 @@ function limits() {
     requestBytes: 1048576,
     responseBytes: 1048576,
     subrequests: 20,
-    hostCalls: 100,
   };
 }
 

@@ -1,6 +1,29 @@
 # wasmplane
 
-`wasmplane` is an early control plane for a WIT-defined Wasm hosting platform.
+[利用者向けドキュメント（日本語）](docs/README.md) · [クイックスタート](docs/getting-started.md)
+
+`wasmplane` is a standalone Wasm application runtime with an optional control plane.
+The Rust runtime uses Wasmtime **48.0.2**, supports WASIp2/WASIp3 command and HTTP components,
+and includes an authenticated gateway adapter for celld Durable Objects.
+The [Durable Objects example](examples/durable-counter/README.md) calls its WIT interface from WAT or Rust.
+See the [standalone runtime guide](docs/standalone-runtime.md) for configuration and examples,
+and the [runtime direction](docs/runtime-direction.md) for the architecture and remaining work.
+Resident services, application manifests, `build/start/dev`, and the Rust/MoonBit SDKs are described
+in the [service runtime guide](docs/service-runtime.md).
+
+```sh
+just rust-build
+target/debug/wasmplane run ./app.wasm -- arg1
+target/debug/wasmplane serve ./http.wasm --addr 127.0.0.1:8080 --config runtime.json
+just standalone-test
+just app-dev examples/service-rust/app.json
+just service-test
+```
+
+The standalone runtime takes Wasm components as input. JS/TS execution and Node.js API compatibility
+are future work. `pnpm wasmplane` remains the control-plane management CLI.
+
+The control plane provides deployment and routing for WIT-defined workers.
 The MVP follows the design memo in `/Users/mz/Downloads/wasi-edge-worker-platform-design.md`:
 
 - WIT is the platform contract.
@@ -248,8 +271,6 @@ Runtime nodes can bound warm prepared deployments with a packing policy:
 `RUNTIME_PACKING_MAX_WARM_DEPLOYMENTS_PER_PROJECT` caps each project independently, and
 `RUNTIME_PACKING_MAX_IDLE_DEPLOYMENT_AGE_MS` evicts idle prepared deployments by age. Eviction uses
 least-recently-used order while protecting the deployment currently being prepared.
-Set `WASMPLANE_KV_STORE_DIR` to choose the host-side persistent KV directory; the default is
-`.wasmplane/kv`.
 Set `WASMPLANE_WASIP3_HOST_DAEMON=1` to make the Node runtime start a local embedded Rust
 Wasmtime daemon and invoke warmed `.cwasm` components over `POST /invoke` instead of spawning
 `wasmplane-wasip3-host invoke` for every worker request. The daemon keeps a shared Wasmtime
@@ -258,16 +279,7 @@ Wasmtime daemon and invoke warmed `.cwasm` components over `POST /invoke` instea
 Use `WASMPLANE_WASIP3_HOST_MAX_CONCURRENT_INVOCATIONS` to cap in-flight host invocations before
 Wasmtime instantiation; the default is 128. The daemon also exposes `GET /stats` for compact JSON
 pressure counters and `GET /metrics` for Prometheus-format host metrics.
-`WASMPLANE_WASIP3_EXPERIMENTAL_INSTANCE_REUSE` sets the maximum idle Store/Instance reuse pool per
-prepared component, but reuse is inactive unless the daemon also receives
-`WASMPLANE_WASIP3_INSTANCE_REUSE_CONTRACT=stateless-v1` or `guest-reset-v1`. The `stateless-v1`
-contract is an explicit workload-author promise for benchmarking and trusted stateless workers:
-guest memory and globals are not reset by the component model. The stricter `guest-reset-v1`
-contract requires a top-level component export named `wasmplane-reset` with type `func() -> ()`;
-the daemon calls it after a successful `handle` call and only returns the instance to the idle pool
-when reset succeeds. Stateful or untrusted workloads should use `guest-reset-v1` or keep the default
-isolated-per-request instantiation path. Use `WASMPLANE_WASIP3_INSTANCE_REUSE_CONTRACT=disabled` or
-omit it to force isolated instances even when the pool size env is present.
+Every request uses a fresh Store/Instance. The custom instance reuse/reset contracts were removed.
 When the runtime is configured with `WASMPLANE_WASIP3_HOST_DAEMON=1` or
 `WASMPLANE_WASIP3_HOST_DAEMON_URL`, `GET /__runtime/metrics` includes the daemon `/stats` payload
 under `hostDaemon`.
@@ -628,26 +640,18 @@ Strict `wasm-tools component targets` validation is available as an opt-in backe
 is not the default because WASI-adapted Rust components include additional WASI imports that the
 host linker satisfies.
 
-Runtime invocation enforces the route snapshot contract before calling guest code. The runtime node
-rejects privileged capabilities (`arbitraryFilesystem`, `arbitrarySockets`, `processSpawn`) and
-passes denied-by-default capability policy to the Rust host. The Rust host applies Wasmtime memory
-limits, wall-clock and `cpuMs` interruption through Wasmtime epoch deadlines, request and response
-byte limits, KV namespace allowlists, Durable Object namespace allowlists, outbound HTTP
-allowlists, service binding allowlists, host API call counters, and subrequest counters. `cpuMs` uses epoch-tick compute budgeting rather than kernel CPU-time
-accounting; CPU budget exits are reported as `503 cpu_limit`, while wall-clock exits remain
-`504 timeout`.
-Guest components resolve configured capability bindings through WIT handles: `kv.open-namespace`
-maps a binding name such as `MAIN` to its physical namespace, and `secrets.open-secret` returns a
-secret handle whose `reveal` operation is backed by host-loaded secret values. Secret values are
-redacted from host logs. KV `get`/`put`/`delete` operations are backed by a host-side persistent
-store when `--kv-store-dir`/`WASMPLANE_KV_STORE_DIR` is configured, including TTL expiry.
-`durable.open-object(binding, name)` opens object-local storage under a configured
-`durableObjects` binding. Its `get`/`put`/`delete` operations use the same host-side persistent
-store today, scoped by namespace and object name, so it provides a Durable Objects-style API surface
-for Wasm workers while the SQLite-backed Node facade remains available for control-plane code.
-Worker-to-worker calls use `service.fetch(binding, req)`. The Rust host resolves only configured
-`services` bindings, rejects unknown bindings with 403, and treats outbound HTTP allowlists as a
-separate capability from service access.
+Runtime nodes execute standard `wasi:http/service@0.3.0` components. The custom worker WIT,
+KV/Secrets/storage/service host imports, host-call counter, and guest reset ABI were removed.
+Old components and snapshots need to be rebuilt and deployed with `worldVersion: "0.3.0"`.
+Configured legacy guest bindings are rejected; the control-plane resource management APIs remain.
+The new celld actor binding is available through standalone runtime configuration.
+
+The node adapter applies memory limits, request/response byte limits, outbound origin allowlists,
+subrequest counters, and a deadline through body completion. `cpuMs` remains a conservative elapsed-time
+cap including I/O. Standard WASI bodies stream between guest and host; the existing node JSON/route
+transport collects them within its limits. Use `wasmplane serve` for streaming to the network client.
+See [node contracts and migration](docs/standalone-runtime.md#control-plane-からの実行).
+
 The control plane stores local secret values through `POST /secrets`, but all public API responses
 return only secret metadata. Set `WASMPLANE_SECRET_KMS_KEY_BASE64` to a 32-byte base64 key to store
 secret values as `wasmplane:v1:aes-256-gcm:*` envelopes before repository persistence. For local
@@ -863,7 +867,7 @@ every request. When the daemon uses Wasmtime pooling, pass the same `--pooling-*
 settings.
 
 CI runs `just test` and `just e2e` on GitHub Actions. The workflow installs Node 24, Rust stable,
-`wasm32-wasip1`, `wasm-tools 1.245.1`, and `wit-bindgen-cli 0.51.0`.
+`wasm32-wasip1`, `wasm-tools 1.259.0`, and `wit-bindgen-cli 0.62.0`.
 Weekly performance regression runs are configured in `.github/workflows/perf.yml` and can be
 reproduced locally with `just perf-regression`. The job writes `perf-results/bench.json`,
 `perf-results/cluster-bench.json`, and `perf-results/perf-regression.md`, then checks them against
@@ -942,16 +946,17 @@ the route, then publishes a route snapshot unless `--no-publish` is passed. Limi
 snapshot before deploying and include JSON diff output for the route pointer, rollout targets,
 runtime version, limits, outbound allowlist, KV bindings, secret bindings, and service bindings.
 
-Worker projects can be bootstrapped from the canonical WIT package with generated SDK helpers:
+Rust worker projects use standard WASIp3 bindings:
 
 ```sh
 pnpm wasmplane new --language rust --name hello-worker --out workers/hello
-pnpm wasmplane new --language typescript --name hello-worker-ts --out workers/hello-ts
+cd workers/hello
+just build
 ```
 
-The templates copy `wit/myedge-runtime.wit` to `wit/world.wit`, generate small helper modules
-(`src/wasmplane.rs` or `src/wasmplane.ts`), and include build scripts for `wit-bindgen`/`wasm-tools`
-or `jco componentize`.
+The template uses the `wasip3` crate and the `wasm32-wasip2` target. HTTP exports are WASI 0.3;
+Rust standard-library imports are WASI 0.2. No custom WIT generation is required.
+The old TypeScript component template was removed.
 
 ## Rust and MoonBit WASI p3 interop
 
@@ -975,7 +980,7 @@ just interop-smoke
 The smoke test builds `examples/rust-interop` with `wit-bindgen rust` and
 `examples/moonbit-interop` with `wit-bindgen moonbit`, then invokes both components through
 `wasmtime run --invoke`. This is the current MoonBit-to-Wasmtime ABI round-trip baseline. The full
-`myedge:runtime/worker@0.1.0` world still stays Rust/TypeScript-only until MoonBit bindings handle
+`wasi:http/service@0.3.0` world still stays Rust/TypeScript-only until MoonBit bindings handle
 the async resource-heavy worker API cleanly.
 
 For local development, run a control plane and runtime node, then use `dev` to validate the
@@ -1002,7 +1007,7 @@ unless `--no-validate` is passed, publishes to `PUT /__runtime/snapshots/routes`
 `examples/rust-moonbit-release` contains a real deployable sample that composes two Component Model
 projects into one wasmplane runtime worker:
 
-- Rust `rust-worker` exports the HTTP `handle` function for `myedge:runtime/worker@0.1.0`
+- Rust `rust-worker` exports the HTTP `handle` function for `wasi:http/service@0.3.0`
 - MoonBit `moonbit-ping` exports `ping(value) -> value + 7`
 - The build links MoonBit into the Rust worker so the deployed response proves the cross-language
   call path

@@ -31,8 +31,6 @@ test("rust daemon benchmark args parse route and pooling settings", () => {
     "64",
     "--http-workers",
     "32",
-    "--instance-reuse-contract",
-    "guest-reset-v1",
   ]);
 
   assert.equal(options.componentPath, "worker.component.wasm");
@@ -54,8 +52,6 @@ test("rust daemon benchmark args parse route and pooling settings", () => {
     "64",
     "--http-workers",
     "32",
-    "--instance-reuse-contract",
-    "guest-reset-v1",
   ]);
 });
 

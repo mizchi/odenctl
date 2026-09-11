@@ -161,8 +161,8 @@ function snapshotWithRoute(): RouteSnapshot {
       targets: [{
         deploymentId: "dep_hello",
         weight: 100,
-        world: "myedge:runtime/worker@0.1.0",
-        worldVersion: "0.1.0",
+        world: "wasi:http/service@0.3.0",
+        worldVersion: "0.3.0",
         runtime: { backend: "wasmtime", version: "wasmtime-43", wasi: "wasip3" },
         limits: {
           cpuMs: 50,
@@ -170,7 +170,6 @@ function snapshotWithRoute(): RouteSnapshot {
           wallMs: 1000,
           requestBytes: 1048576,
           subrequests: 20,
-          hostCalls: 100,
           responseBytes: 1048576,
         },
         capabilities: {
@@ -187,8 +186,8 @@ function snapshotWithRoute(): RouteSnapshot {
           location: "file:///tmp/worker.wasm",
         },
       }],
-      world: "myedge:runtime/worker@0.1.0",
-      worldVersion: "0.1.0",
+      world: "wasi:http/service@0.3.0",
+      worldVersion: "0.3.0",
       runtime: { backend: "wasmtime", version: "wasmtime-43", wasi: "wasip3" },
       limits: {
         cpuMs: 50,
@@ -196,7 +195,6 @@ function snapshotWithRoute(): RouteSnapshot {
         wallMs: 1000,
         requestBytes: 1048576,
         subrequests: 20,
-        hostCalls: 100,
         responseBytes: 1048576,
       },
       capabilities: {

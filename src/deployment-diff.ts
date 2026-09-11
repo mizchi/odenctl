@@ -108,7 +108,6 @@ function addLimitChanges(
       "requestBytes",
       "responseBytes",
       "subrequests",
-      "hostCalls",
     ] as const
   ) {
     addChange(changes, `limits.${key}`, before?.[key], after[key]);

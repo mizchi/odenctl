@@ -1,88 +1,48 @@
-#[allow(warnings)]
-mod bindings;
+use wasip3::http::types::{ErrorCode, Fields, Method, Request, Response, Scheme};
+use wasip3::{wit_bindgen, wit_future, wit_stream};
 
-use bindings::Guest;
-use bindings::myedge::runtime::http::{OutgoingBody, Request, Response, new_outgoing_body};
-use bindings::myedge::runtime::types::{Header, ResponseHead};
-use bindings::myedge::runtime::{durable, kv, outbound, secrets};
+struct App;
+wasip3::http::service::export!(App);
 
-struct Component;
-
-impl Guest for Component {
-    async fn handle(req: Request) -> Response {
-        let body = new_outgoing_body().await;
-        let payload = if req.head.uri.ends_with("/capabilities") {
-            capability_payload(&req).await
-        } else {
-            format!("hello from wasmplane: {} {}", req.head.method, req.head.uri)
-        };
-        OutgoingBody::write(&body, payload.into_bytes()).await;
-        OutgoingBody::finish(&body).await;
-
-        Response {
-            head: ResponseHead {
-                status: 200,
-                headers: vec![Header {
-                    name: "content-type".to_string(),
-                    value: "text/plain".to_string(),
-                }],
-            },
-            body,
+impl wasip3::exports::http::handler::Guest for App {
+    async fn handle(request: Request) -> Result<Response, ErrorCode> {
+        let path = request.get_path_with_query().unwrap_or_else(|| "/".into());
+        if path == "/spin" { loop { std::hint::spin_loop(); } }
+        if path == "/trap" { panic!("test guest trap"); }
+        if path == "/fetch" {
+            let url = request.get_headers().get("x-upstream-url").into_iter().next()
+                .and_then(|bytes| String::from_utf8(bytes).ok()).ok_or(ErrorCode::HttpRequestUriInvalid)?;
+            let (scheme, rest) = if let Some(rest) = url.strip_prefix("http://") { (Scheme::Http, rest) }
+                else if let Some(rest) = url.strip_prefix("https://") { (Scheme::Https, rest) }
+                else { return Err(ErrorCode::HttpRequestUriInvalid); };
+            let (authority, path) = rest.split_once('/').unwrap_or((rest, ""));
+            let (tx, trailers) = wit_future::new(|| Ok(None));
+            drop(tx);
+            let (outbound, _sent) = Request::new(Fields::new(), None, trailers, None);
+            outbound.set_scheme(Some(&scheme)).unwrap();
+            outbound.set_authority(Some(authority)).unwrap();
+            outbound.set_path_with_query(Some(&format!("/{path}"))).unwrap();
+            return wasip3::http::client::send(outbound).await;
         }
+        let method = match request.get_method() {
+            Method::Get => "GET".into(), Method::Post => "POST".into(), Method::Put => "PUT".into(),
+            Method::Delete => "DELETE".into(), Method::Head => "HEAD".into(), Method::Patch => "PATCH".into(),
+            Method::Options => "OPTIONS".into(), Method::Connect => "CONNECT".into(), Method::Trace => "TRACE".into(),
+            Method::Other(method) => method,
+        };
+        let authority = request.get_authority().unwrap_or_default();
+        let scheme = match request.get_scheme() { Some(Scheme::Https) => "https", _ => "http" };
+        Ok(text_response(format!("hello from wasmplane: {method} {scheme}://{authority}{path}")))
     }
 }
 
-async fn capability_payload(req: &Request) -> String {
-    let kv_value = match kv::open_namespace("MAIN".to_string()).await {
-        Some(namespace) => {
-            kv::put(&namespace, "probe".to_string(), b"checked".to_vec(), None).await;
-            kv::get(&namespace, "probe".to_string())
-                .await
-                .and_then(|value| String::from_utf8(value).ok())
-                .unwrap_or_else(|| "missing".to_string())
-        }
-        None => "missing".to_string(),
-    };
-    let secret_len = match secrets::open_secret("API_KEY".to_string()).await {
-        Some(secret) => secrets::reveal(&secret).await.len(),
-        None => 0,
-    };
-    let durable_value = match durable::open_object("ROOMS".to_string(), "lobby".to_string()).await {
-        Some(object) => {
-            durable::put(&object, "probe".to_string(), b"checked".to_vec()).await;
-            let deleted = durable::delete(&object, "probe-delete".to_string()).await;
-            durable::get(&object, "probe".to_string())
-                .await
-                .and_then(|value| String::from_utf8(value).ok())
-                .map(|value| format!("{value}/deleted={deleted}"))
-                .unwrap_or_else(|| "missing".to_string())
-        }
-        None => "missing".to_string(),
-    };
-    let outbound_value = match header(req, "x-upstream-url") {
-        Some(uri) => {
-            let response = outbound::fetch(outbound::Request {
-                method: "GET".to_string(),
-                uri,
-                headers: Vec::new(),
-                body: Vec::new(),
-            })
-            .await;
-            String::from_utf8(response.body).unwrap_or_else(|_| "invalid".to_string())
-        }
-        None => "missing".to_string(),
-    };
-    format!(
-        "capabilities: kv={kv_value} durable={durable_value} secret-len={secret_len} outbound={outbound_value}"
-    )
+fn text_response(text: String) -> Response {
+    let (mut writer, reader) = wit_stream::new();
+    let (tx, trailers) = wit_future::new(|| Ok(None));
+    drop(tx);
+    let fields = Fields::new();
+    fields.set("content-type", &[b"text/plain; charset=utf-8".to_vec()]).unwrap();
+    let (response, _sent) = Response::new(fields, Some(reader), trailers);
+    wit_bindgen::spawn_local(async move { let _ = writer.write_all(text.into_bytes()).await; });
+    response
 }
-
-fn header(req: &Request, name: &str) -> Option<String> {
-    req.head
-        .headers
-        .iter()
-        .find(|header| header.name.eq_ignore_ascii_case(name))
-        .map(|header| header.value.clone())
-}
-
-bindings::export!(Component with_types_in bindings);

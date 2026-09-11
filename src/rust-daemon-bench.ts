@@ -81,7 +81,6 @@ const defaultLimits: RuntimeLimits = {
   requestBytes: 1048576,
   responseBytes: 1048576,
   subrequests: 20,
-  hostCalls: 100,
 };
 
 const defaultCapabilities: CapabilityPolicy = {
@@ -108,8 +107,6 @@ const daemonOnlyFlags = new Set([
   "--max-prepared-components",
   "--max-concurrent-invocations",
   "--http-workers",
-  "--experimental-instance-reuse",
-  "--instance-reuse-contract",
 ]);
 
 export function parseRustDaemonBenchArgs(args: string[]): RustDaemonBenchOptions {
@@ -251,7 +248,6 @@ export async function runRustDaemonBenchmarkSuite(
   const componentPath = requireComponent(options);
   const workDir = await mkdtemp(join(tmpdir(), "wasmplane-rust-daemon-bench-"));
   const precompiledPath = join(workDir, "worker.component.cwasm");
-  const kvStoreDir = join(workDir, "kv");
   await runCommand(
     options.hostBin,
     ["compile", "--component", componentPath, "--out", precompiledPath, ...options.poolingArgs],
@@ -264,8 +260,6 @@ export async function runRustDaemonBenchmarkSuite(
     "127.0.0.1",
     "--port",
     String(options.port),
-    "--kv-store-dir",
-    kvStoreDir,
     ...options.daemonRuntimeArgs,
   ], { stdio: ["ignore", "pipe", "pipe"] });
   const target = `http://127.0.0.1:${options.port}`;

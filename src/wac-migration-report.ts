@@ -84,7 +84,7 @@ export interface WacSource {
 }
 
 const DEFAULT_TIMEOUT_MS = 120_000;
-const DEFAULT_RUNTIME_WORKER_WIT = "examples/rust-moonbit-release/wit/worker.wit";
+const DEFAULT_RUNTIME_WORKER_WIT = "wit/standard-http/deps/http.wit";
 
 export function evaluateWacMigrationReport(input: WacMigrationReportInput): WacMigrationReport {
   const runtimeWorld = input.runtimeWorld ?? unknownRuntimeWorkerWitAnalysis(DEFAULT_RUNTIME_WORKER_WIT);

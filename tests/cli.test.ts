@@ -101,7 +101,6 @@ test("CLI deploy flow uploads component, creates deployment, points route, and p
       requestBytes: 1048576,
       responseBytes: 1048576,
       subrequests: 20,
-      hostCalls: 100,
     },
     capabilities: {
       outboundHttp: { enabled: true, allow: ["https://api.example.dev/v1/"] },
@@ -563,7 +562,7 @@ test("CLI new worker command materializes a template", async () => {
 
   assert.equal(result.language, "rust");
   assert.equal(result.outDir, outDir);
-  assert.ok(result.files.some((file: any) => file.path === "wit/world.wit"));
+  assert.ok(result.files.some((file: any) => file.path === "src/lib.rs"));
 });
 
 test("CLI migrate args parse explicit SQLite path", () => {
@@ -764,7 +763,6 @@ function snapshotRoute(input: {
     requestBytes: 1048576,
     responseBytes: 1048576,
     subrequests: 20,
-    hostCalls: 100,
   };
   const capabilities = {
     outboundHttp: { enabled: false, allow: [] },

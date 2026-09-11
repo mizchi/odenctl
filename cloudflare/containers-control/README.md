@@ -67,9 +67,9 @@ curl -sS -X POST "$BASE/deployments" \
     "id":"dep_edge",
     "projectId":"prj_edge",
     "artifactId":"art_edge",
-    "world":"myedge:runtime/worker@0.1.0",
-    "runtime":{"backend":"wasmtime","version":"wasmtime-43","wasi":"wasip3"},
-    "limits":{"cpuMs":50,"memoryMb":64,"wallMs":1000,"requestBytes":1048576,"subrequests":20,"hostCalls":100,"responseBytes":1048576},
+    "world":"wasi:http/service@0.3.0",
+    "runtime":{"backend":"wasmtime","version":"wasmtime-48.0.2","wasi":"wasip3"},
+    "limits":{"cpuMs":50,"memoryMb":64,"wallMs":1000,"requestBytes":1048576,"subrequests":20,"responseBytes":1048576},
     "capabilities":{"outboundHttp":{"enabled":false,"allow":[]},"kv":[],"durableObjects":[],"secrets":[],"services":[]}
   }'
 

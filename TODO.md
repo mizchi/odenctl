@@ -1,6 +1,23 @@
 # TODO
 
-Production readiness tasks, in implementation order.
+The current priority is the [standalone Wasm runtime direction](docs/runtime-direction.md).
+The numbered production-readiness sections below retain the existing implementation backlog.
+
+## Standalone runtime priorities (2026-09-11)
+
+- [x] Adopt Wasmtime 48.0.2 with aligned dependencies, wasm-tools 1.259.0 and wit-bindgen 0.62.0.
+- [x] Preserve existing worker/composition behavior and isolate `.cwasm` caches by engine source, revision, configuration, target, and host build.
+- [x] Extract a runtime core usable by both a standalone CLI and runtime nodes, without requiring a control-plane DB.
+- [x] Support standard WASI command/HTTP worlds in standalone and node adapters.
+- [x] Add asynchronous standard WASI HTTP with bounded streams, cancellation and cooperative CPU yielding.
+- [x] Share standard asynchronous WASI HTTP execution with the control-plane node adapter.
+- [x] Delete the custom worker WIT, host imports, generated bindings, reset ABI, and TypeScript template; migrate Rust examples and deployment worlds to WASI HTTP 0.3.
+- [ ] Stream bodies through the control-plane node JSON/route transport; guest bodies already use WASI streams.
+- [x] Tie command/request tasks to their owner and reclaim them on cancellation, timeout and shutdown; join epoch ticker threads on drop.
+- [x] Define a versioned Durable Object invocation contract, including namespace mapping, transport errors, unknown outcomes, and retry semantics.
+- [x] Evaluate an authenticated celld Worker gateway adapter with a local persistent counter and failure/retry tests.
+- [ ] Evaluate celld ownership transfer and recovery separately from local adapter behavior.
+- [ ] Assess a Wasmtime actor host in celld only after the gateway integration; keep shared-memory thread experiments separate from resource-heavy worker worlds.
 
 ## 1. KMS-backed secrets
 
@@ -155,19 +172,10 @@ Production readiness tasks, in implementation order.
 - [x] Add a reproducible `just perf-regression` command that emits JSON and Markdown artifacts.
 - [x] Add a scheduled GitHub Actions workflow with artifact upload and step summary.
 
-## 22. Store / Instance reuse experiment
+## 22. Store / Instance lifecycle
 
-- [x] Add a disabled-by-default Rust host daemon flag for per-component idle Store/Instance reuse.
-- [x] Bound reusable instances per prepared component.
-- [x] Return only successful invocations to the reuse pool; drop trapped or timed-out instances.
-- [x] Expose reusable instance counts through daemon `/stats` and `/metrics`.
-- [x] Wire the Node runtime daemon launcher through `WASMPLANE_WASIP3_EXPERIMENTAL_INSTANCE_REUSE`.
-- [x] Require an explicit `stateless-v1` instance reuse contract before reusing idle guest instances.
-- [x] Wire the Node runtime daemon launcher through `WASMPLANE_WASIP3_INSTANCE_REUSE_CONTRACT`.
-- [x] Add a `guest-reset-v1` export contract and reject reuse for components that do not implement it.
-- [x] Call the `wasmplane-reset: func() -> ()` export before returning instances to the idle pool.
-- [x] Document `stateless-v1` versus `guest-reset-v1` reuse modes.
-- [x] Add a conforming reset-export Wasm fixture that proves a mutable guest can be reset and reused.
+- [x] Remove the old instance reuse/reset experiment together with the custom worker WIT.
+- [x] Keep a fresh Store per request and cache only standard HTTP component preparations.
 
 ## 23. Durable autoscaler coordination store
 
@@ -242,7 +250,7 @@ Production readiness tasks, in implementation order.
 ## 31. Platform developer experience
 
 - [x] Add `wasmplane dev` with local runtime, WIT validation, log tailing, and route preview.
-- [x] Add worker templates and generated WIT SDK helpers for common languages.
+- [x] Provide a Rust template using standard WASIp3 bindings; remove the old custom-WIT templates.
 - [x] Add deployment diff output for routes, capabilities, secrets, KV bindings, and runtime limits.
 - [x] Add project/deployment scoped metrics, logs, traces, and log drain configuration.
 

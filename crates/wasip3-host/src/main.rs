@@ -1,4 +1,3 @@
-use std::path::Path;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -16,12 +15,9 @@ use hyper_util::rt::TokioIo;
 use serde_json::Value;
 use tokio::net::TcpListener;
 use wasmplane_wasip3_host::{
-    DurableObjectBindingPolicy, HostPolicy, HttpRequestInput, InstanceReuseContract,
-    InvocationLimits, KvBindingPolicy, OutboundHttpPolicy, SecretBindingPolicy, ServiceBindingPolicy,
-    Wasip3PoolingConfig, Wasip3Runtime, Wasip3RuntimeOptions,
-    invoke_component_handle_with_limits_and_policy, invoke_component_handle_with_persistent_kv,
-    invoke_precompiled_component_handle_with_limits_and_policy,
-    invoke_precompiled_component_handle_with_persistent_kv, precompile_component_with_pooling,
+    HostPolicy, HttpRequestInput, InvocationLimits, Wasip3PoolingConfig, Wasip3Runtime,
+    Wasip3RuntimeOptions, invoke_component_handle_with_limits_and_policy,
+    invoke_precompiled_component_handle_with_limits_and_policy, precompile_component_with_pooling,
 };
 
 #[derive(Debug, PartialEq, Eq)]
@@ -47,7 +43,6 @@ struct InvokeArgs {
     body: String,
     limits: InvocationLimits,
     policy: HostPolicy,
-    kv_store_dir: Option<PathBuf>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -61,7 +56,6 @@ struct CompileArgs {
 struct ServeArgs {
     host: String,
     port: u16,
-    kv_store_dir: Option<PathBuf>,
     runtime_options: Wasip3RuntimeOptions,
     max_concurrent_invocations: usize,
     http_workers: usize,
@@ -146,21 +140,15 @@ impl PoolingArgs {
 
 struct DaemonState {
     runtime: Arc<Wasip3Runtime>,
-    kv_store_dir: Option<PathBuf>,
     admission: Arc<AdmissionLimiter>,
     metrics: Arc<DaemonMetrics>,
     routes: Arc<Mutex<PreparedRouteTable>>,
 }
 
 impl DaemonState {
-    fn new(
-        runtime: Arc<Wasip3Runtime>,
-        kv_store_dir: Option<PathBuf>,
-        max_concurrent_invocations: usize,
-    ) -> Self {
+    fn new(runtime: Arc<Wasip3Runtime>, max_concurrent_invocations: usize) -> Self {
         Self {
             runtime,
-            kv_store_dir,
             admission: Arc::new(AdmissionLimiter::new(max_concurrent_invocations)),
             metrics: Arc::new(DaemonMetrics::default()),
             routes: Arc::new(Mutex::new(PreparedRouteTable::default())),
@@ -404,36 +392,16 @@ fn main() -> Result<()> {
                 body: invoke_args.body.into_bytes(),
             };
             let source_label = invoke_args.source.path().display().to_string();
-            let response = match (invoke_args.source, invoke_args.kv_store_dir) {
-                (InvokeSource::Component(component), Some(kv_store_dir)) => {
-                    invoke_component_handle_with_persistent_kv(
-                        &component,
-                        request,
-                        invoke_args.limits,
-                        invoke_args.policy,
-                        &kv_store_dir,
-                    )
-                }
-                (InvokeSource::Component(component), None) => {
-                    invoke_component_handle_with_limits_and_policy(
-                        &component,
-                        request,
-                        invoke_args.limits,
-                        invoke_args.policy,
-                    )
-                }
-                (InvokeSource::Precompiled(precompiled), Some(kv_store_dir)) => {
-                    invoke_precompiled_component_handle_with_persistent_kv(
-                        &precompiled,
-                        request,
-                        invoke_args.limits,
-                        invoke_args.policy,
-                        &kv_store_dir,
-                    )
-                }
-                (InvokeSource::Precompiled(precompiled), None) => {
+            let response = match invoke_args.source {
+                InvokeSource::Component(path) => invoke_component_handle_with_limits_and_policy(
+                    &path,
+                    request,
+                    invoke_args.limits,
+                    invoke_args.policy,
+                ),
+                InvokeSource::Precompiled(path) => {
                     invoke_precompiled_component_handle_with_limits_and_policy(
-                        &precompiled,
+                        &path,
                         request,
                         invoke_args.limits,
                         invoke_args.policy,
@@ -487,11 +455,7 @@ fn parse_compile_args(args: &mut impl Iterator<Item = String>) -> Result<Compile
 fn parse_serve_args(args: &mut impl Iterator<Item = String>) -> Result<ServeArgs> {
     let mut host = "127.0.0.1".to_string();
     let mut port = 8789;
-    let mut kv_store_dir = None;
     let mut max_prepared_components = Wasip3RuntimeOptions::default().max_prepared_components;
-    let mut max_reusable_instances_per_component =
-        Wasip3RuntimeOptions::default().max_reusable_instances_per_component;
-    let mut instance_reuse_contract = Wasip3RuntimeOptions::default().instance_reuse_contract;
     let mut max_concurrent_invocations = DEFAULT_MAX_CONCURRENT_INVOCATIONS;
     let mut http_workers = DEFAULT_DAEMON_HTTP_WORKERS;
     let mut pooling = PoolingArgs::default();
@@ -503,7 +467,6 @@ fn parse_serve_args(args: &mut impl Iterator<Item = String>) -> Result<ServeArgs
         match flag.as_str() {
             "--host" => host = value,
             "--port" => port = parse_u16(&value, "--port")?,
-            "--kv-store-dir" => kv_store_dir = Some(PathBuf::from(value)),
             "--max-prepared-components" => {
                 max_prepared_components = parse_usize(&value, "--max-prepared-components")?
             }
@@ -511,13 +474,6 @@ fn parse_serve_args(args: &mut impl Iterator<Item = String>) -> Result<ServeArgs
                 max_concurrent_invocations = parse_usize(&value, "--max-concurrent-invocations")?
             }
             "--http-workers" => http_workers = parse_usize(&value, "--http-workers")?,
-            "--experimental-instance-reuse" => {
-                max_reusable_instances_per_component =
-                    parse_usize(&value, "--experimental-instance-reuse")?
-            }
-            "--instance-reuse-contract" => {
-                instance_reuse_contract = parse_instance_reuse_contract(&value)?
-            }
             _ if pooling.set(flag.as_str(), &value)? => {}
             _ => bail!("unexpected argument {flag}"),
         }
@@ -526,11 +482,8 @@ fn parse_serve_args(args: &mut impl Iterator<Item = String>) -> Result<ServeArgs
     Ok(ServeArgs {
         host,
         port,
-        kv_store_dir,
         runtime_options: Wasip3RuntimeOptions {
             max_prepared_components,
-            max_reusable_instances_per_component,
-            instance_reuse_contract,
             pooling: pooling.finish(),
         },
         max_concurrent_invocations,
@@ -540,11 +493,7 @@ fn parse_serve_args(args: &mut impl Iterator<Item = String>) -> Result<ServeArgs
 
 fn serve(args: ServeArgs) -> Result<()> {
     let runtime = Arc::new(Wasip3Runtime::with_options(args.runtime_options)?);
-    let state = Arc::new(DaemonState::new(
-        runtime,
-        args.kv_store_dir.clone(),
-        args.max_concurrent_invocations,
-    ));
+    let state = Arc::new(DaemonState::new(runtime, args.max_concurrent_invocations));
     eprintln!(
         "wasmplane-wasip3-host serving on http://{}:{}",
         args.host, args.port
@@ -552,7 +501,7 @@ fn serve(args: ServeArgs) -> Result<()> {
     let tokio_runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(args.http_workers)
         .max_blocking_threads(args.http_workers)
-        .enable_io()
+        .enable_all()
         .build()
         .context("failed to build daemon HTTP runtime")?;
     tokio_runtime.block_on(serve_http_async(args.host, args.port, state))
@@ -592,7 +541,6 @@ fn parse_invoke_args(args: &mut impl Iterator<Item = String>) -> Result<InvokeAr
     let mut body = String::new();
     let mut limits = InvocationLimits::default();
     let mut policy = HostPolicy::deny_all();
-    let mut kv_store_dir = None;
 
     while let Some(flag) = args.next() {
         let Some(value) = args.next() else {
@@ -615,9 +563,8 @@ fn parse_invoke_args(args: &mut impl Iterator<Item = String>) -> Result<InvokeAr
                 limits.response_bytes = Some(parse_usize(&value, "--response-bytes")?)
             }
             "--subrequests" => limits.subrequests = Some(parse_u32(&value, "--subrequests")?),
-            "--host-calls" => limits.host_calls = Some(parse_u32(&value, "--host-calls")?),
+            "--host-calls" => bail!("hostCalls was removed with the custom worker WIT"),
             "--capabilities" => policy = parse_host_policy(&value)?,
-            "--kv-store-dir" => kv_store_dir = Some(PathBuf::from(value)),
             _ => bail!("unexpected argument {flag}"),
         }
     }
@@ -637,7 +584,6 @@ fn parse_invoke_args(args: &mut impl Iterator<Item = String>) -> Result<InvokeAr
         body,
         limits,
         policy,
-        kv_store_dir,
     })
 }
 
@@ -718,15 +664,7 @@ async fn handle_hyper_daemon_request(
             )));
         }
     };
-    let response =
-        match tokio::task::spawn_blocking(move || handle_daemon_request(state, request)).await {
-            Ok(response) => response,
-            Err(error) => DaemonHttpResponse::error_json(
-                500,
-                "daemon",
-                &format!("daemon worker task failed: {error}"),
-            ),
-        };
+    let response = handle_daemon_request(state, request).await;
     Ok(daemon_response_to_hyper(response))
 }
 
@@ -803,7 +741,7 @@ fn daemon_response_to_hyper(response: DaemonHttpResponse) -> HyperDaemonResponse
         })
 }
 
-fn handle_daemon_request(
+async fn handle_daemon_request(
     state: Arc<DaemonState>,
     request: DaemonHttpRequest,
 ) -> DaemonHttpResponse {
@@ -814,8 +752,8 @@ fn handle_daemon_request(
         ("GET", "/stats") => DaemonHttpResponse::json(200, &daemon_stats_json(&state)),
         ("GET", "/metrics") => DaemonHttpResponse::text(200, &daemon_metrics_text(&state)),
         ("PUT", "/routes") => handle_daemon_routes_request(state, request),
-        ("POST", "/invoke") => handle_daemon_invoke_request(state, request),
-        _ => handle_daemon_worker_request(state, request),
+        ("POST", "/invoke") => handle_daemon_invoke_request(state, request).await,
+        _ => handle_daemon_worker_request(state, request).await,
     }
 }
 
@@ -844,7 +782,7 @@ fn handle_daemon_routes_request(
     DaemonHttpResponse::json(200, &format!("{{\"ok\":true,\"preparedRoutes\":{routes}}}"))
 }
 
-fn handle_daemon_invoke_request(
+async fn handle_daemon_invoke_request(
     state: Arc<DaemonState>,
     request: DaemonHttpRequest,
 ) -> DaemonHttpResponse {
@@ -856,11 +794,7 @@ fn handle_daemon_invoke_request(
         );
     };
     let started_at = Instant::now();
-    let result = handle_daemon_invoke(
-        Arc::clone(&state.runtime),
-        state.kv_store_dir.as_deref(),
-        &request.body,
-    );
+    let result = handle_daemon_invoke(Arc::clone(&state.runtime), &request.body).await;
     state
         .metrics
         .record_invoke(started_at.elapsed(), result.is_ok());
@@ -878,7 +812,7 @@ fn handle_daemon_invoke_request(
     }
 }
 
-fn handle_daemon_worker_request(
+async fn handle_daemon_worker_request(
     state: Arc<DaemonState>,
     request: DaemonHttpRequest,
 ) -> DaemonHttpResponse {
@@ -905,25 +839,15 @@ fn handle_daemon_worker_request(
         headers: request_headers_for_guest(&request.headers),
         body: request.body,
     };
-    let result = match state.kv_store_dir.as_deref() {
-        Some(kv_store_dir) => state
-            .runtime
-            .invoke_precompiled_component_handle_with_persistent_kv(
-                &target.precompiled,
-                input,
-                target.limits,
-                target.policy.clone(),
-                kv_store_dir,
-            ),
-        None => state
-            .runtime
-            .invoke_precompiled_component_handle_with_limits_and_policy(
-                &target.precompiled,
-                input,
-                target.limits,
-                target.policy.clone(),
-            ),
-    };
+    let result = state
+        .runtime
+        .invoke_precompiled_component_handle_with_limits_and_policy_async(
+            &target.precompiled,
+            input,
+            target.limits,
+            target.policy.clone(),
+        )
+        .await;
     state
         .metrics
         .record_invoke(started_at.elapsed(), result.is_ok());
@@ -948,15 +872,13 @@ fn append_worker_route_headers(
         "x-wasmplane-precompiled".to_string(),
         target.precompiled.display().to_string(),
     ));
-    response.headers.push((
-        "x-wasmplane-host-daemon-route".to_string(),
-        "1".to_string(),
-    ));
+    response
+        .headers
+        .push(("x-wasmplane-host-daemon-route".to_string(), "1".to_string()));
 }
 
-fn handle_daemon_invoke(
+async fn handle_daemon_invoke(
     runtime: Arc<Wasip3Runtime>,
-    kv_store_dir: Option<&Path>,
     body: &[u8],
 ) -> Result<wasmplane_wasip3_host::HttpResponseOutput> {
     let json: Value = serde_json::from_slice(body).context("invoke body must be JSON")?;
@@ -968,37 +890,27 @@ fn handle_daemon_invoke(
         body: invoke_args.body.into_bytes(),
     };
 
-    match (invoke_args.source, kv_store_dir) {
-        (InvokeSource::Component(component), Some(kv_store_dir)) => runtime
-            .invoke_component_handle_with_persistent_kv(
-                &component,
-                request,
-                invoke_args.limits,
-                invoke_args.policy,
-                kv_store_dir,
-            ),
-        (InvokeSource::Component(component), None) => runtime
-            .invoke_component_handle_with_limits_and_policy(
-                &component,
-                request,
-                invoke_args.limits,
-                invoke_args.policy,
-            ),
-        (InvokeSource::Precompiled(precompiled), Some(kv_store_dir)) => runtime
-            .invoke_precompiled_component_handle_with_persistent_kv(
-                &precompiled,
-                request,
-                invoke_args.limits,
-                invoke_args.policy,
-                kv_store_dir,
-            ),
-        (InvokeSource::Precompiled(precompiled), None) => runtime
-            .invoke_precompiled_component_handle_with_limits_and_policy(
-                &precompiled,
-                request,
-                invoke_args.limits,
-                invoke_args.policy,
-            ),
+    match invoke_args.source {
+        InvokeSource::Component(path) => {
+            runtime
+                .invoke_component_handle_with_limits_and_policy_async(
+                    &path,
+                    request,
+                    invoke_args.limits,
+                    invoke_args.policy,
+                )
+                .await
+        }
+        InvokeSource::Precompiled(path) => {
+            runtime
+                .invoke_precompiled_component_handle_with_limits_and_policy_async(
+                    &path,
+                    request,
+                    invoke_args.limits,
+                    invoke_args.policy,
+                )
+                .await
+        }
     }
 }
 
@@ -1059,7 +971,6 @@ fn parse_daemon_invoke(value: &Value) -> Result<InvokeArgs> {
         body,
         limits,
         policy,
-        kv_store_dir: None,
     })
 }
 
@@ -1190,7 +1101,7 @@ fn daemon_stats_json(state: &DaemonState) -> String {
         "{{\"ok\":true,\"preparedComponents\":{},\"preparedRoutes\":{},\"reusableInstances\":{},\"activeInvocations\":{},\"maxConcurrentInvocations\":{},\"totalInvocations\":{},\"failedInvocations\":{},\"rejectedInvocations\":{},\"avgInvokeMs\":{:.3}}}",
         state.runtime.prepared_component_count(),
         state.route_count(),
-        state.runtime.reusable_instance_count(),
+        0,
         state.admission.active(),
         state.admission.max(),
         state.metrics.total_invocations(),
@@ -1224,7 +1135,7 @@ fn daemon_metrics_text(state: &DaemonState) -> String {
         ),
         state.runtime.prepared_component_count(),
         state.route_count(),
-        state.runtime.reusable_instance_count(),
+        0,
         state.admission.active(),
         state.admission.max(),
         state.metrics.ok_invocations(),
@@ -1263,17 +1174,6 @@ fn parse_u16(value: &str, name: &str) -> Result<u16> {
         bail!("{name} must be a positive integer");
     }
     Ok(value)
-}
-
-fn parse_instance_reuse_contract(value: &str) -> Result<InstanceReuseContract> {
-    match value {
-        "disabled" => Ok(InstanceReuseContract::Disabled),
-        "stateless-v1" => Ok(InstanceReuseContract::StatelessV1),
-        "guest-reset-v1" => Ok(InstanceReuseContract::GuestResetV1),
-        _ => bail!(
-            "--instance-reuse-contract must be one of: disabled, stateless-v1, guest-reset-v1"
-        ),
-    }
 }
 
 fn parse_usize(value: &str, name: &str) -> Result<usize> {
@@ -1332,8 +1232,8 @@ fn parse_limits_value(value: &Value) -> Result<InvocationLimits> {
     if let Some(value) = object.get("subrequests") {
         limits.subrequests = Some(json_u32(value, "limits.subrequests")?);
     }
-    if let Some(value) = object.get("hostCalls") {
-        limits.host_calls = Some(json_u32(value, "limits.hostCalls")?);
+    if object.get("hostCalls").is_some() {
+        bail!("hostCalls was removed with the custom worker WIT");
     }
     Ok(limits)
 }
@@ -1372,23 +1272,21 @@ fn parse_host_policy(value: &str) -> Result<HostPolicy> {
     reject_privileged_capability(&json, "arbitrarySockets")?;
     reject_privileged_capability(&json, "processSpawn")?;
 
-    let outbound_http = json
+    for field in ["kv", "secrets", "durableObjects", "services"] {
+        if let Some(value) = json.get(field)
+            && !value.as_array().is_some_and(|items| items.is_empty())
+        {
+            bail!(
+                "capabilities.{field} used the removed worker WIT; use standard WASI or the standalone durable binding"
+            );
+        }
+    }
+    let origins = json
         .get("outboundHttp")
         .map(parse_outbound_http_policy)
         .transpose()?
-        .unwrap_or_else(OutboundHttpPolicy::disabled);
-    let kv_bindings = parse_kv_bindings(json.get("kv"))?;
-    let secret_bindings = parse_secret_bindings(json.get("secrets"))?;
-    let durable_object_bindings = parse_durable_object_bindings(json.get("durableObjects"))?;
-    let service_bindings = parse_service_bindings(json.get("services"))?;
-
-    Ok(HostPolicy::with_service_bindings(
-        outbound_http,
-        kv_bindings,
-        secret_bindings,
-        durable_object_bindings,
-        service_bindings,
-    ))
+        .unwrap_or_default();
+    HostPolicy::new(origins)
 }
 
 fn reject_privileged_capability(json: &Value, field: &str) -> Result<()> {
@@ -1398,7 +1296,7 @@ fn reject_privileged_capability(json: &Value, field: &str) -> Result<()> {
     Ok(())
 }
 
-fn parse_outbound_http_policy(value: &Value) -> Result<OutboundHttpPolicy> {
+fn parse_outbound_http_policy(value: &Value) -> Result<Vec<String>> {
     if !value.is_object() {
         bail!("capabilities.outboundHttp must be an object");
     }
@@ -1421,112 +1319,7 @@ fn parse_outbound_http_policy(value: &Value) -> Result<OutboundHttpPolicy> {
     if !enabled && !allow.is_empty() {
         bail!("outbound allowlist requires outboundHttp.enabled");
     }
-    if enabled {
-        Ok(OutboundHttpPolicy::enabled(allow))
-    } else {
-        Ok(OutboundHttpPolicy::disabled())
-    }
-}
-
-fn parse_kv_bindings(value: Option<&Value>) -> Result<Vec<KvBindingPolicy>> {
-    let Some(value) = value else {
-        return Ok(Vec::new());
-    };
-    let Value::Array(items) = value else {
-        bail!("capabilities.kv must be an array");
-    };
-    items
-        .iter()
-        .map(|item| {
-            let binding = item
-                .get("binding")
-                .and_then(Value::as_str)
-                .context("capabilities.kv entries must include binding")?;
-            let namespace_id = item
-                .get("namespaceId")
-                .and_then(Value::as_str)
-                .context("capabilities.kv entries must include namespaceId")?;
-            Ok(KvBindingPolicy::new(binding, namespace_id))
-        })
-        .collect()
-}
-
-fn parse_secret_bindings(value: Option<&Value>) -> Result<Vec<SecretBindingPolicy>> {
-    let Some(value) = value else {
-        return Ok(Vec::new());
-    };
-    let Value::Array(items) = value else {
-        bail!("capabilities.secrets must be an array");
-    };
-    items
-        .iter()
-        .map(|item| {
-            let binding = item
-                .get("binding")
-                .and_then(Value::as_str)
-                .context("capabilities.secrets entries must include binding")?;
-            let secret_id = item
-                .get("secretId")
-                .and_then(Value::as_str)
-                .context("capabilities.secrets entries must include secretId")?;
-            let value = item.get("value").and_then(Value::as_str);
-            Ok(match value {
-                Some(value) => SecretBindingPolicy::with_value(binding, secret_id, value),
-                None => SecretBindingPolicy::new(binding, secret_id),
-            })
-        })
-        .collect()
-}
-
-fn parse_durable_object_bindings(value: Option<&Value>) -> Result<Vec<DurableObjectBindingPolicy>> {
-    let Some(value) = value else {
-        return Ok(Vec::new());
-    };
-    let Value::Array(items) = value else {
-        bail!("capabilities.durableObjects must be an array");
-    };
-    items
-        .iter()
-        .map(|item| {
-            let binding = item
-                .get("binding")
-                .and_then(Value::as_str)
-                .context("capabilities.durableObjects entries must include binding")?;
-            let namespace_id = item
-                .get("namespaceId")
-                .and_then(Value::as_str)
-                .context("capabilities.durableObjects entries must include namespaceId")?;
-            Ok(DurableObjectBindingPolicy::new(binding, namespace_id))
-        })
-        .collect()
-}
-
-fn parse_service_bindings(value: Option<&Value>) -> Result<Vec<ServiceBindingPolicy>> {
-    let Some(value) = value else {
-        return Ok(Vec::new());
-    };
-    let Value::Array(items) = value else {
-        bail!("capabilities.services must be an array");
-    };
-    items
-        .iter()
-        .map(|item| {
-            let binding = item
-                .get("binding")
-                .and_then(Value::as_str)
-                .context("capabilities.services entries must include binding")?;
-            let target_project_id = item
-                .get("targetProjectId")
-                .and_then(Value::as_str)
-                .context("capabilities.services entries must include targetProjectId")?;
-            let url = item
-                .get("url")
-                .and_then(Value::as_str)
-                .context("capabilities.services entries must include url")?;
-            ServiceBindingPolicy::try_new(binding, target_project_id, url)
-                .context("capabilities.services entries must include valid http(s) url")
-        })
-        .collect()
+    Ok(allow)
 }
 
 fn print_usage() {
@@ -1535,10 +1328,10 @@ fn print_usage() {
         "  wasmplane-wasip3-host compile --component <component.wasm> --out <component.cwasm>"
     );
     eprintln!(
-        "  wasmplane-wasip3-host invoke (--component <component.wasm> | --precompiled <component.cwasm>) --method <METHOD> --uri <URI> [--headers <JSON>] [--body <TEXT>] [--wall-ms <MS>] [--cpu-ms <MS>] [--memory-mb <MB>] [--request-bytes <BYTES>] [--response-bytes <BYTES>] [--subrequests <COUNT>] [--host-calls <COUNT>] [--capabilities <JSON>] [--kv-store-dir <DIR>]"
+        "  wasmplane-wasip3-host invoke (--component <component.wasm> | --precompiled <component.cwasm>) --method <METHOD> --uri <URI> [--headers <JSON>] [--body <TEXT>] [--wall-ms <MS>] [--cpu-ms <MS>] [--memory-mb <MB>] [--request-bytes <BYTES>] [--response-bytes <BYTES>] [--subrequests <COUNT>] [--capabilities <JSON>]"
     );
     eprintln!(
-        "  wasmplane-wasip3-host serve [--host <HOST>] [--port <PORT>] [--kv-store-dir <DIR>] [--max-prepared-components <COUNT>] [--max-concurrent-invocations <COUNT>] [--http-workers <COUNT>] [--experimental-instance-reuse <COUNT>] [--instance-reuse-contract <disabled|stateless-v1|guest-reset-v1>] [--pooling-total-component-instances <COUNT>] [--pooling-memory-mb <MB>]"
+        "  wasmplane-wasip3-host serve [--host <HOST>] [--port <PORT>] [--max-prepared-components <COUNT>] [--max-concurrent-invocations <COUNT>] [--http-workers <COUNT>] [--pooling-total-component-instances <COUNT>] [--pooling-memory-mb <MB>]"
     );
 }
 
@@ -1653,18 +1446,46 @@ mod tests {
     use super::*;
 
     #[test]
+    fn removed_worker_capabilities_and_flags_are_rejected() {
+        for field in ["kv", "secrets", "durableObjects", "services"] {
+            let input = serde_json::json!({ field: [{ "binding": "OLD" }] });
+            assert!(
+                parse_host_policy(&input.to_string())
+                    .unwrap_err()
+                    .to_string()
+                    .contains("removed worker WIT")
+            );
+        }
+        for flag in [
+            "--kv-store-dir",
+            "--experimental-instance-reuse",
+            "--instance-reuse-contract",
+        ] {
+            assert!(parse_serve_args(&mut [flag.to_string(), "1".into()].into_iter()).is_err());
+        }
+        assert!(
+            parse_host_policy(
+                r#"{"outboundHttp":{"enabled":true,"allow":["https://example.com/private"]}}"#
+            )
+            .is_err()
+        );
+        assert!(
+            parse_daemon_invoke(&serde_json::json!({
+                "component": "unused.wasm", "method": "GET", "uri": "http://worker/",
+                "limits": { "hostCalls": 100 }
+            }))
+            .is_err()
+        );
+    }
+
+    #[test]
     fn parse_invoke_args_accepts_runtime_limits_and_capabilities() {
         let capabilities = r#"{
             "outboundHttp": { "enabled": true, "allow": ["https://api.example.dev/"] },
-            "kv": [{ "binding": "KV", "namespaceId": "kv_main" }],
-            "durableObjects": [{ "binding": "ROOMS", "namespaceId": "rooms" }],
-            "secrets": [{ "binding": "API_KEY", "secretId": "sec_api_key", "value": "super-secret" }],
-            "services": [{ "binding": "AUTH", "targetProjectId": "prj_auth", "url": "http://127.0.0.1:8788" }],
             "arbitraryFilesystem": false,
             "arbitrarySockets": false,
             "processSpawn": false
         }"#;
-        let kv_store_dir = std::env::temp_dir().join("wasmplane-cli-kv-store");
         let mut args = vec![
             "--component",
             "/tmp/worker.component.wasm",
@@ -1688,12 +1509,8 @@ mod tests {
             "1048576",
             "--subrequests",
             "20",
-            "--host-calls",
-            "100",
             "--capabilities",
             capabilities,
-            "--kv-store-dir",
-            kv_store_dir.to_str().expect("utf8 kv store path"),
         ]
         .into_iter()
         .map(String::from);
@@ -1720,26 +1537,11 @@ mod tests {
         assert_eq!(parsed.limits.request_bytes, Some(1048576));
         assert_eq!(parsed.limits.response_bytes, Some(1048576));
         assert_eq!(parsed.limits.subrequests, Some(20));
-        assert_eq!(parsed.limits.host_calls, Some(100));
         assert!(
             parsed
                 .policy
                 .allows_outbound_uri("https://api.example.dev/users")
         );
-        assert_eq!(
-            parsed.policy.kv_namespace_for_binding("KV"),
-            Some("kv_main")
-        );
-        assert_eq!(
-            parsed.policy.durable_object_namespace_for_binding("ROOMS"),
-            Some("rooms")
-        );
-        assert_eq!(
-            parsed.policy.service_url_for_binding("AUTH"),
-            Some("http://127.0.0.1:8788/")
-        );
-        assert!(parsed.policy.secret_for_binding("API_KEY").is_some());
-        assert_eq!(parsed.kv_store_dir, Some(kv_store_dir));
     }
 
     #[test]
@@ -1766,18 +1568,10 @@ mod tests {
     }
 
     #[test]
-    fn parse_serve_args_accepts_host_port_and_kv_store() {
-        let kv_store_dir = std::env::temp_dir().join("wasmplane-daemon-kv-store");
-        let mut args = vec![
-            "--host",
-            "127.0.0.1",
-            "--port",
-            "8790",
-            "--kv-store-dir",
-            kv_store_dir.to_str().expect("utf8 kv store path"),
-        ]
-        .into_iter()
-        .map(String::from);
+    fn parse_serve_args_accepts_host_and_port() {
+        let mut args = vec!["--host", "127.0.0.1", "--port", "8790"]
+            .into_iter()
+            .map(String::from);
 
         let parsed = parse_serve_args(&mut args).expect("serve args");
 
@@ -1786,7 +1580,6 @@ mod tests {
             ServeArgs {
                 host: "127.0.0.1".to_string(),
                 port: 8790,
-                kv_store_dir: Some(kv_store_dir),
                 runtime_options: Wasip3RuntimeOptions::default(),
                 max_concurrent_invocations: DEFAULT_MAX_CONCURRENT_INVOCATIONS,
                 http_workers: DEFAULT_DAEMON_HTTP_WORKERS,
@@ -1819,10 +1612,6 @@ mod tests {
             "2",
             "--pooling-core-instance-mb",
             "3",
-            "--experimental-instance-reuse",
-            "2",
-            "--instance-reuse-contract",
-            "stateless-v1",
         ]
         .into_iter()
         .map(String::from);
@@ -1831,14 +1620,6 @@ mod tests {
 
         assert_eq!(parsed.runtime_options.max_prepared_components, 512);
         assert_eq!(parsed.http_workers, 32);
-        assert_eq!(
-            parsed.runtime_options.max_reusable_instances_per_component,
-            2
-        );
-        assert_eq!(
-            parsed.runtime_options.instance_reuse_contract,
-            InstanceReuseContract::StatelessV1
-        );
         assert_eq!(parsed.max_concurrent_invocations, 64);
         assert_eq!(
             parsed.runtime_options.pooling,
@@ -1852,33 +1633,6 @@ mod tests {
                 max_component_instance_size: mb_to_usize(2),
                 max_core_instance_size: mb_to_usize(3),
             })
-        );
-    }
-
-    #[test]
-    fn parse_serve_args_rejects_unknown_instance_reuse_contract() {
-        let mut args = vec!["--instance-reuse-contract", "reset-export"]
-            .into_iter()
-            .map(String::from);
-
-        let error = parse_serve_args(&mut args).expect_err("unknown contract should fail");
-
-        assert!(format!("{error:?}").contains(
-            "--instance-reuse-contract must be one of: disabled, stateless-v1, guest-reset-v1"
-        ));
-    }
-
-    #[test]
-    fn parse_serve_args_accepts_guest_reset_instance_reuse_contract() {
-        let mut args = vec!["--instance-reuse-contract", "guest-reset-v1"]
-            .into_iter()
-            .map(String::from);
-
-        let parsed = parse_serve_args(&mut args).expect("serve args");
-
-        assert_eq!(
-            parsed.runtime_options.instance_reuse_contract,
-            InstanceReuseContract::GuestResetV1
         );
     }
 
@@ -1925,14 +1679,9 @@ mod tests {
                 "requestBytes": 1024,
                 "responseBytes": 2048,
                 "subrequests": 2,
-                "hostCalls": 10
             },
             "capabilities": {
                 "outboundHttp": { "enabled": true, "allow": ["https://api.example.dev/"] },
-                "kv": [{ "binding": "KV", "namespaceId": "kv_main" }],
-                "durableObjects": [{ "binding": "ROOMS", "namespaceId": "rooms" }],
-                "secrets": [],
-                "services": [{ "binding": "AUTH", "targetProjectId": "prj_auth", "url": "http://127.0.0.1:8788" }],
                 "arbitraryFilesystem": false,
                 "arbitrarySockets": false,
                 "processSpawn": false
@@ -1958,19 +1707,10 @@ mod tests {
         assert_eq!(parsed.limits.request_bytes, Some(1024));
         assert_eq!(parsed.limits.response_bytes, Some(2048));
         assert_eq!(parsed.limits.subrequests, Some(2));
-        assert_eq!(parsed.limits.host_calls, Some(10));
         assert!(
             parsed
                 .policy
                 .allows_outbound_uri("https://api.example.dev/users")
-        );
-        assert_eq!(
-            parsed.policy.kv_namespace_for_binding("KV"),
-            Some("kv_main")
-        );
-        assert_eq!(
-            parsed.policy.service_url_for_binding("AUTH"),
-            Some("http://127.0.0.1:8788/")
         );
     }
 
@@ -1990,9 +1730,6 @@ mod tests {
                 },
                 "capabilities": {
                     "outboundHttp": { "enabled": false, "allow": [] },
-                    "kv": [],
-                    "secrets": [],
-                    "durableObjects": [],
                     "arbitraryFilesystem": false,
                     "arbitrarySockets": false,
                     "processSpawn": false
@@ -2172,8 +1909,6 @@ mod tests {
         let error = parse_host_policy(
             r#"{
                 "outboundHttp": { "enabled": false, "allow": [] },
-                "kv": [],
-                "secrets": [],
                 "arbitraryFilesystem": false,
                 "arbitrarySockets": true,
                 "processSpawn": false
@@ -2201,7 +1936,7 @@ mod tests {
 
     #[test]
     fn daemon_stats_and_metrics_report_runtime_pressure() {
-        let state = DaemonState::new(Arc::new(Wasip3Runtime::new().expect("runtime")), None, 2);
+        let state = DaemonState::new(Arc::new(Wasip3Runtime::new().expect("runtime")), 2);
         state.replace_routes(PreparedRouteTable {
             routes: vec![prepared_route("hello.example.dev", "/", "dep_stats")],
         });
@@ -2263,10 +1998,11 @@ mod tests {
             "x-wasmplane-precompiled".to_string(),
             "/cache/dep_canary.cwasm".to_string()
         )));
-        assert!(response.headers.contains(&(
-            "x-wasmplane-host-daemon-route".to_string(),
-            "1".to_string()
-        )));
+        assert!(
+            response
+                .headers
+                .contains(&("x-wasmplane-host-daemon-route".to_string(), "1".to_string()))
+        );
     }
 
     fn prepared_route(host: &str, path_prefix: &str, deployment_id: &str) -> PreparedRoute {

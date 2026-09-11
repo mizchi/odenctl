@@ -87,7 +87,7 @@ test("HTTP API creates deployment and exposes compact route snapshot", async () 
     const deployment = await postJson(baseUrl, "/deployments", {
       projectId: project.id,
       artifactId: artifact.id,
-      world: "myedge:runtime/worker@0.1.0",
+      world: "wasi:http/service@0.3.0",
       runtime: {
         backend: "wasmtime",
         version: "wasmtime-43",
@@ -99,7 +99,6 @@ test("HTTP API creates deployment and exposes compact route snapshot", async () 
         wallMs: 1000,
         requestBytes: 1048576,
         subrequests: 20,
-        hostCalls: 100,
         responseBytes: 1048576,
       },
       capabilities: {
@@ -1190,7 +1189,7 @@ test("HTTP API manages custom domain verification and TLS hooks", async () => {
     const deployment = await postJson(baseUrl, "/deployments", {
       projectId: project.id,
       artifactId: artifact.id,
-      world: "myedge:runtime/worker@0.1.0",
+      world: "wasi:http/service@0.3.0",
       runtime: { backend: "wasmtime", version: "wasmtime-43", wasi: "wasip3" },
       limits: {
         cpuMs: 50,
@@ -1198,7 +1197,6 @@ test("HTTP API manages custom domain verification and TLS hooks", async () => {
         wallMs: 1000,
         requestBytes: 1048576,
         subrequests: 20,
-        hostCalls: 100,
         responseBytes: 1048576,
       },
       capabilities: { outboundHttp: { enabled: false, allow: [] }, kv: [], secrets: [] },
@@ -1437,7 +1435,7 @@ test("HTTP admin UI renders routes, deployments, canaries, runtime nodes, and me
     const candidate = await postJson(baseUrl, "/deployments", {
       projectId: project.id,
       artifactId: artifact.id,
-      world: "myedge:runtime/worker@0.1.0",
+      world: "wasi:http/service@0.3.0",
       runtime: { backend: "wasmtime", version: "wasmtime-43", wasi: "wasip3" },
       limits: {
         cpuMs: 50,
@@ -1445,7 +1443,6 @@ test("HTTP admin UI renders routes, deployments, canaries, runtime nodes, and me
         wallMs: 1000,
         requestBytes: 1048576,
         subrequests: 20,
-        hostCalls: 100,
         responseBytes: 1048576,
       },
       capabilities: { outboundHttp: { enabled: false, allow: [] }, kv: [], secrets: [] },
@@ -1550,7 +1547,7 @@ test("HTTP admin UI keeps read and write auth scopes separate", async () => {
     const deployment = control.createDeployment({
       projectId: project.id,
       artifactId: artifact.id,
-      world: "myedge:runtime/worker@0.1.0",
+      world: "wasi:http/service@0.3.0",
       runtime: { backend: "wasmtime", version: "wasmtime-43", wasi: "wasip3" },
       limits: {
         cpuMs: 50,
@@ -1558,7 +1555,6 @@ test("HTTP admin UI keeps read and write auth scopes separate", async () => {
         wallMs: 1000,
         requestBytes: 1048576,
         subrequests: 20,
-        hostCalls: 100,
         responseBytes: 1048576,
       },
       capabilities: { outboundHttp: { enabled: false, allow: [] }, kv: [], secrets: [] },
@@ -2108,7 +2104,7 @@ test("HTTP API rejects deployments that reference unknown secrets", async () => 
       body: JSON.stringify({
         projectId: project.id,
         artifactId: artifact.id,
-        world: "myedge:runtime/worker@0.1.0",
+        world: "wasi:http/service@0.3.0",
         runtime: {
           backend: "wasmtime",
           version: "wasmtime-43",
@@ -2120,7 +2116,6 @@ test("HTTP API rejects deployments that reference unknown secrets", async () => 
           wallMs: 1000,
           requestBytes: 1048576,
           subrequests: 20,
-          hostCalls: 100,
           responseBytes: 1048576,
         },
         capabilities: {
@@ -2259,7 +2254,7 @@ test("HTTP API rejects deployments that reference unknown KV namespaces", async 
       body: JSON.stringify({
         projectId: project.id,
         artifactId: artifact.id,
-        world: "myedge:runtime/worker@0.1.0",
+        world: "wasi:http/service@0.3.0",
         runtime: {
           backend: "wasmtime",
           version: "wasmtime-43",
@@ -2271,7 +2266,6 @@ test("HTTP API rejects deployments that reference unknown KV namespaces", async 
           wallMs: 1000,
           requestBytes: 1048576,
           subrequests: 20,
-          hostCalls: 100,
           responseBytes: 1048576,
         },
         capabilities: {
@@ -2316,7 +2310,7 @@ test("HTTP API rejects deployments that reference unknown durable object namespa
       body: JSON.stringify({
         projectId: project.id,
         artifactId: artifact.id,
-        world: "myedge:runtime/worker@0.1.0",
+        world: "wasi:http/service@0.3.0",
         runtime: {
           backend: "wasmtime",
           version: "wasmtime-43",
@@ -2328,7 +2322,6 @@ test("HTTP API rejects deployments that reference unknown durable object namespa
           wallMs: 1000,
           requestBytes: 1048576,
           subrequests: 20,
-          hostCalls: 100,
           responseBytes: 1048576,
         },
         capabilities: {
@@ -2377,7 +2370,7 @@ test("HTTP API starts canary and rolls back routes", async () => {
     const stable = await postJson(baseUrl, "/deployments", {
       projectId: project.id,
       artifactId: stableArtifact.id,
-      world: "myedge:runtime/worker@0.1.0",
+      world: "wasi:http/service@0.3.0",
       runtime: { backend: "wasmtime", version: "wasmtime-43", wasi: "wasip3" },
       limits: {
         cpuMs: 50,
@@ -2385,7 +2378,6 @@ test("HTTP API starts canary and rolls back routes", async () => {
         wallMs: 1000,
         requestBytes: 1048576,
         subrequests: 20,
-        hostCalls: 100,
         responseBytes: 1048576,
       },
       capabilities: { outboundHttp: { enabled: false, allow: [] }, kv: [], secrets: [] },
@@ -2393,7 +2385,7 @@ test("HTTP API starts canary and rolls back routes", async () => {
     const candidate = await postJson(baseUrl, "/deployments", {
       projectId: project.id,
       artifactId: candidateArtifact.id,
-      world: "myedge:runtime/worker@0.1.0",
+      world: "wasi:http/service@0.3.0",
       runtime: { backend: "wasmtime", version: "wasmtime-43", wasi: "wasip3" },
       limits: {
         cpuMs: 50,
@@ -2401,7 +2393,6 @@ test("HTTP API starts canary and rolls back routes", async () => {
         wallMs: 1000,
         requestBytes: 1048576,
         subrequests: 20,
-        hostCalls: 100,
         responseBytes: 1048576,
       },
       capabilities: { outboundHttp: { enabled: false, allow: [] }, kv: [], secrets: [] },
@@ -2481,7 +2472,7 @@ test("HTTP API creates deploy previews and rolls them back", async () => {
     const candidate = await postJson(baseUrl, "/deployments", {
       projectId: project.id,
       artifactId: artifact.id,
-      world: "myedge:runtime/worker@0.1.0",
+      world: "wasi:http/service@0.3.0",
       runtime: { backend: "wasmtime", version: "wasmtime-43", wasi: "wasip3" },
       limits: {
         cpuMs: 50,
@@ -2489,7 +2480,6 @@ test("HTTP API creates deploy previews and rolls them back", async () => {
         wallMs: 1000,
         requestBytes: 1048576,
         subrequests: 20,
-        hostCalls: 100,
         responseBytes: 1048576,
       },
       capabilities: { outboundHttp: { enabled: false, allow: [] }, kv: [], secrets: [] },
@@ -2556,7 +2546,7 @@ test("HTTP API publishes route snapshot to configured runtime nodes", async () =
     const deployment = await postJson(baseUrl, "/deployments", {
       projectId: project.id,
       artifactId: artifact.id,
-      world: "myedge:runtime/worker@0.1.0",
+      world: "wasi:http/service@0.3.0",
       runtime: {
         backend: "wasmtime",
         version: "wasmtime-43",
@@ -2568,7 +2558,6 @@ test("HTTP API publishes route snapshot to configured runtime nodes", async () =
         wallMs: 1000,
         requestBytes: 1048576,
         subrequests: 20,
-        hostCalls: 100,
         responseBytes: 1048576,
       },
       capabilities: {
@@ -2995,7 +2984,7 @@ test("HTTP API registers runtime nodes and publishes snapshots through the regis
     const deployment = await postJson(baseUrl, "/deployments", {
       projectId: project.id,
       artifactId: artifact.id,
-      world: "myedge:runtime/worker@0.1.0",
+      world: "wasi:http/service@0.3.0",
       runtime: {
         backend: "wasmtime",
         version: "wasmtime-43",
@@ -3007,7 +2996,6 @@ test("HTTP API registers runtime nodes and publishes snapshots through the regis
         wallMs: 1000,
         requestBytes: 1048576,
         subrequests: 20,
-        hostCalls: 100,
         responseBytes: 1048576,
       },
       capabilities: {
@@ -3260,7 +3248,7 @@ test("HTTP API applies project placement policy to snapshot publish targets", as
     const deployment = await postJson(baseUrl, "/deployments", {
       projectId: project.id,
       artifactId: artifact.id,
-      world: "myedge:runtime/worker@0.1.0",
+      world: "wasi:http/service@0.3.0",
       runtime: {
         backend: "wasmtime",
         version: "wasmtime-43",
@@ -3272,7 +3260,6 @@ test("HTTP API applies project placement policy to snapshot publish targets", as
         wallMs: 1000,
         requestBytes: 1048576,
         subrequests: 20,
-        hostCalls: 100,
         responseBytes: 1048576,
       },
       capabilities: {
@@ -3366,7 +3353,7 @@ test("HTTP API fails over placement targets to fallback regions", async () => {
     const deployment = await postJson(baseUrl, "/deployments", {
       projectId: project.id,
       artifactId: artifact.id,
-      world: "myedge:runtime/worker@0.1.0",
+      world: "wasi:http/service@0.3.0",
       runtime: { backend: "wasmtime", version: "wasmtime-43", wasi: "wasip3" },
       limits: {
         cpuMs: 50,
@@ -3374,7 +3361,6 @@ test("HTTP API fails over placement targets to fallback regions", async () => {
         wallMs: 1000,
         requestBytes: 1048576,
         subrequests: 20,
-        hostCalls: 100,
         responseBytes: 1048576,
       },
       capabilities: { outboundHttp: { enabled: false, allow: [] }, kv: [], secrets: [] },
@@ -4037,7 +4023,7 @@ async function createHelloRoute(baseUrl: string) {
   const deployment = await postJson(baseUrl, "/deployments", {
     projectId: project.id,
     artifactId: artifact.id,
-    world: "myedge:runtime/worker@0.1.0",
+    world: "wasi:http/service@0.3.0",
     runtime: {
       backend: "wasmtime",
       version: "wasmtime-43",
@@ -4049,7 +4035,6 @@ async function createHelloRoute(baseUrl: string) {
       wallMs: 1000,
       requestBytes: 1048576,
       subrequests: 20,
-      hostCalls: 100,
       responseBytes: 1048576,
     },
     capabilities: {
@@ -4084,7 +4069,7 @@ async function createProjectRoute(
   const deployment = await postJson(baseUrl, "/deployments", {
     projectId: project.id,
     artifactId: artifact.id,
-    world: "myedge:runtime/worker@0.1.0",
+    world: "wasi:http/service@0.3.0",
     runtime: {
       backend: "wasmtime",
       version: "wasmtime-43",
@@ -4096,7 +4081,6 @@ async function createProjectRoute(
       wallMs: 1000,
       requestBytes: 1048576,
       subrequests: 20,
-      hostCalls: 100,
       responseBytes: 1048576,
     },
     capabilities: {
@@ -4125,7 +4109,7 @@ async function createHelloRouteInControlPlane(control: any) {
   const deployment = await control.createDeployment({
     projectId: project.id,
     artifactId: artifact.id,
-    world: "myedge:runtime/worker@0.1.0",
+    world: "wasi:http/service@0.3.0",
     runtime: {
       backend: "wasmtime",
       version: "wasmtime-43",
@@ -4137,7 +4121,6 @@ async function createHelloRouteInControlPlane(control: any) {
       wallMs: 1000,
       requestBytes: 1048576,
       subrequests: 20,
-      hostCalls: 100,
       responseBytes: 1048576,
     },
     capabilities: {
@@ -4169,7 +4152,7 @@ async function createProjectRouteInControlPlane(
   const deployment = await control.createDeployment({
     projectId: project.id,
     artifactId: artifact.id,
-    world: "myedge:runtime/worker@0.1.0",
+    world: "wasi:http/service@0.3.0",
     runtime: {
       backend: "wasmtime",
       version: "wasmtime-43",
@@ -4181,7 +4164,6 @@ async function createProjectRouteInControlPlane(
       wallMs: 1000,
       requestBytes: 1048576,
       subrequests: 20,
-      hostCalls: 100,
       responseBytes: 1048576,
     },
     capabilities: {

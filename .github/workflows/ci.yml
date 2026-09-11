@@ -67,6 +67,12 @@ jobs:
       - name: Run real Wasm E2E
         run: just e2e
 
+      - name: Run standalone WASI HTTP integration
+        run: just standalone-test
+
+      - name: Run async worker and daemon integration
+        run: just worker-async-test
+
   wac-migration-report:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -112,6 +118,12 @@ jobs:
 
       - name: Install WAC
         run: just wac-install
+
+      - name: Run minimal WAT and MoonBit commands
+        run: just minimal-smoke
+
+      - name: Run resident service SDK conformance and application dev tests
+        run: just service-test
 
       - name: Generate WAC migration report
         run: just sample-rust-moonbit-wac-status

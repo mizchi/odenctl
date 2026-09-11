@@ -56,10 +56,10 @@ content-type: application/json
 {
   "projectId": "prj_replace_me",
   "artifactId": "art_replace_me",
-  "world": "myedge:runtime/worker@0.1.0",
+  "world": "wasi:http/service@0.3.0",
   "runtime": {
     "backend": "wasmtime",
-    "version": "wasmtime-43",
+    "version": "wasmtime-48.0.2",
     "wasi": "wasip3"
   },
   "limits": {
@@ -68,20 +68,13 @@ content-type: application/json
     "wallMs": 1000,
     "requestBytes": 1048576,
     "subrequests": 20,
-    "hostCalls": 100,
     "responseBytes": 1048576
   },
   "capabilities": {
     "outboundHttp": {
       "enabled": true,
       "allow": ["https://api.example.com"]
-    },
-    "kv": [
-      { "binding": "MAIN", "namespaceId": "kv_main" }
-    ],
-    "secrets": [
-      { "binding": "API_KEY", "secretId": "sec_api_key" }
-    ]
+    }
   }
 }
 
