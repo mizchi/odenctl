@@ -125,6 +125,15 @@ jobs:
       - name: Run resident service SDK conformance and application dev tests
         run: just service-test
 
+      - name: Verify standalone SDK packages and I/O
+        run: just sdk-test
+
+      - name: Verify host telemetry, SDK context propagation and WAC wrappers
+        run: just telemetry-test
+
+      - name: Verify resident benchmark and process cleanup
+        run: just service-bench-test
+
       - name: Generate WAC migration report
         run: just sample-rust-moonbit-wac-status
 

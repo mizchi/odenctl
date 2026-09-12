@@ -1,19 +1,19 @@
-# WIT から celld Durable Objects を呼ぶ
+# Call celld Durable Objects through WIT
 
-[`wasmplane:durable/objects@0.1.0`](../../wit/durable/objects.wit) を import し、
-`open("counter", name)` → `object.fetch(request)` で celld の Counter を呼ぶ。
-WIT は guest とホストの契約で、[Rust ホスト実装](../../crates/runtime-core/src/durable.rs) が
-認証付き HTTP に変換し、[celld gateway](../celld-gateway/index.js) が対象の actor に転送する。
-actor 本体は celld 上の JavaScript。Wasm は standalone runtime 上で動く。
+Import [`wasmplane:durable/objects@0.1.0`](../../wit/durable/objects.wit), then call celld's Counter with
+`open("counter", name)` → `object.fetch(request)`.
+WIT defines the guest–host contract. The [Rust host implementation](../../crates/runtime-core/src/durable.rs)
+converts calls to authenticated HTTP, and the [celld gateway](../celld-gateway/index.js) forwards them to the target actor.
+The actor runs as JavaScript in celld; Wasm runs in the standalone runtime.
 
-## 起動
+## Start the gateway
 
-リポジトリルートで実行する。Rust、Node.js 24+、pnpm、just と celld 0.4.1 が必要。
-`celld` を PATH に入れ、`pnpm install --frozen-lockfile` と `just rust-build` を済ませておく。
-celld が使う esbuild は `pnpm exec` 経由で解決する。
+Run from the repository root. Requires Rust, Node.js 24+, pnpm, just, and celld 0.4.1.
+Put `celld` on PATH and run `pnpm install --frozen-lockfile` and `just rust-build` first.
+celld resolves esbuild through `pnpm exec`.
 
-初回だけ、token を含むローカル gateway 設定を生成する。
-このファイルと celld の `.celld/` は Git 管理対象外。設定が既にあれば再利用する。
+On the first run, generate local gateway configuration containing a token.
+This file and celld's `.celld/` directory are ignored by Git. Existing configuration is reused.
 
 ```sh
 node --input-type=module <<'JS'
@@ -29,57 +29,56 @@ JS
 pnpm exec celld dev examples/celld-gateway/wrangler.local.json --port 9876 --no-watch
 ```
 
-別ターミナルで、ホスト用 token を同じ設定から読む。guest の環境変数への付与は不要。
+In another terminal, read the host token from the same configuration. It does not need to be passed to the guest environment.
 
 ```sh
 export WASMPLANE_GATEWAY_TOKEN="$(node -p 'require("./examples/celld-gateway/wrangler.local.json").vars.WASMPLANE_GATEWAY_TOKEN')"
 ```
 
-## WAT を直接実行
+## Run WAT directly
 
 ```sh
 just run examples/durable-counter/counter.wat --config examples/durable-counter/runtime.example.json
 echo $? # 0
 ```
 
-[`counter.wat`](counter.wat) は binding `counter`、object 名 `wat-counter` を使い、
-`POST /increment` を request ID `wat-request-1` で送る。何度実行しても同じ更新を再適用しない。
-成功時は出力なし・終了コード `0`、adapter エラーまたは actor の HTTP 200 以外は `1`。
-名前と request ID は WAT の data segment に固定してある。
+[`counter.wat`](counter.wat) uses binding `counter` and object name `wat-counter`, sending
+`POST /increment` with request ID `wat-request-1`. Repeated runs do not apply the same update again.
+Success produces no output and exits with code `0`; adapter errors or actor responses other than HTTP 200 exit with code `1`.
+The name and request ID are fixed in the WAT data segment.
 
-このサンプルは WASI CLI 0.3 の非同期エントリを export する。
-stackful async と同期 canonical lowering を組み合わせ、ホストの非同期 `fetch` を待つ。
-WAT 内の型宣言は上記 WIT の表現で、メモリは例を小さく保つため 64 KiB 固定。
-事前の `.wasm` 変換や wasm-tools は不要。
+This sample exports an asynchronous WASI CLI 0.3 entry point. It combines stackful async with synchronous
+canonical lowering to await the host's asynchronous `fetch`. The WAT type declarations represent the WIT contract above.
+Memory is fixed at 64 KiB to keep the example small. No prior `.wasm` conversion or wasm-tools installation is required.
 
-## Rust から同じ WIT を呼ぶ
+## Call the same WIT interface from Rust
 
-[`src/lib.rs`](src/lib.rs) は wit-bindgen で生成した `objects::open` と
-`object.fetch(...).await` を呼ぶ。binding、object 名、request ID を引数で指定できる。
+[`src/lib.rs`](src/lib.rs) calls the wit-bindgen-generated `objects::open` and `object.fetch(...).await`.
+The binding, object name, and request ID can be passed as arguments.
 
 ```sh
 just durable-counter-build
 target/debug/wasmplane run examples/durable-counter/target/wasm32-wasip2/debug/durable_counter_example.wasm --config examples/durable-counter/runtime.example.json -- counter wat-counter
-# {"n":1} — WAT が更新した値。request ID 省略時は GET /。
+# {"n":1} — Value updated by WAT. Without a request ID, sends GET /.
 
 target/debug/wasmplane run examples/durable-counter/target/wasm32-wasip2/debug/durable_counter_example.wasm --config examples/durable-counter/runtime.example.json -- counter room-1 increment-1
-# {"n":1} — ID を変えると次の更新、同じ ID なら保存済みの結果。
+# {"n":1} — A new ID applies an update; the same ID returns the stored result.
 ```
 
-送信後の応答喪失は `outcome-unknown`。自動再送は行わず、重複排除は actor 側の契約に従う。
-この Counter は request ID と結果を更新と同じ SQLite transaction で保存する。
+A lost response after dispatch is reported as `outcome-unknown`. Requests are not automatically retried;
+deduplication follows the actor's contract. This Counter stores the request ID and result in the same SQLite transaction as the update.
 
-## 結合テスト
+## Integration tests
 
 ```sh
 WASMPLANE_CELLD_BIN=/absolute/path/to/celld just celld-test
 ```
 
-一時環境で実 celld を起動し、WAT と Rust の WIT 呼び出し、並行更新、binding/object の分離、
-再起動後の保存、応答喪失時の結果不明と重複排除を検証する。
-対象は `open` / `fetch`。alarm、WebSocket、fleet の移動・remote durability は未検証。
+Starts real celld in a temporary environment and verifies WIT calls from WAT and Rust, concurrent updates,
+binding/object isolation, persistence after restart, and unknown outcomes and deduplication after a lost response.
+Coverage includes `open` / `fetch`. Alarms, WebSockets, fleet migration, and remote durability have not been verified.
 
-## ベンチマーク
+## Benchmarks
 
 ```sh
 WASMPLANE_CELLD_BIN=/absolute/path/to/celld just celld-bench \
@@ -87,5 +86,5 @@ WASMPLANE_CELLD_BIN=/absolute/path/to/celld just celld-bench \
   --output perf-results/celld.json
 ```
 
-専用ゲストを release ビルドし、一時環境の実 celld に対して直接 HTTP と WIT の読み取り・更新を比較する。
-並行数、object 数、計測範囲、結果の解釈は [ベンチマークガイド](../../docs/celld-benchmark.md) を参照。
+Builds a dedicated guest in release mode and compares direct HTTP and WIT reads and updates against real celld in a temporary environment.
+See the [benchmark guide](../../docs/celld-benchmark.md) for concurrency, object counts, measurement scope, and interpretation.

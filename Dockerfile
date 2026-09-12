@@ -3,6 +3,7 @@ FROM rust:1-bookworm AS rust-build
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
+COPY sdk ./sdk
 COPY wit ./wit
 RUN cargo build --release -p wasmplane-wasip3-host
 

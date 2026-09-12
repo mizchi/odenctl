@@ -1,36 +1,39 @@
-# CLI・設定リファレンス
+# CLI and Configuration Reference
 
-[利用者ガイド](README.md) / CLI・設定リファレンス
+[User guide](README.md) / CLI and configuration reference
 
-[クイックスタート](getting-started.md)でビルドした Rust バイナリ `wasmplane` を使います。
+Use the Rust `wasmplane` binary built in the [Quickstart](getting-started.md).
 
 ## CLI
 
-| コマンド | 動作 |
+| Command | Behavior |
 | --- | --- |
-| `wasmplane --help` | コマンドの概要を表示します |
-| `wasmplane --version` | ランタイム、Wasmtime、ビルドの情報を表示します |
-| `wasmplane run <component>` | WASI CLI component を1回実行します |
-| `wasmplane serve <component>` | 要求ごとに独立した instance で HTTP を処理します |
-| `wasmplane serve <component> --resident` | lifecycle を持つ常駐 HTTP サービスを起動します |
-| `wasmplane build <app.json>` | manifest のビルドコマンドを順番に実行します |
-| `wasmplane start <app.json>` | manifest が指す既存の component を起動します |
-| `wasmplane dev <app.json>` | ビルド・起動し、変更を監視して再ビルドします |
+| `wasmplane --help` | Show available commands |
+| `wasmplane --version` | Show runtime, Wasmtime, and build information |
+| `wasmplane init <directory> [--language rust\|moonbit]` | Generate a service with a vendored SDK; defaults to Rust |
+| `wasmplane inspect <component> [--json]` | Report imports, exports, supported modes, and potential capability interfaces |
+| `wasmplane check <app.json> [--json]` | Validate the manifest, component contract, and host configuration |
+| `wasmplane run <component>` | Run a WASI CLI component once |
+| `wasmplane serve <component>` | Handle HTTP requests in independent instances |
+| `wasmplane serve <component> --resident` | Start a resident HTTP service with lifecycle hooks |
+| `wasmplane build <app.json>` | Execute the manifest's build commands in order |
+| `wasmplane start <app.json>` | Start the existing component specified by the manifest |
+| `wasmplane dev <app.json>` | Build, start, watch for changes, and rebuild |
 
-`run` / `serve` は `.wasm` と `(component ...)` 形式の `.wat` を受け付けます。
-`run` は WASI CLI 0.2 / 0.3、通常の `serve` は WASI HTTP 0.2 / 0.3 に対応します。
-`--resident` には追加で `wasmplane:app/lifecycle@0.1.0` の export が必要です。
-付属のサービス SDK は WASI HTTP 0.3 を使います。
+`run` and `serve` accept `.wasm` binaries and `.wat` files in `(component ...)` format.
+`run` supports WASI CLI 0.2 and 0.3; ordinary `serve` supports WASI HTTP 0.2 and 0.3.
+`--resident` additionally requires the `wasmplane:app/lifecycle@0.1.0` export.
+The service SDKs use WASI HTTP 0.3.
 
-### component を直接指定するオプション
+### Options for running a component directly
 
-| オプション | 対象 | 意味 |
+| Option | Commands | Meaning |
 | --- | --- | --- |
-| `--config runtime.json` | run / serve | 権限と実行制限を指定します |
-| `--timeout-ms 5000` | run / serve | 設定ファイルの `timeout_ms` を上書きします |
-| `--addr 127.0.0.1:8081` | serve | 待ち受け先。既定は `127.0.0.1:8080` |
-| `--resident` | serve | 常駐モードを選びます |
-| `-- arg1 arg2` | run | `--` 以降を guest の引数として渡します |
+| `--config runtime.json` | run / serve | Set permissions and execution limits |
+| `--timeout-ms 5000` | run / serve | Override `timeout_ms` from the configuration file |
+| `--addr 127.0.0.1:8081` | serve | Listen address; defaults to `127.0.0.1:8080` |
+| `--resident` | serve | Select resident mode |
+| `-- arg1 arg2` | run | Pass arguments after `--` to the guest |
 
 ```sh
 wasmplane run examples/minimal-command/command.wat --timeout-ms 1000
@@ -38,13 +41,41 @@ wasmplane serve examples/service-rust/target/wasm32-wasip2/debug/service_rust.wa
   --resident --addr 127.0.0.1:8081
 ```
 
-`build` / `start` / `dev` は manifest のパスだけを受け付けます。
-ポートや実行制限は manifest 内で変更してください。
+`build`, `start`, and `dev` accept only a manifest path. Set ports and execution
+limits in the manifest.
+
+### Preflight checks
+
+```sh
+wasmplane inspect my-app/target/service.wasm
+wasmplane check my-app/app.json --json
+```
+
+`inspect` reports the component contract without configuration. `check` verifies
+the exports required by the manifest's mode, checks imported types against the host,
+and verifies that host resources such as directories can be prepared.
+`check` exits with code 0 on success and 1 on failure. `inspect` reports unsupported
+imports with exit code 0, but exits with code 1 if reading or compiling the input fails.
+
+Neither command instantiates the guest, calls `start` or `run`, or builds the app.
+They do not guarantee network connectivity, successful guest initialization, or
+successful file operations. `--json` emits a machine-readable report with
+`schema_version: 1`. In `check`, `grants.env` lists environment variable names only;
+values and Durable Object authentication tokens are not displayed.
+`capability_interfaces` lists potential capabilities inferred from imports, not
+actual use or granted access. SDK bindings may include interfaces the app does not use.
+
+`dev` runs the same checks after building and before stopping the old generation.
+It passes the validated compiled snapshot to the new generation, so a later change
+to the component file cannot replace the checked content. Validation failures keep
+the old generation running. The guest's `start` hook runs after the switch, so an
+initialization trap or error does not roll back to the old generation.
 
 ## Application manifest
 
-JSON ファイルでアプリの実行方法を保存します。たとえばリポジトリのルートに
-`command.app.json` を作り、次の内容を保存すると最小 WAT を起動できます。
+An application manifest is a JSON file describing how to run an app. For example,
+create `command.app.json` at the repository root with the following content to run
+the minimal WAT command:
 
 ```json
 {
@@ -58,26 +89,28 @@ JSON ファイルでアプリの実行方法を保存します。たとえばリ
 wasmplane start command.app.json
 ```
 
-| フィールド | 型 | 既定値・用途 |
+| Field | Type | Default and purpose |
 | --- | --- | --- |
-| `version` | 整数 | 必須。現在は `1` |
-| `mode` | 文字列 | 必須。`command` / `http` / `service` |
-| `component` | 文字列 | 必須。実行する component のパス |
-| `listen` | 文字列 | `127.0.0.1:8080`。http / service の待ち受け先 |
-| `args` | 文字列配列 | `[]`。command の引数 |
-| `build` | 文字列配列の配列 | `[]`。ビルド時に順番に実行する argv |
-| `watch` | パスの配列 | 空または省略時は component を監視。manifest 自体は常に監視 |
-| `runtime` | オブジェクト | 権限と実行制限。各値の既定値は後述 |
-| `service` | オブジェクト | 常駐サービスの起動・終了期限 |
+| `version` | Integer | Required; currently `1` |
+| `mode` | String | Required; `command`, `http`, or `service` |
+| `component` | String | Required; path to the executable component |
+| `listen` | String | `127.0.0.1:8080`; listen address for http/service |
+| `args` | String array | `[]`; command arguments |
+| `build` | Array of string arrays | `[]`; argument vectors executed in order |
+| `watch` | Path array | Watches the component if omitted or empty; always watches the manifest |
+| `runtime` | Object | Permissions and execution limits; defaults are listed below |
+| `service` | Object | Resident service startup and shutdown deadlines |
 
-未知のフィールド、未対応の version、不正な実行制限はエラーになります。JSON のコメントは使えません。
+Unknown fields, unsupported versions, and invalid limits are errors. JSON comments
+are not supported.
 
-### パスとビルド
+### Paths and builds
 
-`component`、`watch`、`runtime.directories[].host` の相対パスは **manifest の親ディレクトリ基準**です。
-どのディレクトリから `wasmplane start` を実行しても、同じファイルを参照します。
+Relative paths in `component`, `watch`, and `runtime.directories[].host` are resolved
+**from the manifest's parent directory**. They refer to the same files regardless
+of where you run `wasmplane start`.
 
-build コマンドも manifest の親ディレクトリで実行します。たとえば Rust のサンプルは次の設定です。
+Build commands also run in the manifest's parent directory. The Rust example uses:
 
 ```json
 {
@@ -89,38 +122,40 @@ build コマンドも manifest の親ディレクトリで実行します。た�
 }
 ```
 
-1つの内部配列が1コマンドです。シェルによる `$VAR`、`~`、パイプ、リダイレクトは展開しません。
-複数の処理は argv 配列を追加するか、just の recipe / スクリプトにまとめます。
-build コマンドはホスト上で動き、ホストの環境変数を継承します。guest の権限設定はビルドには適用されません。
+Each inner array is one command. Shell expansion of `$VAR`, `~`, pipes, and redirects
+is not performed. Add more argument vectors for multiple steps, or put them in a
+just recipe or script. Build commands run on the host and inherit its environment;
+guest permissions do not apply to the build.
 
-`build` はコマンドの成功と component ファイルの存在を確認します。
-component のリンクや guest の初期化は `start` 時に行うため、ビルド成功後に起動が失敗する場合もあります。
+`build` checks that commands succeed and the component file exists. Linking and
+guest initialization happen when starting, so a successful build can still fail to start.
 
-### dev の変更監視
+### File watching in dev
 
-`dev` はファイル内容を100ms間隔で確認し、200ms変更がない状態になってから再ビルドします。
-`watch` のディレクトリは再帰的に監視しますが、内部の `target` / `_build` / `.git` / `node_modules` は除外します。
-symlink の参照先の内容は監視しないため、必要な参照先を `watch` に直接追加してください。
+`dev` checks file contents every 100 ms and rebuilds after 200 ms without changes.
+It watches directories in `watch` recursively, excluding `target`, `_build`, `.git`,
+and `node_modules`. It does not follow symlink contents; add a symlink's target to
+`watch` explicitly if needed.
 
-| 変更後の結果 | 実行中のアプリ |
+| Result after a change | Running application |
 | --- | --- |
-| manifest の編集ミス、ビルド失敗 | 現在のアプリを維持し、次の変更を待ちます |
-| ビルド成功 | 現在のアプリを終了し、新しい instance を起動します |
-| 新しい component のリンク・初期化エラー | エラーを表示し、次の変更を待ちます |
-| アプリ自身が正常終了・異常終了 | 自動再起動せず、次の変更を待ちます |
+| Invalid manifest, failed build, or failed preflight validation | Keep the current app and wait for another change |
+| Successful build and validation | Stop the current app and start a new instance |
+| New guest fails to initialize after the switch | Report the error and wait for another change |
+| App exits successfully or fails | Wait for another change without automatically restarting |
 
-切り替えには停止時間があり、メモリ上の状態はリセットされます。
-ビルド中の変更も次のビルド対象になります。
-Ctrl-C で終了すると、実行中のアプリを停止し、ビルド中ならビルドを中断します。
-Unix ではビルドの process group 内の子プロセスも終了します。
+Switching causes downtime and resets in-memory state. Changes made during a build
+trigger a subsequent build. Ctrl-C stops the running app and interrupts any active
+build. On Unix, it also terminates children in the build's process group.
 
-## 権限を設定する
+## Granting permissions
 
-初期状態では、guest にホストの環境変数・ディレクトリ・外部 HTTP 接続・Durable Object binding を渡しません。
-必要なものだけ `runtime` に設定します。標準入出力はホストから継承します。
+By default, guests receive no host environment variables, directories, outbound HTTP
+access, or Durable Object bindings. Grant only what the app needs in `runtime`.
+Standard input, output, and error are inherited from the host.
 
-以下は manifest の `runtime` フィールドの**値**として保存する例です。
-`--config runtime.json` を使う場合は、このオブジェクト自体を `runtime.json` に保存します。
+The following is the **value** of the manifest's `runtime` field. When using
+`--config runtime.json`, save this object itself as `runtime.json`.
 
 ```json
 {
@@ -134,44 +169,46 @@ Unix ではビルドの process group 内の子プロセスも終了します。
 }
 ```
 
-`data` ディレクトリは自動作成しません。manifest と同じディレクトリで `mkdir -p data` を実行してください。
-guest からはホストのパスの代わりに `/data` でアクセスします。
-`write` を省略するか `false` にすると読み取り専用です。
+The runtime does not create `data` automatically. Run `mkdir -p data` beside the
+manifest. The guest accesses it as `/data`, rather than by its host path.
+Omitting `write` or setting it to `false` makes the directory read-only.
 
-`--config` 内の `directories[].host` の相対パスは **コマンド実行時の作業ディレクトリ基準**です。
-manifest 内の `runtime.directories[].host` とは基準が異なります。
+Relative `directories[].host` paths in a `--config` file are resolved **from the
+command's working directory**. This differs from `runtime.directories[].host` in
+a manifest.
 
-`runtime.env` の値は JSON の文字列をそのまま渡します。`${TOKEN}` などの変数展開はしません。
-標準 WASI の任意 socket とプロセス起動は許可しません。
-`outbound_origins` は scheme・host・port を指定し、パス、ユーザー情報、query、fragment は含めません。
-外部 HTTP の redirect は追跡しません。
+Values in `runtime.env` are passed as literal JSON strings; `${TOKEN}` and other
+variable references are not expanded. Arbitrary WASI sockets and process spawning
+are not allowed. Each `outbound_origins` entry specifies a scheme, host, and port,
+without a path, user information, query, or fragment. Outbound HTTP redirects are
+not followed.
 
-## 実行制限
+## Execution limits
 
-| runtime フィールド | 既定値 | 有効範囲・意味 |
+| Runtime field | Default | Range and meaning |
 | --- | --- | --- |
-| `timeout_ms` | `30000` | 1〜86400000ms。command / HTTP 要求の実行期限 |
-| `memory_mb` | `128` | 1〜65536。linear memory ごとの上限（MiB） |
-| `max_body_bytes` | `1048576` | 正の整数。要求・応答それぞれの body 上限（byte） |
-| `max_concurrent_requests` | `64` | 1〜65536。同時に受け付ける HTTP 要求数 |
+| `timeout_ms` | `30000` | 1–86400000 ms; command or HTTP request deadline |
+| `memory_mb` | `128` | 1–65536; limit per linear memory, in MiB |
+| `max_body_bytes` | `1048576` | Positive integer; limit for each request and response body, in bytes |
+| `max_concurrent_requests` | `64` | 1–65536; maximum admitted concurrent HTTP requests |
 
-`memory_mb` はプロセス全体のメモリ使用量の上限ではありません。
-HTTP 接続数も `max(32, max_concurrent_requests * 2)` に制限します。
+`memory_mb` does not limit the entire process's memory usage. HTTP connections are
+also limited to `max(32, max_concurrent_requests * 2)`.
 
-| 動作 | http / 通常の serve | service / serve --resident |
+| Behavior | http / ordinary serve | service / serve --resident |
 | --- | --- | --- |
-| HTTP handler | 要求ごとの instance で並行実行 | 同一 instance で直列実行 |
-| body | 上限付きで stream として転送 | 上限内で全体を蓄積して応答 |
-| 要求期限 | instance 作成と処理、応答 body の消費完了まで | body 受信、待機列、実行、応答 body の生成まで |
-| 同時要求数の枠 | 応答 body の消費完了まで保持 | body 受信、待機列、実行、応答生成まで保持 |
-| guest の trap・実行期限超過 | 当該要求が失敗。他の要求は継続 | 実行中の guest が失敗するとサービス全体を終了 |
-| 通常終了 | 要求と接続をキャンセル | 受付を止め、受付済みの要求を処理して stop を呼ぶ |
+| HTTP handler | Concurrent execution in separate instances | Serial execution in one instance |
+| Body | Streamed with a size limit | Fully buffered within the size limit |
+| Request deadline | Instantiation, processing, and response body consumption | Body receipt, queue wait, execution, and response body production |
+| Concurrency slot | Held until response body consumption finishes | Held through body receipt, queue wait, execution, and response production |
+| Guest trap or execution deadline | Fails that request; others continue | Failure of the executing guest terminates the service |
+| Normal shutdown | Cancel requests and connections | Stop admission, drain accepted requests, then call stop |
 
-読み込み・コンパイルは guest の実行期限に含みません。
-常駐サービスは待機中に要求タイムアウトでは終了しません。
-常駐モードは SSE、WebSocket、無期限の streaming 応答に対応せず、HTTP trailer も転送しません。
+Loading and compilation are outside the guest execution deadline. Idle resident
+services do not exit because of a request timeout. Resident mode does not support
+SSE, WebSocket, or indefinite streaming responses, and does not forward HTTP trailers.
 
-常駐サービスの起動と終了は、manifest の `service` に別の期限を指定できます。
+Set separate resident startup and shutdown deadlines in the manifest's `service` field:
 
 ```json
 {
@@ -180,10 +217,10 @@ HTTP 接続数も `max(32, max_concurrent_requests * 2)` に制限します。
 }
 ```
 
-このオブジェクトを `service` の値として保存します。どちらも既定値は10000ms、有効範囲は1〜86400000msです。
-起動期限は instance 作成と start の合計、終了期限は受付済み要求の処理と stop の合計です。
-期限超過ではアプリを破棄し、非ゼロの終了コードを返します。
-`serve --resident` で直接起動する場合は、これら2つの期限は既定値になります。
+Save this object as the value of `service`. Both settings default to 10000 ms and
+accept 1–86400000 ms. Startup covers instantiation plus start; shutdown covers
+draining accepted requests plus stop. Exceeding a deadline discards the app and
+returns a nonzero exit code. Direct `serve --resident` uses the defaults for both.
 
-Durable Object の設定は [celld Durable Objects を使う](durable-objects.md)、
-エラー別の対処は [トラブルシューティング](troubleshooting.md)を参照してください。
+See [celld Durable Objects](durable-objects.md) for Durable Object configuration and
+[Troubleshooting](troubleshooting.md) for error-specific guidance.

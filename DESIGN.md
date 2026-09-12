@@ -1,44 +1,45 @@
-# wasmplane design
+# wasmplane Design
 
-この文書は、wasmplane の現時点の設計をまとめる。前提は WASIp3 と
-Wasmtime component model で、WIT をプラットフォーム API の契約として扱う。
+This document describes wasmplane's current design. It assumes WASIp3 and the Wasmtime Component Model,
+with WIT defining the platform API contract.
 
-## 採用する方向性（2026-09-11）
+## Direction (2026-09-11)
 
-単体で起動できる Wasm アプリランタイムを核にし、control plane からも同じ runtime core を
-利用する。Wasmtime は upstream 最新安定版または `mizchi/wasmtime-threads` を使う。
-Wasmtime 48.0.2 を採用し、`denoland/celld` の Durable Objects へ接続する gateway adapter を実装した。
+Build around a standalone Wasm application runtime, with the control plane using the same runtime core.
+Use the latest upstream stable Wasmtime or `mizchi/wasmtime-threads`.
+Wasmtime 48.0.2 is adopted, and a gateway adapter connects to `denoland/celld` Durable Objects.
 
-責務の分離、engine の選定、celld の契約と検証順序は
-[Standalone Wasm runtime direction](docs/runtime-direction.md) にまとめる。
-単体 CLI、権限設定、celld のローカル検証手順は [runtime guide](docs/standalone-runtime.md) を参照。
-旧独自 worker WIT は削除し、node adapter も標準 WASI HTTP を呼ぶ。以下は control plane の設計。
+[Standalone Wasm runtime direction](docs/runtime-direction.md) covers responsibility boundaries,
+engine selection, celld contracts, and the validation sequence.
+See the [runtime guide](docs/standalone-runtime.md) for the standalone CLI, permissions, and local celld validation.
+The old custom worker WIT was removed; the node adapter also calls standard WASI HTTP.
+The following sections describe the control plane.
 
-## Current implementation goals
+## Current Implementation Goals
 
-wasmplane は、Cloudflare Workers に近い運用モデルを Wasmtime 上で構成するための
-Wasm hosting control plane である。主な目標は次の通り。
+wasmplane is a Wasm hosting control plane for building a Cloudflare Workers-like operational model on Wasmtime.
+Its main goals are:
 
-- Worker artifact は immutable deployment として登録する
-- route は deployment への mutable pointer として扱い、rollback は pointer update にする
-- hot path は DB を読まず、runtime-local の compact route snapshot で処理する
-- host capability は deny-by-default にし、WIT 経由で明示的に許可する
-- `.cwasm` と embedded Wasmtime daemon で cold compile と process spawn のコストを避ける
-- control plane と runtime node を分離し、runtime node は水平スケール可能にする
+- Register worker artifacts as immutable deployments.
+- Treat routes as mutable pointers to deployments, making rollback a pointer update.
+- Serve the hot path from compact runtime-local route snapshots without database reads.
+- Deny host capabilities by default and grant them explicitly through WIT.
+- Avoid cold compilation and process spawning with `.cwasm` and an embedded Wasmtime daemon.
+- Separate the control plane from horizontally scalable runtime nodes.
 
 ## Architecture
 
-主要コンポーネントは 5 つ。
+There are five main components:
 
-| component | role |
+| Component | Role |
 | --- | --- |
-| Control Plane | project, deployment, route, secret, KV namespace, runtime node registry を管理する |
-| Artifact Store | Wasm component bytes を digest-addressed に保存する。local file と S3/R2 互換 store を持つ |
-| Snapshot Publisher | route graph を compact route snapshot に変換し、runtime node へ配布する |
-| Runtime Node | snapshot を保持し、HTTP request を route/deployment に解決し、prepared component を呼ぶ |
-| Wasmtime Host Daemon | Rust embedded Wasmtime runtime。`.cwasm` deserialize、component instantiate、WIT host API を実行する |
+| Control Plane | Manages projects, deployments, routes, secrets, KV namespaces, and the runtime node registry |
+| Artifact Store | Stores Wasm component bytes by digest, with local file and S3/R2-compatible backends |
+| Snapshot Publisher | Converts the route graph into compact route snapshots and distributes them to runtime nodes |
+| Runtime Node | Holds snapshots, resolves HTTP requests to routes/deployments, and invokes prepared components |
+| Wasmtime Host Daemon | Rust embedded Wasmtime runtime that deserializes `.cwasm`, instantiates components, and provides WIT host APIs |
 
-概念的な request path:
+Conceptual request path:
 
 ```text
 client
@@ -50,7 +51,7 @@ client
   -> guest component handle(request)
 ```
 
-control path:
+Control path:
 
 ```text
 operator/API
@@ -64,38 +65,38 @@ operator/API
 
 ## Contract Layer
 
-WIT が worker と host の境界であり、control plane の deployment contract はこの境界を
-破らない。runtime は deployment を受け取る前に、最低限次を検証する。
+WIT defines the worker–host boundary. The control plane's deployment contract must preserve that boundary.
+Before accepting a deployment, the runtime validates at least the following:
 
-- runtime backend は Wasmtime
-- WASI profile は WASIp3
-- world は worker world
-- artifact digest は `sha256:*`
-- privileged capabilities は false
+- The runtime backend is Wasmtime.
+- The WASI profile is WASIp3.
+- The world is the worker world.
+- The artifact digest uses `sha256:*`.
+- Privileged capabilities are false.
 
-deployment は次の情報を immutable に持つ。
+A deployment holds the following immutable information:
 
-- project id
-- artifact id, location, digest
+- Project ID
+- Artifact ID, location, and digest
 - WIT world
-- runtime backend/version/WASI profile
-- resource limits
-- capability policy
-- secret/KV bindings
+- Runtime backend/version/WASI profile
+- Resource limits
+- Capability policy
+- Secret/KV bindings
 
-route は mutable pointer であり、単一 deployment または weighted targets を指す。
-canary と rollback は route target の変更として表現する。
+A route is a mutable pointer to a single deployment or weighted targets.
+Canary releases and rollbacks are represented as route target changes.
 
 ## Control Plane
 
-control plane は write-heavy ではなく、正しさと監査性を優先する。
+The control plane prioritizes correctness and auditability over write throughput.
 
-Repository backend:
+Repository backends:
 
-- local/dev: SQLite
-- production: Postgres
+- Local/development: SQLite
+- Production: Postgres
 
-主要データ:
+Primary data:
 
 - projects
 - deployments
@@ -107,135 +108,129 @@ Repository backend:
 - route_snapshot_publications
 - audit events
 
-API token は scoped bearer token を使う。legacy `WASMPLANE_API_TOKEN` は全権限として残し、
-production では `WASMPLANE_API_TOKENS` で `read`, `write`, `publish`, `*` を分ける。
-mutation は JSONL audit sink に記録できる。
+API authentication uses scoped bearer tokens. Legacy `WASMPLANE_API_TOKEN` retains full access;
+production uses `WASMPLANE_API_TOKENS` to separate `read`, `write`, `publish`, and `*` scopes.
+Mutations can be recorded in a JSONL audit sink.
 
-schema migration は `schema_migrations` で管理する。startup は repository initialization で
-known migrations を apply し、その後 compiled migration catalog と照合して current/latest version を
-検査する。DB が pending migration を持つ場合や、binary が知らない future migration を持つ場合は
-startup/check で検出する。
+Schema migrations are tracked in `schema_migrations`. At startup, repository initialization applies known migrations,
+then compares the current/latest versions against the compiled migration catalog.
+Startup/check detects pending database migrations and future migrations unknown to the binary.
 
-運用コマンドは `pnpm wasmplane migrate check|apply` と `just db-migrate-check|db-migrate-apply`
-に集約する。production rollout 前は `just pg-backup` で custom-format `pg_dump` を取得し、
-rollback は writer を止めて `just pg-restore` で backup を戻してから前 version の app image を
-再 deploy する。down migration は自動化しない。
+Operational commands are `pnpm wasmplane migrate check|apply` and `just db-migrate-check|db-migrate-apply`.
+Before a production rollout, use `just pg-backup` to create a custom-format `pg_dump`.
+To roll back, stop writers, restore the backup with `just pg-restore`, then redeploy the previous application image.
+Down migrations are not automated.
 
 ## Artifact Design
 
-artifact は content digest で識別する。local artifact ingestion では component bytes を保存し、
-Rust host で Wasm component として validation する。production では S3/R2 互換 store を使う。
+Artifacts are identified by content digest. Local ingestion stores component bytes and validates them as a
+Wasm component through the Rust host. Production uses an S3/R2-compatible store.
 
-artifact は optional な signature と provenance を持つ。control plane は deployment 作成時に
-設定済み verifier で signature を検証し、署名がない/不正な artifact から deployment を作らない。
-現実装は digest に対する `sha256-hmac` verifier を内蔵し、将来は KMS-backed signing や Sigstore
-verification に差し替えられる contract にしている。provenance は builder, source, revision,
-build id を保持し、artifact response と route snapshot に露出する。
+Artifacts may carry a signature and provenance. When creating a deployment, the control plane verifies the signature
+with the configured verifier and rejects unsigned or invalidly signed artifacts.
+The implementation includes a `sha256-hmac` verifier over the digest, with a contract that allows replacement by
+KMS-backed signing or Sigstore verification. Provenance records the builder, source, revision, and build ID,
+and is exposed in artifact responses and route snapshots.
 
-runtime node は `file://`, `http://`, `https://`, private `s3://`, `oci://` の materialize に対応している。
-private S3/R2 artifact は runtime node が SigV4 GET で取得し、digest 検証後に cache する。
-`WASMPLANE_ARTIFACT_BUCKET` が設定されている場合は、異なる bucket の `s3://` artifact を拒否する。
-OCI artifact は registry v2 API で manifest を取得し、control plane artifact digest と一致する
-layer だけを blob として取得する。`oci://registry/repo@sha256:<digest>` は digest-addressed blob pull
-として扱い、private registry は static bearer token または basic auth で接続する。
+Runtime nodes support materializing `file://`, `http://`, `https://`, private `s3://`, and `oci://` artifacts.
+Private S3/R2 artifacts are fetched with SigV4 GET and cached after digest verification.
+When `WASMPLANE_ARTIFACT_BUCKET` is set, `s3://` artifacts from other buckets are rejected.
+For OCI artifacts, the node fetches the manifest through the registry v2 API and downloads only the layer
+matching the control plane artifact digest. `oci://registry/repo@sha256:<digest>` is treated as a digest-addressed
+blob pull. Private registries use a static bearer token or basic authentication.
 
-`.cwasm` は user artifact ではない。node-local cache artifact であり、次に強く依存する。
+`.cwasm` is a node-local cache artifact, not a user artifact. It depends closely on:
 
-- host binary
+- Host binary
 - Wasmtime version
-- Wasmtime Engine config
-- pooling allocator config
-- target machine
+- Wasmtime Engine configuration
+- Pooling allocator configuration
+- Target machine
 
-そのため `.cwasm` cache key には deployment id, artifact digest, Engine variant を含める。
-Engine variant は長い config string ではなく短い hash にする。
+The `.cwasm` cache key therefore includes the deployment ID, artifact digest, and Engine variant.
+The Engine variant is a short hash rather than a long configuration string.
 
 ## Runtime Node
 
-runtime node は snapshot-driven に動く。通常 request path では control plane DB を読まない。
+Runtime nodes are driven by snapshots. The normal request path does not read the control plane database.
 
-runtime node の責務:
+Runtime node responsibilities:
 
-- route snapshot を受け取って validation する
-- artifact を materialize し、digest を検証する
-- `.cwasm` を node-local cache に precompile する
-- HTTP request を route snapshot で deployment に解決する
-- deployment capability/limits を host invocation に渡す
-- request metrics, structured events, OTLP traces を出す
-- concurrency limit を超える request を拒否する
-- project-specific concurrency budget を超える request を拒否する
-- snapshot warmup の materialize/precompile concurrency を制限する
-- node-local artifact / `.cwasm` cache を retention policy で GC する
+- Receive and validate route snapshots.
+- Materialize artifacts and verify their digests.
+- Precompile `.cwasm` into the node-local cache.
+- Resolve HTTP requests to deployments through the route snapshot.
+- Pass deployment capabilities and limits to host invocations.
+- Emit request metrics, structured events, and OTLP traces.
+- Reject requests above the global concurrency limit.
+- Reject requests above the project's concurrency budget.
+- Bound materialization and precompilation concurrency during snapshot warmup.
+- Garbage-collect node-local artifact and `.cwasm` caches according to retention policy.
 
-runtime node registry は node URL/status に加えて region, labels, capacity, current load を持つ。
-heartbeat は capacity と active request load を更新する。operator は control-plane API または Admin UI
-から node status を `active`, `draining`, `offline` に切り替えられる。status update は last heartbeat
-metadata を保持し、maintenance/scale-down 前の drain に使う。control plane は active かつ TTL 内の node
-から、draining/offline/stale/saturated node を publish target から除外する。snapshot publish は project
-placement policy で region/label rule を評価し、snapshot 内 project の rule に合う registered runtime
-nodes の union へ publish できる。
-placement rule は ordered `failover` tiers を持てる。primary tier が active target を返す限り fallback
-region には publish しない。primary region の node が offline/stale/saturated などで target にならない
-場合のみ、failover tiers を順に評価して最初に target を持つ tier へ publish する。
-runtime node は Wasmtime backend, WASI profile, runtime version, host version, Engine variant も
-registration/heartbeat で広告する。Admin UI はこの metadata を表示し、Wasmtime upgrade 時に
-新旧 Engine variant が混在していないか確認できる。
+The runtime node registry stores region, labels, capacity, and current load alongside node URL/status.
+Heartbeats update capacity and active request load. Operators can set node status to `active`, `draining`, or `offline`
+through the control plane API or Admin UI. Status updates preserve the latest heartbeat metadata and support draining
+before maintenance or scale-down. Publication targets must be active and within the heartbeat TTL;
+draining, offline, stale, and saturated nodes are excluded. Snapshot publication evaluates project placement policies
+by region and label, and can target the union of registered runtime nodes matching the projects in the snapshot.
 
-registry の肥大化を避けるため、operator は status と age を指定して古い runtime node entry を GC できる。
-default cleanup は offline node のみを対象にし、active node の削除は明示的な status 指定を必要とする。
-削除判定の時刻は `lastSeenAt ?? registeredAt` を使う。
+Placement rules can define ordered `failover` tiers. As long as the primary tier has an active target,
+fallback regions do not receive publications. If the primary region has no eligible nodes because they are
+offline, stale, saturated, or otherwise excluded, tiers are evaluated in order and the first with targets is used.
+Nodes also advertise the Wasmtime backend, WASI profile, runtime version, host version, and Engine variant
+in registration and heartbeats. The Admin UI displays this metadata to help identify mixed Engine variants during upgrades.
 
-runtime node identity は registry に公開 metadata として保存する。node は `keyId` と任意の
-transport certificate SHA-256 fingerprint を heartbeat/registration で広告し、control plane は手元の
-runtime identity keyring から対応する secret を選んで snapshot publish を HMAC-SHA256 で署名する。
-runtime node 側に identity keyring が設定されている場合、`PUT /__runtime/snapshots/routes` は bearer
-token だけでなく署名も検証する。key rotation は multi-key keyring 前提で、新 key を両側に追加し、
-node の active `keyId` を切り替え、heartbeat 反映後に旧 key を外す。実際の mTLS は Fly private
-network や edge proxy の TLS 終端で行い、ここでは application-level proof-of-possession と
-certificate fingerprint pinning のための contract を提供する。
+Operators can garbage-collect old registry entries by status and age. Default cleanup targets only offline nodes;
+deleting active nodes requires explicitly selecting that status. Age is evaluated using `lastSeenAt ?? registeredAt`.
 
-runtime cache retention は `WASMPLANE_ARTIFACT_CACHE_DIR` と `WASMPLANE_CACHE_DIR` を対象にする。
-GC は max age を超えた file を先に消し、次に directory ごとの max bytes を超えていれば古い file から
-削除する。現在 prepared deployment が参照している materialized artifact と `.cwasm` は keep path として
-保護し、snapshot switch や warmup 中の hot path を壊さない。GC は runtime management endpoint から
-手動実行でき、interval env が設定されている場合は runtime node 内で定期実行する。
-`.cwasm` は Engine variant 付き cache key で保存する。variant は host version label, host binary stat,
-precompile に使う Wasmtime Engine config から作る。Wasmtime/Cranelift upgrade 後は
-`POST /__runtime/cache/invalidate-cwasm` で現在 variant 以外の `.cwasm` を削除できる。prepared component
-が参照している `.cwasm` は keep path として保護されるため、drain 中の node で安全に実行できる。
+Runtime node identity is stored as public registry metadata. Nodes advertise a `keyId` and optional transport
+certificate SHA-256 fingerprint during registration and heartbeats. The control plane selects the corresponding
+secret from its runtime identity keyring and signs snapshot publications with HMAC-SHA256.
+When the node has an identity keyring configured, `PUT /__runtime/snapshots/routes` verifies the signature
+in addition to the bearer token. Rotation uses a multi-key keyring: add the new key to both sides, switch the node's
+active `keyId`, wait for the heartbeat update, then remove the old key. Actual mTLS is handled by TLS termination
+on the Fly private network or an edge proxy. This contract provides application-level proof of possession and
+certificate fingerprint pinning.
 
-`RUNTIME_SNAPSHOT_WARMUP=1` の場合、snapshot ACK 前に target deployments を materialize/precompile
-する。これにより deploy switch 後の初回 request latency を抑える。warmup work は
-`RUNTIME_SNAPSHOT_WARMUP_CONCURRENCY` で bounded queue 化し、snapshot 内の deployment 数が多い時に
-runtime node が一斉 compile で詰まるのを避ける。
+Cache retention applies to `WASMPLANE_ARTIFACT_CACHE_DIR` and `WASMPLANE_CACHE_DIR`.
+Garbage collection first removes files older than the maximum age, then removes the oldest files if a directory
+still exceeds its byte limit. Materialized artifacts and `.cwasm` files referenced by prepared deployments are protected
+as keep paths, preserving the hot path during snapshot changes and warmup. Garbage collection can be triggered through
+a runtime management endpoint or run periodically when the interval environment variable is set.
+`.cwasm` cache keys include an Engine variant derived from the host version label, host binary stat, and precompilation
+Engine configuration. After a Wasmtime/Cranelift upgrade, `POST /__runtime/cache/invalidate-cwasm` removes `.cwasm`
+files from other variants. Files referenced by prepared components remain protected, allowing invalidation on a draining node.
+
+With `RUNTIME_SNAPSHOT_WARMUP=1`, target deployments are materialized and precompiled before the snapshot ACK,
+reducing first-request latency after a deployment switch. `RUNTIME_SNAPSHOT_WARMUP_CONCURRENCY` bounds the warmup queue
+so a snapshot with many deployments does not overwhelm the node with simultaneous compilation.
 
 ## Embedded Wasmtime Host Daemon
 
-初期実装は request ごとに Rust CLI process を spawn していた。この方式は単純だが、
-process spawn が hot path の支配的なコストになる。現在の production-oriented path は
-Rust embedded Wasmtime host daemon である。
+The initial implementation spawned a Rust CLI process per request. This was simple, but process spawning dominated
+the hot path. The current production-oriented path uses a Rust embedded Wasmtime host daemon.
 
-daemon の責務:
+Daemon responsibilities:
 
-- shared Wasmtime `Engine` を保持する
-- LRU-bounded prepared component cache を保持する
-- `.cwasm` を deserialize して instantiate する
-- request ごとに fresh `Store` / Instance を作る
-- WIT host imports を提供する
-- admission control で in-flight invoke 数を制御する
-- `/stats` と `/metrics` を公開する
+- Maintain a shared Wasmtime `Engine`.
+- Maintain an LRU-bounded prepared component cache.
+- Deserialize `.cwasm` and instantiate components.
+- Create a fresh `Store` / Instance per request.
+- Provide WIT host imports.
+- Bound in-flight invocations through admission control.
+- Expose `/stats` and `/metrics`.
 
-request ごとに fresh Store/Instance を作る。prepared component の LRU と Wasmtime pooling allocator は
-継続利用する。旧独自 WIT の Store reuse/reset 契約は削除した。
+Each request gets a fresh Store/Instance. The prepared component LRU and Wasmtime pooling allocator remain in use.
+The old custom WIT Store reuse/reset contract was removed.
 
-daemon endpoints:
+Daemon endpoints:
 
 - `GET /healthz`
 - `POST /invoke`
 - `GET /stats`
 - `GET /metrics`
 
-主な設定:
+Main settings:
 
 - `WASMPLANE_WASIP3_HOST_DAEMON=1`
 - `WASMPLANE_WASIP3_HOST_DAEMON_PORT`
@@ -248,214 +243,207 @@ daemon endpoints:
 - `WASMPLANE_WASIP3_POOLING_TOTAL_MEMORIES`
 - `WASMPLANE_WASIP3_POOLING_TOTAL_TABLES`
 
-重要な制約として、pooling allocator を使う daemon に渡す `.cwasm` は、同じ pooling config の
-Engine で precompile されている必要がある。runtime backend は daemon mode の compile args と
-cache variant を揃える。
+A `.cwasm` passed to a daemon using the pooling allocator must have been precompiled with an Engine using
+the same pooling configuration. The runtime backend aligns daemon-mode compile arguments and cache variants.
 
 ## Capability Model
 
-worker は arbitrary filesystem, arbitrary sockets, process spawn, arbitrary env を受け取らない。
-host capability は deployment policy として明示的に渡す。
+Workers do not receive arbitrary filesystem access, sockets, process spawning, or environment variables.
+Host capabilities are granted explicitly through deployment policy.
 
-Wasm node で付与できる capability は標準 WASI HTTP outbound の origin allowlist。
-path prefix と redirect の自動追跡は使わない。旧 KV / Secrets / Durable storage / service binding は
-削除したため、有効な設定が渡された場合は拒否する。control-plane resource 管理と KMS、
-Node 側の storage facade は独立した API として残る。
+The Wasm node supports an origin allowlist for standard WASI HTTP outbound requests.
+It does not use path prefixes or automatic redirect following. The old KV / Secrets / Durable storage / service bindings
+were removed, and configurations enabling them are rejected. Control plane resource management, KMS,
+and the Node-side storage facade remain independent APIs.
 
-standalone は環境変数・preopen directory を明示設定でき、celld の actor 呼び出しには
-`wasmplane:durable/objects@0.1.0` を使う。詳細は [runtime guide](docs/standalone-runtime.md)。
+Standalone execution can explicitly configure environment variables and preopened directories.
+celld actor calls use `wasmplane:durable/objects@0.1.0`.
+See the [runtime guide](docs/standalone-runtime.md).
 
 ## Limits
 
-deployment limits は runtime と host に渡される。
+Deployment limits are passed to the runtime and host:
 
-- wall clock deadline
-- memory MB
-- request bytes
-- response bytes
-- subrequest count
+- Wall clock deadline
+- Memory MB
+- Request bytes
+- Response bytes
+- Subrequest count
 - cpuMs
 
-`cpuMs` は Wasmtime epoch interruption で enforce する compute budget である。runtime は
-`wallMs` と `cpuMs` の短い方を epoch deadline として host に渡し、CPU budget 側で止まった場合は
-`cpu_limit` として wall timeout と区別して返す。ただし、これは kernel の CPU time ではなく
-epoch tick ベースの協調的な中断なので、厳密な課金単位にはしない。
+`cpuMs` is a compute budget enforced through Wasmtime epoch interruption. The runtime passes the smaller of
+`wallMs` and `cpuMs` as the host epoch deadline. When the CPU budget triggers interruption, it returns `cpu_limit`
+to distinguish it from a wall timeout. This is cooperative interruption based on epoch ticks, not kernel CPU time,
+so it is not suitable as an exact billing unit.
 
-control plane は project ごとに artifacts, deployments, routes, secrets, KV namespaces の resource
-quota を write 前に検査できる。runtime node は global `RUNTIME_CONCURRENCY` に加えて
-`RUNTIME_PROJECT_CONCURRENCY_LIMITS=project=count,...` で project ごとの同時実行 budget を持てる。
-project budget を超えた request は `503 overloaded` として即時拒否し、他 project の request は同じ
-node 上で継続して受け付ける。`RUNTIME_PROJECT_RATE_LIMITS=project=rps[:burst],...` は project ごとの
-token bucket request rate limit で、超過 request は `429 rate_limited` として即時拒否する。
+The control plane can check per-project quotas for artifacts, deployments, routes, secrets, and KV namespaces before writes.
+In addition to global `RUNTIME_CONCURRENCY`, runtime nodes can set per-project concurrency budgets with
+`RUNTIME_PROJECT_CONCURRENCY_LIMITS=project=count,...`. Requests over a project budget are immediately rejected with
+`503 overloaded`, while requests from other projects remain admissible on the same node.
+`RUNTIME_PROJECT_RATE_LIMITS=project=rps[:burst],...` sets per-project token bucket rate limits;
+excess requests are immediately rejected with `429 rate_limited`.
 
-## Deployment And Rollback
+## Deployment and Rollback
 
-deployment flow:
+Deployment flow:
 
-1. artifact bytes を upload/record する
-2. artifact digest と component validity を検証する
-3. immutable deployment を作る
-4. route pointer を deployment に向ける
-5. route snapshot を runtime nodes に publish する
-6. runtime node が materialize/precompile する
+1. Upload/record artifact bytes.
+2. Verify the artifact digest and component validity.
+3. Create an immutable deployment.
+4. Point the route at the deployment.
+5. Publish a route snapshot to runtime nodes.
+6. Materialize and precompile on each runtime node.
 
-rollback flow:
+Rollback flow:
 
-1. route pointer を old stable deployment に戻す
-2. route snapshot を publish する
-3. runtime nodes が新 snapshot を反映する
+1. Point the route back to the previous stable deployment.
+2. Publish a route snapshot.
+3. Apply the new snapshot on runtime nodes.
 
-canary は weighted route targets として扱う。control plane は route canary start と rollback を
-route mutation として実装する。automatic canary analysis は runtime worker request events を
-deployment id で集計し、candidate deployment の sample count, p95 latency, error rate, reject count を
-threshold と比較する。threshold を超えた場合は stable target へ rollback し、continue/rollback の
-decision を `canary_decisions` history に保存する。
+Canaries use weighted route targets. The control plane implements canary start and rollback as route mutations.
+Automatic canary analysis aggregates runtime worker request events by deployment ID and compares the candidate's
+sample count, p95 latency, error rate, and reject count against thresholds. If a threshold is exceeded, it rolls back
+to the stable target. Continue/rollback decisions are stored in `canary_decisions` history.
 
-WIT worker world は `world` と明示的な `worldVersion` の両方で deployment と route snapshot に保存する。
-runtime node は snapshot load 前に world と worldVersion を検証し、host が対応しない upgrade/downgrade
-world を拒否する。
+The WIT worker world is stored as both `world` and explicit `worldVersion` in deployments and route snapshots.
+Before loading a snapshot, runtime nodes validate both fields and reject upgraded or downgraded worlds the host does not support.
 
 ## Observability
 
-runtime node:
+Runtime node:
 
-- worker request metrics endpoint
-- structured worker request events
-- bounded worker logs by request/project/deployment
-- saturation signals for autoscaling
+- Worker request metrics endpoint
+- Structured worker request events
+- Bounded worker logs by request/project/deployment
+- Saturation signals for autoscaling
 - OTLP/HTTP JSON trace exporter
-- heartbeat capacity reporting
-- configured host daemon `/stats` payload embedded under runtime metrics `hostDaemon`
+- Heartbeat capacity reporting
+- Configured host daemon `/stats` payload embedded under runtime metrics `hostDaemon`
 
-worker logs は runtime node-local の bounded ring buffer に保存する。log entry は timestamp,
-request id, host, path, project id, deployment id, level, message を持つ。runtime は invocation
-response の optional logs を保存する前に、解決済み secret value と `authorization`, `cookie`,
-`token`, `password`, `secret` などの key-value を `[REDACTED]` に置換する。control plane は
-`GET /runtime-nodes/:id/logs` を read-scope API として提供し、runtime management token 付きで
-対象 node の `GET /__runtime/logs` を proxy する。
+Worker logs are stored in a bounded ring buffer local to each runtime node. Entries contain a timestamp,
+request ID, host, path, project ID, deployment ID, level, and message. Before storing optional invocation response logs,
+the runtime replaces resolved secret values and values associated with keys such as `authorization`, `cookie`,
+`token`, `password`, and `secret` with `[REDACTED]`. The control plane exposes `GET /runtime-nodes/:id/logs`
+with read scope, proxying the target node's `GET /__runtime/logs` with the runtime management token.
 
-autoscaling は runtime heartbeat の `capacity.concurrentRequests` と `load.activeRequests` から
-per-node load ratio を計算する。control plane は `GET /autoscaling/signals` で signals を返し、
-policy helper が min/max nodes, scale-up threshold, scale-down threshold から desired node count を
-決める。scale-up では新 node を `draining` として登録し、current route snapshot を直接 publish/warmup
-してから heartbeat で `active` にする。scale-down では低 load node を candidate として選び、route
-snapshot publish target から外してから Fly Machines stop などの provider action を実行する。
+Autoscaling calculates per-node load ratios from heartbeat `capacity.concurrentRequests` and `load.activeRequests`.
+The control plane exposes signals through `GET /autoscaling/signals`. A policy helper determines the desired node count
+from minimum/maximum nodes and scale-up/scale-down thresholds. Scale-up registers a new node as `draining`,
+directly publishes and warms the current route snapshot, then marks it `active` through a heartbeat.
+Scale-down selects a low-load node, removes it from snapshot publication targets, then performs a provider action
+such as stopping a Fly Machine.
 
-Fly Machines controller は provider prototype として分離する。Fly Machines API の public base は
-`https://api.machines.dev/v1` で、scale-up は `POST /apps/{app}/machines`、scale-down は
-`POST /apps/{app}/machines/{id}/stop` を使う。実 production では API rate limit と deploy/update
-競合を避けるため、controller は coordination store を通して lease と cooldown を使う。lease は
-複数 controller instance の同時 reconcile を防ぎ、cooldown は成功した provider action 後の連続
-scale-up/down を抑える。in-memory store は single-process 用で、production では SQLite/Postgres の
-durable store に差し替え、`fly_autoscaler_coordination` に lease/cooldown state を残す。
-idempotency metadata と provider-side reconciliation audit は次段階の課題である。
+The Fly Machines controller is a separate provider prototype. Its public API base is `https://api.machines.dev/v1`;
+scale-up uses `POST /apps/{app}/machines`, and scale-down uses `POST /apps/{app}/machines/{id}/stop`.
+In production, the controller uses a coordination store for leases and cooldowns to avoid API rate limits and
+conflicts with deployments or updates. A lease prevents simultaneous reconciliation by multiple controllers;
+a cooldown limits successive scale-up/down actions after a successful provider action.
+The in-memory store is for a single process. Production uses a durable SQLite/Postgres store, persisting lease/cooldown
+state in `fly_autoscaler_coordination`. Idempotency metadata and provider-side reconciliation audits are future work.
 
 ## Admin UI
 
-control plane は `GET /admin` で server-rendered HTML の admin UI を提供する。UI は独自の state
-model を持たず、active route snapshot, runtime node registry, route snapshot publications,
-canary decisions, autoscaling signals を既存 API contract から組み立てる。
+The control plane serves a server-rendered HTML Admin UI at `GET /admin`.
+The UI has no separate state model: it builds the active route snapshot, runtime node registry,
+route snapshot publications, canary decisions, and autoscaling signals from existing API contracts.
 
-画面は projects, routes, deployments, canaries, runtime nodes, autoscaling signals を表示する。
-canary start と rollback は HTML form から `POST /admin/routes/canary` と
-`POST /admin/routes/rollback` に送られ、control plane の既存 `startRouteCanary` /
-`rollbackRoute` を呼ぶ。auth boundary は API と同じで、`GET /admin` は `read` scope、
-admin action は `write` scope を要求する。
+The page shows projects, routes, deployments, canaries, runtime nodes, and autoscaling signals.
+Canary start and rollback forms submit to `POST /admin/routes/canary` and `POST /admin/routes/rollback`,
+calling the existing `startRouteCanary` / `rollbackRoute` control plane operations.
+Authentication uses the same boundary as the API: `GET /admin` requires `read` scope, and admin actions require `write` scope.
 
-host daemon:
+Host daemon:
 
-- `/stats`: prepared components, active invocations, max concurrency, total/fail/reject, avg latency
+- `/stats`: prepared components, active invocations, max concurrency, total/fail/reject, average latency
 - `/metrics`: Prometheus text format
 
-collector:
+Collector:
 
 - OTLP/gRPC `4317`
 - OTLP/HTTP `4318`
 - spanmetrics connector
 - Prometheus metrics `:9464/metrics`
-- starter alert rules for runtime error rate and p95 latency
+- Starter alert rules for runtime error rate and p95 latency
 
 ## Scaling Model
 
-runtime node は stateless に近いが、node-local cache を持つ。
+Runtime nodes are mostly stateless, with node-local caches.
 
-node-local state:
+Node-local state:
 
-- materialized artifact cache
+- Materialized artifact cache
 - `.cwasm` cache
-- host KV store
-- daemon prepared component cache
+- Host KV store
+- Daemon prepared component cache
 
-scale-out は runtime node を増やし、control plane から各 node へ route snapshot を publish する。
-Fly.io では each Machine が heartbeat で private URL を登録し、control plane は active runtime nodes
-へ直接 snapshot を送る。
+Scale-out adds runtime nodes and publishes route snapshots from the control plane to each node.
+On Fly.io, each Machine registers its private URL through heartbeats, and the control plane sends snapshots directly to active nodes.
 
-cross-region では route snapshot を primary control plane から regional control-plane replica へ
-`PUT /replication/snapshots/routes` で複製する。replica は最新 `generatedAt` の snapshot だけを保持し、
-古い snapshot は stale として拒否する。primary の `POST /snapshots/routes/publish` は runtime publish
-後に configured replicas へ同じ snapshot を送り、replica ACK の `snapshotId` と `generatedAt` が一致
-しない場合は consistency failure として response に含める。これは hot path 用 state の整合性検証であり、
-DB multi-writer replication ではない。
+Across regions, the primary control plane replicates route snapshots to regional control plane replicas through
+`PUT /replication/snapshots/routes`. A replica keeps only the snapshot with the latest `generatedAt` and rejects older ones as stale.
+After runtime publication, the primary's `POST /snapshots/routes/publish` sends the same snapshot to configured replicas.
+If a replica ACK has a different `snapshotId` or `generatedAt`, the response includes a consistency failure.
+This validates the consistency of state used on the hot path; it is not database multi-writer replication.
 
-Cloudflare Workers の 128MB process を高密度に大量収容する設計に近づけるには、次を組み合わせる。
+Approaching the density of Cloudflare Workers' 128 MB processes requires combining:
 
 - Wasmtime pooling allocator
-- per-deployment memory limit
-- daemon admission control
-- prepared component LRU
-- route snapshot warmup
-- node-local `.cwasm` cache
+- Per-deployment memory limits
+- Daemon admission control
+- Prepared component LRU
+- Route snapshot warmup
+- Node-local `.cwasm` cache
 
-ただし、現在は isolate/process 相当の粒度を OS process ではなく Wasmtime Store/Instance で表現する。
-Store reuse はまだしないため、より安全だが極限の latency は残る。
+The isolate/process unit is currently represented by a Wasmtime Store/Instance rather than an OS process.
+Stores are not reused, favoring isolation while leaving some latency overhead.
 
 ## Measured Local Performance
 
-ローカル測定条件:
+Local measurement conditions:
 
-- host binary: release build
-- guest component: existing debug component
-- machine: darwin/arm64, 10 CPU, Node v24.12.0
+- Host binary: release build
+- Guest component: existing debug component
+- Machine: darwin/arm64, 10 CPUs, Node v24.12.0
 
-主な結果:
+Main results:
 
-- CLI spawn + component: 約 12.6 rps, avg 79ms
-- CLI spawn + `.cwasm`: concurrency 16 で約 856 rps, avg 16ms
-- runtime prepare cold: 約 40ms
-- runtime prepare warm cache: 約 2ms
-- cluster CLI spawn path: 約 1.1k rps で頭打ち
-- cluster daemon + pooling path: 約 5.6k-6.0k rps
-- daemon stats: 6028 invokes, failures 0, rejects 0, host avg invoke 約 0.24ms
+- CLI spawn + component: approximately 12.6 RPS, 79 ms average
+- CLI spawn + `.cwasm`: approximately 856 RPS at concurrency 16, 16 ms average
+- Runtime prepare, cold: approximately 40 ms
+- Runtime prepare, warm cache: approximately 2 ms
+- Cluster CLI spawn path: plateaus around 1.1k RPS
+- Cluster daemon + pooling path: approximately 5.6k–6.0k RPS
+- Daemon stats: 6028 invocations, 0 failures, 0 rejects, approximately 0.24 ms average host invocation time
 
-解釈:
+Interpretation:
 
-- `.cwasm` は compile skip に効く
-- CLI spawn は hot path の上限を約 1k rps 程度に抑える
-- embedded daemon + pooling は process spawn を消し、数倍の throughput と低い p95 を出す
-- deploy switch の visible latency は snapshot publish ではなく materialize/precompile/first request が支配的
+- `.cwasm` eliminates compilation work.
+- CLI spawning caps hot-path throughput at roughly 1k RPS.
+- The embedded daemon and pooling remove process spawning, delivering several times the throughput and lower p95 latency.
+- Visible deployment-switch latency is dominated by materialization, precompilation, and the first request rather than snapshot publication.
 
 ## Production Deployment Shape
 
-最小 production-ish shape:
+A minimal production-like deployment contains:
 
-- control plane app
-- runtime app
+- Control plane application
+- Runtime application
 - OTEL collector
 - Postgres
 - S3/R2 artifact store
-- runtime persistent volume for cache/KV
+- Runtime persistent volume for cache/KV
 
-Fly.io trial では:
+The Fly.io trial uses:
 
-- control app
-- runtime app
-- collector app
+- Control application
+- Runtime application
+- Collector application
 - Fly private networking
-- runtime Machine heartbeat
-- direct snapshot publish to `*.vm.<app>.internal`
+- Runtime Machine heartbeats
+- Direct snapshot publication to `*.vm.<app>.internal`
 
-single-region estimate は README の cost estimator にまとめる。現状の前提では、最小というより
-ある程度アクセスがある前提の構成で、control/runtime/collector/Postgres を常時起動する。
+The README cost estimator covers a single-region deployment. Current assumptions describe a setup with meaningful traffic,
+running the control plane, runtime, collector, and Postgres continuously rather than minimizing idle infrastructure.
 
 ## ADR: Cloudflare Backend Strategy
 
@@ -463,39 +451,39 @@ Decision: the control plane POC uses Cloudflare Containers. The production Wasmt
 The native Cloudflare backend is a separate target that can use Workers, Durable Objects, R2, D1, and
 Queues without pretending to be the same runtime-node architecture.
 
-理由:
+Rationale:
 
-- Wasmtime + WASIp3 + `.cwasm` + pooling allocator は、long-lived runtime process と node-local
-  cache を前提にした方が性能と分離境界を説明しやすい
-- Cloudflare Workers の isolate は高密度だが、現行 wasmplane の Wasmtime host daemon をそのまま
-  Worker isolate 内に移す前提にはできない
-- Cloudflare Containers は既存 Docker image を動かせるため control-plane smoke や API lifecycle の
-  検証には向くが、container disk は production-persistent store として扱わない
-- Cloudflare-native backend を作る場合は、runtime node registry/snapshot publish をそのまま移植せず、
-  Durable Objects/R2/D1 を使う別 provider adapter として設計する
+- Wasmtime, WASIp3, `.cwasm`, and the pooling allocator have clearer performance and isolation boundaries
+  when built around long-lived runtime processes and node-local caches.
+- Cloudflare Workers isolates offer high density, but the current wasmplane Wasmtime host daemon cannot
+  be assumed to run unchanged inside a Worker isolate.
+- Cloudflare Containers can run the existing Docker image, making them suitable for control plane smoke tests
+  and API lifecycle validation. Container disks are not treated as production-persistent storage.
+- A Cloudflare-native backend should use a separate provider adapter built around Durable Objects/R2/D1,
+  rather than directly porting the runtime node registry and snapshot publication model.
 
-この ADR により、Cloudflare Containers は control-plane compatibility と release-lifecycle POC の位置付けに
-固定する。production の Wasmtime runtime は、runtime node の direct addressability、warmup、drain、
-node-local `.cwasm` cache、OTEL/metrics を運用できる基盤を優先する。
+This ADR positions Cloudflare Containers as a control plane compatibility and release lifecycle POC.
+The production Wasmtime runtime prioritizes infrastructure that supports direct runtime node addressing,
+warmup, draining, node-local `.cwasm` caches, and OTEL/metrics operations.
 
 ## Current Limitations
 
-- WASIp3/component model 前提だが、guest toolchain と host ABI の安定性には追従が必要
-- `cpuMs` は Wasmtime epoch tick ベースであり、精密な kernel CPU time enforcement ではない
-- secret value は local/env KMS envelope encryption、command-provider keyring、AWS/GCP/Azure wrapped
-  data key adapter に対応した
-- multi-region は route snapshot replication と ACK consistency check に対応したが、durable replica
-  snapshot store と DB multi-writer consistency は未実装
-- daemon は local HTTP interface で、runtime node と同一 trust boundary 前提
-- Wasmtime upgrade は Engine variant hash と runtime cache invalidation で分離するが、multi-node
-  rolling upgrade の自動 orchestration は未実装
-- snapshot publish は target ごとの retry/timeout と attempt 記録に対応したが、永続 queue と
-  dead-letter/replay UI は未実装
-- Fly autoscaler lease/cooldown は in-memory/SQLite/Postgres store に対応したが、provider idempotency
-  metadata は未実装
-- node JSON/route adapter は body を上限内で蓄積する。standalone HTTP は streaming 対応
-- weekly perf regression は fixed budget check と任意の historical median trend check に対応したが、
-  GitHub Actions 上で過去 artifact を自動取得する処理は未実装
+- The design assumes WASIp3/Component Model, but must keep up with guest toolchain and host ABI changes.
+- `cpuMs` uses Wasmtime epoch ticks, not precise kernel CPU time enforcement.
+- Secret values support local/environment KMS envelope encryption, command-provider keyrings,
+  and AWS/GCP/Azure wrapped data key adapters.
+- Multi-region support includes route snapshot replication and ACK consistency checks;
+  a durable replica snapshot store and database multi-writer consistency are not implemented.
+- The daemon uses a local HTTP interface and assumes the same trust boundary as the runtime node.
+- Wasmtime upgrades are separated through Engine variant hashes and runtime cache invalidation;
+  automated multi-node rolling upgrade orchestration is not implemented.
+- Snapshot publication supports per-target retries/timeouts and attempt records;
+  a durable queue and dead-letter/replay UI are not implemented.
+- Fly autoscaler leases/cooldowns support in-memory, SQLite, and Postgres stores;
+  provider idempotency metadata is not implemented.
+- The node JSON/route adapter buffers bodies within a size limit. Standalone HTTP supports streaming.
+- Weekly performance regression checks support fixed budgets and optional historical median trends;
+  automatic retrieval of historical GitHub Actions artifacts is not implemented.
 
 ## Next Implementation Priorities
 

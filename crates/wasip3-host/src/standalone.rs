@@ -35,6 +35,9 @@ async fn run() -> Result<i32> {
         return Ok(0);
     }
     if command == "--help" {
+        println!("wasmplane init <directory> [--language rust|moonbit]");
+        println!("wasmplane inspect <component> [--json]");
+        println!("wasmplane check <app.json> [--json]");
         println!("wasmplane run <component> [--config <json>] [--timeout-ms <ms>] [-- <args>]");
         println!(
             "wasmplane serve <component> [--resident] [--addr 127.0.0.1:8080] [--config <json>]"
@@ -43,6 +46,59 @@ async fn run() -> Result<i32> {
         println!(
             "<component> accepts .wasm binaries or .wat component text directly; no conversion tool is needed."
         );
+        return Ok(0);
+    }
+    if command == "init" {
+        let directory = PathBuf::from(args.next().context("missing project directory")?);
+        let mut language = "rust".to_owned();
+        while let Some(flag) = args.next() {
+            if flag != "--language" {
+                bail!("unknown init option {flag}");
+            }
+            language = args.next().context("missing language")?;
+        }
+        scaffold::init(&directory, &language)?;
+        return Ok(0);
+    }
+    if matches!(command.as_str(), "check" | "inspect") {
+        let path = PathBuf::from(args.next().context("missing input path")?);
+        let json = if let Some(flag) = args.next() {
+            if flag != "--json" || args.next().is_some() {
+                bail!("expected optional --json");
+            }
+            true
+        } else {
+            false
+        };
+        if command == "check" {
+            let report = app::check(&path);
+            if json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!(
+                    "{}: {}",
+                    if report.valid { "OK" } else { "FAILED" },
+                    path.display()
+                );
+                if let Some(component) = &report.component {
+                    print_component(component);
+                }
+                println!("grants: {}", serde_json::to_string(&report.grants)?);
+                for error in &report.errors {
+                    println!("error: {error}");
+                }
+            }
+            return Ok(if report.valid { 0 } else { 1 });
+        }
+        let component = wasmplane_runtime_core::component::CheckedComponent::load(
+            Runtime::new(RuntimeConfig::default())?,
+            &path,
+        )?;
+        if json {
+            println!("{}", serde_json::to_string_pretty(&component.report)?);
+        } else {
+            print_component(&component.report);
+        }
         return Ok(0);
     }
     if matches!(command.as_str(), "build" | "start" | "dev") {
@@ -107,6 +163,8 @@ async fn run() -> Result<i32> {
         bail!("--resident requires serve");
     }
     let runtime = Runtime::new(config)?;
+    let telemetry = runtime.telemetry.clone();
+    let result = async {
     match command.as_str() {
         "run" => tokio::select! {
             result = runtime.run(&component, &guest_args) => result,
@@ -142,6 +200,28 @@ async fn run() -> Result<i32> {
         }
         _ => bail!("unknown command {command}"),
     }
+    }.await;
+    telemetry.flush().await;
+    result
+}
+
+fn print_component(report: &wasmplane_runtime_core::component::ComponentReport) {
+    println!("sha256: {}", report.sha256);
+    println!(
+        "compatible modes: {}",
+        serde_json::to_string(&report.compatible_modes).unwrap()
+    );
+    for (direction, interfaces) in [("import", &report.imports), ("export", &report.exports)] {
+        for interface in interfaces {
+            println!("{direction} {} ({})", interface.name, interface.kind);
+            if !interface.members.is_empty() {
+                println!("  {}", interface.members.join(", "));
+            }
+        }
+    }
+    for error in &report.link_errors {
+        println!("link error: {error}");
+    }
 }
 
 async fn shutdown_signal() -> Result<i32> {
@@ -161,3 +241,4 @@ async fn shutdown_signal() -> Result<i32> {
     }
 }
 mod app;
+mod scaffold;

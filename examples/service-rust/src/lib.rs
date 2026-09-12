@@ -1,3 +1,5 @@
+mod io_example;
+mod telemetry_example;
 use std::cell::Cell;
 use wasip3::http::types::{ErrorCode, Request, Response};
 use wasip3::wit_bindgen;
@@ -50,7 +52,16 @@ impl Lifecycle for App {
 
 impl HttpHandler for App {
     async fn handle(request: Request) -> Result<Response, ErrorCode> {
-        match request.get_path_with_query().unwrap_or_default().as_str() {
+        let path = request.get_path_with_query().unwrap_or_default();
+        if path == "/telemetry" {
+            return Ok(wasmplane_service_sdk::json(
+                telemetry_example::handle(&request).await,
+            ));
+        }
+        if let Some(value) = io_example::handle(&path).await {
+            return Ok(wasmplane_service_sdk::json(value.to_string()));
+        }
+        match path.as_str() {
             "/trap" => panic!("service test trap"),
             "/loop" => loop {
                 std::hint::spin_loop();

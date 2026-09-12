@@ -1,17 +1,18 @@
-# Standalone runtime
+# Standalone Runtime
 
-初めて使う場合は [利用者ガイド](README.md) と [クイックスタート](getting-started.md)を参照。
-このページは実行基盤、control-plane adapter、検証の詳細を扱う。
+Start with the [User guide](README.md) and [Quickstart](getting-started.md).
+This page covers the execution engine, control-plane adapter, and verification details.
 
-Wasmtime 48.0.2 を Rust crate `wasmplane-runtime-core` に組み込み、control plane や DB なしで
-Wasm component を実行する。runtime node は同じ crate の `node` adapter から標準 WASI HTTP を呼ぶ。
-常駐 service、application manifest、watch/rebuild は [service runtime](service-runtime.md) を参照。
-JS/TS エンジン、npm module loader、Node.js API 互換層は未実装。
+The Rust `wasmplane-runtime-core` crate embeds Wasmtime 48.0.2 to run Wasm components
+without a control plane or database. Runtime nodes call standard WASI HTTP through
+the same crate's `node` adapter. See the [service runtime](service-runtime.md) for
+resident services, application manifests, and watch/rebuild support.
+A JS/TS engine, npm module loader, and Node.js compatibility layer are not implemented.
 
-## 起動
+## Running the runtime
 
-Rust stable（Wasmtime 48 の最低要件は 1.95）、Node.js 24+、pnpm、just を使う。
-guest の生成・component のテストには次の固定版ツールを使う。
+Use stable Rust (Wasmtime 48 requires at least 1.95), Node.js 24+, pnpm, and just.
+Use the following pinned tools to build guests and test components:
 
 ```sh
 pnpm install --frozen-lockfile
@@ -24,25 +25,28 @@ target/debug/wasmplane run examples/minimal-command/command.wat
 target/debug/wasmplane serve ./http.wasm --addr 127.0.0.1:8080 --config runtime.json
 ```
 
-installer は Wasmtime 48.0.2 / wasm-tools 1.259.0 / wit-bindgen 0.62.0 を導入する。
-standalone binary 自体は外部の Wasmtime CLI を呼び出さない。
-`just run ./app.wasm` / `just serve ./http.wasm` でも起動できる。
+The installer provides Wasmtime 48.0.2, wasm-tools 1.259.0, and wit-bindgen 0.62.0.
+The standalone binary does not invoke the external Wasmtime CLI.
+You can also run `just run ./app.wasm` or `just serve ./http.wasm`.
 
-`run` / `serve` は `.wat` の `(component ...)` も直接読み込む。事前のバイナリ変換や
-外部ツールは不要。`run` 用には WASI CLI、`serve` 用には WASI HTTP の export が必要。
+`run` and `serve` read `(component ...)` WAT directly, without a conversion step or
+external tools. `run` requires a WASI CLI export; `serve` requires a WASI HTTP export.
 
-最小の `.wat` / `.mbt` から試す場合は [minimal-command](../examples/minimal-command/README.md)。
-`just minimal-smoke` で両方を `.wasm` component にビルドし、`wasmplane run` で検証できる。
+See [minimal-command](../examples/minimal-command/README.md) for minimal `.wat` and
+`.mbt` inputs. `just minimal-smoke` builds both as `.wasm` components and verifies
+them with `wasmplane run`.
 
-`run` は `wasi:cli/run@0.2` / `@0.3`、`serve` は WASIp2 HTTP proxy / WASIp3 HTTP service を
-判別して実行する。command の成功・失敗と `wasi:cli/exit` の終了コードを返す。
-SIGINT / SIGTERM で command をキャンセルし、HTTP server は要求と接続を停止して終了する。
-component の読み込み・コンパイルは実行 deadline の対象外。command の instance 作成は期限に含む。
+`run` detects `wasi:cli/run@0.2` or `@0.3`; `serve` detects WASIp2 HTTP proxy or
+WASIp3 HTTP service exports. Commands propagate success, failure, and `wasi:cli/exit`
+exit codes. SIGINT or SIGTERM cancels a command; an ordinary HTTP server stops its
+requests and connections before exiting. Loading and compilation are outside the
+execution deadline; command instantiation is included.
 
-## 権限と制限
+## Permissions and limits
 
-設定ファイルは任意。省略すると環境変数・preopen directory・outbound HTTP・Durable Object binding
-を付与しない。標準入出力はホストから継承する。
+Configuration is optional. Without it, guests receive no environment variables,
+preopened directories, outbound HTTP access, or Durable Object bindings.
+Standard input, output, and error are inherited from the host.
 
 ```json
 {
@@ -63,129 +67,125 @@ component の読み込み・コンパイルは実行 deadline の対象外。com
 }
 ```
 
-- `directories[].host` は実行時の作業ディレクトリを基準に解決する。`write` の既定値は false。
-  application manifest 内の `runtime.directories[].host` は manifest の親ディレクトリを基準にする。
-- `outbound_origins` は scheme・host・port の一致で認可し、path や認証情報は指定できない。
-  redirect は追跡しない。WASI の任意 socket は許可しない。
-- `memory_mb` は Wasmtime の **linear memory ごとの上限**。プロセス全体の RSS 制限ではない。
-- `timeout_ms` は command または HTTP request 全体（body の送信を含む）の壁時計時間。
-  CPU を占有する guest も epoch ごとに yield するため、キャンセルと deadline が進む。
-- `max_body_bytes` は入出力それぞれの累積上限。通常の HTTP は全 body を蓄積せず stream として処理する。
-  Content-Length 超過は 413、stream 中の超過は body error になる。
-- `max_concurrent_requests` は応答 body の消費完了まで占有する。満杯なら 503。
-  idle 接続も最大 `max(32, max_concurrent_requests * 2)` に制限する。
-- 通常の HTTP は要求ごとに Store を作り、trap 後も他の要求は継続する。応答前の guest failure は 500。
-  handler return 後も WASIp3 の body producer を動かし、切断・停止・deadline で回収する。
+- `directories[].host` is relative to the working directory; `write` defaults to false. In an application manifest, `runtime.directories[].host` is relative to the manifest's parent directory.
+- `outbound_origins` authorizes exact scheme/host/port matches. Entries cannot contain paths or credentials. Redirects are not followed, and arbitrary WASI sockets are not allowed.
+- `memory_mb` is a Wasmtime limit **per linear memory**, not a process-wide RSS limit.
+- `timeout_ms` bounds the wall-clock duration of a command or full HTTP request, including body transmission. CPU-bound guests yield at each epoch so cancellation and deadlines can progress.
+- `max_body_bytes` is a cumulative limit for each input and output body. Ordinary HTTP streams bodies without buffering them in full. An excessive Content-Length returns 413; exceeding the limit midstream produces a body error.
+- `max_concurrent_requests` holds an admission slot until response body consumption finishes. A full server returns 503. Connections, including idle ones, are limited to `max(32, max_concurrent_requests * 2)`.
+- Ordinary HTTP creates a Store per request; other requests continue after a trap. A guest failure before the response returns 500. WASIp3 body producers continue after the handler returns and are cleaned up on disconnect, shutdown, or deadline.
 
-常駐モードでは body と同時要求枠の扱い、trap 後の終了動作が異なる。
-[モードごとの実行制限](configuration.md#実行制限)を参照。
+Resident mode handles bodies, admission slots, and termination after traps differently.
+See [execution limits by mode](configuration.md#execution-limits).
 
-## Control plane からの実行
+## Running through the control plane
 
-旧独自 worker WIT と host imports を削除した。deployment の world は
-`wasi:http/service@0.3.0`、worldVersion は `0.3.0`。
-旧 component と route snapshot は再利用せず、新しい component を build・deploy する。
+The old custom worker WIT and host imports have been removed. Deployments use world
+`wasi:http/service@0.3.0` and worldVersion `0.3.0`. Build and deploy new components;
+old components and route snapshots cannot be reused.
 
-`wasmplane-wasip3-host` の `compile` / `invoke` / `serve` は標準 WASI HTTP component を扱う
-node protocol adapter として継続する。Rust embedding は `node::Wasip3Runtime` の
-`*_async` メソッドを使う。同期の自由関数は Tokio の外から呼ぶ CLI 用 wrapper。
+The `compile`, `invoke`, and `serve` commands in `wasmplane-wasip3-host` remain as
+node protocol adapters for standard WASI HTTP components. Rust embedding uses the
+`*_async` methods on `node::Wasip3Runtime`. Synchronous free functions are CLI
+wrappers intended for use outside Tokio.
 
-- compile 時に標準 HTTP export と全 import を linker で検証する。prepared component の LRU と
-  pooling allocator は維持し、request ごとに fresh Store を作る。
-- 独自 KV / Secrets / Durable storage / service binding、`--kv-store-dir`、`hostCalls`、
-  instance reuse / reset 契約を削除した。旧設定の有効化はエラーになる。
-  control-plane 自体の resource 管理 API は残るが、Wasm へのこれらの binding は付与できない。
-- outbound allowlist は標準 runtime と同じ HTTP(S) origin 単位。path prefix は受け付けず、
-  redirect は追跡しない。`subrequests` は実行ごとの WASI HTTP send 回数を制限する。
-- request / response は `requestBytes` / `responseBytes`（省略時は各 1 MiB）で制限する。
-  outbound の各 body には両者の小さい方を適用する。
-- guest の HTTP body は WASI stream。既存 node JSON protocol と route adapter は応答全体を
-  上限内で蓄積する。JSON protocol の body は UTF-8 テキスト。ネットワーク終端まで streaming
-  する用途には `wasmplane serve` を使う。
-- `cpuMs` / `wallMs` の小さい方を body 完了までの経過時間に適用する。両方未指定なら 30 秒。
-  `cpuMs` は I/O 待ちも含む保守的な上限で、kernel CPU 時間ではない。
-- キャンセル・trap・deadline で Store と通信を破棄する。cold load/compile は deadline の対象外。
-  JSON 出力を保つため node の guest stdout/stdin は継承せず、stderr のみ継承する。
+- Compilation validates standard HTTP exports and all imports through the linker. The prepared-component LRU and pooling allocator remain, with a fresh Store for each request.
+- Custom KV, Secrets, Durable storage, service bindings, `--kv-store-dir`, `hostCalls`, and instance reuse/reset contracts have been removed. Enabling old settings is an error. The control plane's resource management APIs remain, but cannot grant these bindings to Wasm guests.
+- Outbound allowlists use HTTP(S) origins, as in the standalone runtime. Path prefixes are rejected and redirects are not followed. `subrequests` limits WASI HTTP sends per execution.
+- Request and response bodies are bounded by `requestBytes` and `responseBytes`, each defaulting to 1 MiB. Each outbound body uses the smaller limit.
+- Guest HTTP bodies use WASI streams. The existing node JSON protocol and route adapter buffer the full response within the limit. JSON protocol bodies are UTF-8 text. Use `wasmplane serve` for streaming through to the network connection.
+- The smaller of `cpuMs` and `wallMs` bounds elapsed time through body completion; the default is 30 seconds if neither is set. `cpuMs` is a conservative bound that includes I/O waits, not kernel CPU time.
+- Cancellation, traps, and deadlines discard the Store and its communication. Cold loading and compilation are outside the deadline. Node guests inherit stderr only, not stdin/stdout, to preserve the JSON output protocol.
 
-`pnpm wasmplane new --language rust` は `wasip3` crate を使う標準 WASI 雛形を生成する。
-独自 WIT の生成は不要。旧 TypeScript component 雛形は削除した。
-celld への新しい `wasmplane:durable/objects@0.1.0` は standalone の設定経由で利用する。
+`pnpm wasmplane new --language rust` generates a standard WASI template using the
+`wasip3` crate, without custom WIT generation. The old TypeScript component template
+has been removed. The new celld `wasmplane:durable/objects@0.1.0` interface is available
+through standalone runtime configuration.
 
 ## celld Durable Objects
 
-`wit/durable/objects.wit` が `wasmplane:durable/objects@0.1.0` を定義する。
-`open(binding, name)` で実行内の resource を取得し、`object.fetch(request)` で actor を呼ぶ。
-endpoint、namespace、認証 token はホスト設定で決定し、guest に渡すのは binding 名だけ。
-`token_env` はホスト環境から読む。guest の `env` に追加する必要はない。
+`wit/durable/objects.wit` defines `wasmplane:durable/objects@0.1.0`.
+`open(binding, name)` obtains a resource scoped to the execution, and
+`object.fetch(request)` calls the actor. Host configuration selects the endpoint,
+namespace, and authentication token; the guest uses only the binding name.
+`token_env` is read from the host environment and does not need a guest `env` entry.
 
-[durable-counter](../examples/durable-counter/README.md) に接続設定と WAT / Rust の呼び出し例がある。
-`counter.wat` は WASI CLI 0.3 の非同期エントリから `fetch` を待ち、直接実行できる。
+[durable-counter](../examples/durable-counter/README.md) contains connection settings
+and WAT/Rust examples. `counter.wat` awaits `fetch` from an asynchronous WASI CLI 0.3
+entry point and can run directly:
 
 ```sh
 just run examples/durable-counter/counter.wat --config examples/durable-counter/runtime.example.json
 ```
 
-上のコマンドは gateway 起動とホストの `WASMPLANE_GATEWAY_TOKEN` 設定後に実行する。
+Start the gateway and set `WASMPLANE_GATEWAY_TOKEN` on the host before running this command.
 
-gateway は celld の公開 Worker listener 上で動き、認証後に
-`namespace.get(namespace.idFromName(name)).fetch(...)` を呼ぶ。
-`examples/celld-gateway/index.js` は binding allowlist と bearer token を検証する。
-fleet の内部 `/do/<ID>` は使わない。別アプリには別 gateway / namespace の割り当てが必要。
+The gateway runs on celld's public Worker listener and calls
+`namespace.get(namespace.idFromName(name)).fetch(...)` after authentication.
+`examples/celld-gateway/index.js` validates a binding allowlist and bearer token.
+It does not use the fleet's internal `/do/<ID>` endpoint. Separate applications
+need separate gateway/namespace assignments.
 
-gateway protocol は `POST /v1/objects/{namespace}/{encoded-name}/fetch`。
-JSON request は `{method, path, headers, body, requestId?}`、response は `{status, headers, body}`。
-body は base64、headers は `[name, value][]`。actor の status は外側 200 の envelope に入れ、
-gateway の認証エラーと区別する。request / response body はそれぞれ最大 1 MiB。
+The gateway protocol is `POST /v1/objects/{namespace}/{encoded-name}/fetch`.
+The JSON request is `{method, path, headers, body, requestId?}` and the response is
+`{status, headers, body}`. Bodies use base64; headers use `[name, value][]`.
+Actor statuses are carried inside an outer HTTP 200 envelope, distinguishing them
+from gateway authentication errors. Request and response bodies are each capped at 1 MiB.
 
-エラーは binding 拒否、入力不正、接続不可、送信前の deadline、送信後の結果不明に分ける。
-送信後の timeout・応答喪失では `outcome-unknown` を返し、自動再送しない。
-キャンセルによって actor の更新が rollback される保証はない。
-sample counter は request ID と結果を更新と同一 transaction に保存して重複更新を防ぐ。
-sample の dedup record は削除しないため、本運用では保持期間と再送期限の契約を追加する。
+Errors distinguish denied bindings, invalid input, connection failure, deadlines
+before dispatch, and unknown outcomes after dispatch. A timeout or lost response
+after dispatch returns `outcome-unknown` without an automatic retry. Cancellation
+does not guarantee that the actor rolls back its update. The example Counter stores
+request IDs and results in the same transaction as the update to prevent duplicate
+mutations. Its deduplication records are never deleted; production use needs a
+retention policy and retry-window contract.
 
-### ローカル評価
+### Local evaluation
 
-[celld 0.4.1](https://github.com/denoland/celld/releases/tag/v0.4.1) の binary を用意する。
-テストは一時ディレクトリ内に認証情報を生成し、celld dev を起動・停止して検証する。
+Install the [celld 0.4.1](https://github.com/denoland/celld/releases/tag/v0.4.1) binary.
+Tests generate credentials in a temporary directory and start and stop celld dev.
 
 ```sh
 WASMPLANE_CELLD_BIN=/absolute/path/to/celld just celld-test
 ```
 
-性能計測は `just celld-bench`。実 celld に対する直接 HTTP / WIT の比較、p50/p95/p99、
-RPS と CLI 全体時間を出力する。[測定条件と使い方](celld-benchmark.md)を参照。
+`just celld-bench` compares direct HTTP and WIT calls against real celld, reporting
+p50/p95/p99, RPS, and total CLI time. See [measurement conditions and usage](celld-benchmark.md).
 
-手動で試す場合は `examples/celld-gateway/wrangler.jsonc` を同じディレクトリ内の
-`wrangler.local.json` に複製し、`vars.WASMPLANE_GATEWAY_TOKEN` にローカル用 token を設定する。
-ホストにも同じ token を `WASMPLANE_GATEWAY_TOKEN` として設定する。
-`wrangler.local.json` と `.celld/` は Git 管理対象外。
+For manual testing, copy `examples/celld-gateway/wrangler.jsonc` to `wrangler.local.json`
+in the same directory and set `vars.WASMPLANE_GATEWAY_TOKEN` to a local token.
+Set the same host token in `WASMPLANE_GATEWAY_TOKEN`.
+`wrangler.local.json` and `.celld/` are excluded from Git.
 
 ```sh
 chmod 600 examples/celld-gateway/wrangler.local.json
 pnpm exec celld dev examples/celld-gateway/wrangler.local.json --no-watch
-# 別ターミナルで、上記 JSON の durable 設定を runtime.json に保存して実行
+# In another terminal, save the durable configuration above to runtime.json and run:
 just durable-counter-build
 target/debug/wasmplane run examples/durable-counter/target/wasm32-wasip2/debug/durable_counter_example.wasm --config runtime.json -- counter room-1 increment-1
-# 同じ ID なら同じ結果。ID 省略時は現在の値を読む。
+# The same ID returns the same result. Omit the ID to read the current value.
 ```
 
-確認済み: WAT 直接実行 / Rust の実 WIT 経由の更新、異なる binding/object の分離、並行 increment、
-celld dev 再起動後の保存、更新後に応答だけを破棄した場合の結果不明と再送 deduplication。
-ここでの永続性はローカル dev storage の検証。fleet の ownership 移動、remote durability gate、
-alarm/WebSocket、Wasmtime actor を celld の中で直接実行する構成は未検証。
+Verified behavior includes direct WAT execution, real WIT updates from Rust,
+binding/object isolation, concurrent increments, persistence across celld dev
+restarts, and unknown outcomes plus retry deduplication when only the response is
+lost after an update. Persistence here refers to local dev storage. Fleet ownership
+transfer, remote durability gates, alarms/WebSockets, and running Wasmtime actors
+directly inside celld have not been verified.
 
-## 検証コマンド
+## Verification commands
 
 ```sh
 just test                        # Node / Rust unit + component contract tests
-just standalone-test             # 実 WASIp2 / WASIp3 HTTP、I/O、権限、stream cancellation
-just worker-async-test           # 標準 WASI node / daemon の並行 I/O、キャンセル、deadline
-just e2e                         # control plane → 標準 WASI HTTP
-just sample-rust-moonbit-smoke    # Rust/MoonBit composition（MoonBit と forked wac が必要）
+just standalone-test             # Real WASIp2 / WASIp3 HTTP, I/O, permissions, stream cancellation
+just worker-async-test           # Standard WASI node / daemon concurrent I/O, cancellation, deadlines
+just e2e                         # Control plane → standard WASI HTTP
+just sample-rust-moonbit-smoke    # Rust/MoonBit composition (requires MoonBit and forked wac)
 WASMPLANE_CELLD_BIN=/absolute/path/to/celld just celld-test
 ```
 
-`.cwasm` はローカルの信頼済み compiler が生成した native artifact 専用。
-Node 側の binary/config hash に加え、engine が source・lockfile・target・compiler・build flags の
-fingerprint を検証する。Wasmtime 42 や異なる host build の cache は再コンパイルする。
-standalone CLI は `.wasm` / `.wat` component を読み、任意 `.cwasm` を deserialize しない。
+`.cwasm` is a native artifact produced by a trusted local compiler. In addition to
+the Node-side binary/config hash, the engine checks a fingerprint of source,
+lockfile, target, compiler, and build flags. Recompile caches from Wasmtime 42 or
+a different host build. The standalone CLI reads `.wasm` and `.wat` components;
+it does not deserialize arbitrary `.cwasm` files.

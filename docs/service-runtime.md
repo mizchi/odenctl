@@ -1,60 +1,60 @@
-# 常駐 service・manifest・SDK
+# Resident Services, Manifests, and SDKs
 
-導入手順は [クイックスタート](getting-started.md)、アプリの実装例は [アプリの作り方](writing-services.md)、
-設定項目は [CLI・設定リファレンス](configuration.md)を参照してください。
-このページは常駐実行の契約と検証の詳細を説明します。
+See the [Quickstart](getting-started.md) for setup, [Writing services](writing-services.md)
+for application examples, and the [CLI reference](configuration.md) for settings.
+This page describes the resident execution contract and its verification.
 
-1つの Wasm instance を保持し、起動時の初期化、要求間で共有するメモリ上の状態、
-待機中の非同期処理、終了処理を持つアプリを実行する。
-契約は [wasmplane:app/service@0.1.0](../wit/app/lifecycle.wit)。HTTP は標準 WASI 0.3、
-独自の追加 interface は `lifecycle.start` と `lifecycle.stop` の2関数である。
+Resident mode retains one Wasm instance for initialization, state shared across
+requests, async work while idle, and shutdown. Its contract is
+[wasmplane:app/service@0.1.0](../wit/app/service.wit). HTTP uses standard WASI 0.3;
+the additional lifecycle interface consists of `lifecycle.start` and `lifecycle.stop`.
 
-## 試す
+## Try it
 
 ```sh
 just service-test
 just app-dev examples/service-rust/app.json
-# 別ターミナルから繰り返すと count が増える
+# Repeat from another terminal to increment count
 curl http://127.0.0.1:8080
 ```
 
-MoonBit は `just app-dev examples/service-moonbit/app.json`。
-両サンプルは `{ "starts": 1, "count": 1, "ticks": 12 }` のような JSON を返す。
-`count` は要求ごと、`ticks` は待機中も20msごとのタイマーで増加する。
-Ctrl-C で受付を止め、処理済みの応答を送り、`lifecycle:stop` を出力して終了する。
+For MoonBit, use `just app-dev examples/service-moonbit/app.json`.
+Both examples return JSON such as `{ "starts": 1, "count": 1, "ticks": 12 }`.
+`count` increases with each request; `ticks` increases on a 20 ms timer, including
+while idle. Ctrl-C stops admission, sends responses for accepted requests, prints
+`lifecycle:stop`, and exits.
 
-ビルドには Rust の `wasm32-wasip2` target、wit-bindgen 0.62.0、wasm-tools 1.259.0、
-MoonBit の async 対応 compiler が必要。MoonBit は `moon 0.1.20260904` で検証した。
-Wasm ツールは [installer](../scripts/install-wasm-ci-tools.sh) で導入できる。
+Building both examples requires Rust's `wasm32-wasip2` target, wit-bindgen 0.62.0,
+wasm-tools 1.259.0, and an async-capable MoonBit compiler. MoonBit was tested with
+`moon 0.1.20260904`. Install the Wasm tools with the [installer](../scripts/install-wasm-ci-tools.sh).
 
-## ライフサイクル
+## Lifecycle
 
 ```text
-load → instantiate → start → [HTTP handler → response body 完了] × N → stop → Store 破棄
-                        └──── 待機中も guest の非同期タスクを駆動 ────┘
+load → instantiate → start → [HTTP handler → response body complete] × N → stop → drop Store
+                        └──── Drive guest async tasks while waiting ────┘
 ```
 
-- `start` の成功後に ready を通知する。初期化は世代ごとに1回。
-- HTTP handler は body 完了まで直列に呼ぶ。background task は await 点で interleave できる。
-- `SIGINT` / `SIGTERM` では新規受付を止め、受信中の body と待機列を含む受付済み要求を処理して `stop` を1回呼ぶ。
-- 起動と終了の期限は既定で各10秒。起動期限は instantiate と start の合計で、component の読み込み・コンパイルを含まない。
-  終了期限は要求の drain と stop の合計。期限を超えると Store を破棄して非ゼロで終了する。
-- handler の trap、実行期限超過、応答 body の失敗は世代全体を終了させる。壊れた Store では stop を呼ばない。
-- 要求の期限は受信開始から body 受信、待機列、guest 実行、応答 body 生成を含む。
-  待機列で期限切れになった要求と切断済みの未実行要求は guest に渡さない。
-  実行を開始した要求はクライアントが切断しても期限内で完了させる。
-- 待機中にアプリ全体の要求タイムアウトは掛けない。guest が意図的に待ち続けるサービスを維持できる。
+- Readiness is reported after start succeeds. Initialization runs once per generation.
+- HTTP handlers run serially through body completion. Background tasks may interleave at await points.
+- SIGINT/SIGTERM stops new admission, drains accepted requests including bodies still arriving and queued requests, then calls stop once.
+- Startup and shutdown each default to ten seconds. Startup covers instantiation and start, excluding component loading and compilation. Shutdown covers draining requests and stop. Exceeding either deadline discards the Store and exits with a nonzero code.
+- A handler trap, execution timeout, or response body failure terminates the whole generation. Stop is not called on a failed Store.
+- A request deadline covers body receipt, queue wait, guest execution, and response body production from the start of receipt. Requests that expire in the queue or disconnect before execution are not passed to the guest. Once execution starts, it runs to completion within the deadline even if the client disconnects.
+- No app-wide request timeout applies while idle, allowing a guest service to wait indefinitely between requests.
 
-初版の常駐モードは HTTP の要求・応答 body を `runtime.max_body_bytes` の上限内で蓄積する。
-SSE、WebSocket、無期限の streaming 応答には対応していない。
-`runtime.max_concurrent_requests` は実行中・待機中・body 受信中の要求を制限し、超過は503。
-要求 body 超過は413、受信期限超過は408、guest 失敗は500または接続終了になる。
-HTTP trailer はこのモードでは転送しない。
+The initial resident mode buffers HTTP request and response bodies up to
+`runtime.max_body_bytes`. It does not support SSE, WebSocket, or indefinite streaming
+responses. `runtime.max_concurrent_requests` bounds executing, queued, and
+body-receiving requests; excess requests receive 503. Oversized request bodies receive
+413, receipt timeouts receive 408, and guest failures produce 500 or a closed
+connection. HTTP trailers are not forwarded in this mode.
 
-通常の `serve` と control-plane node は要求ごとに Store を作る。
-常駐モードは `serve --resident`、または manifest の `"mode": "service"` で選ぶ。
-メモリ上の状態は再起動で消える。永続化には既存の [celld binding](../examples/durable-counter/README.md)
-などを明示的に使う。常駐 instance 自体を Durable Object として永続化する機能は含まない。
+Ordinary `serve` and control-plane nodes create a Store per request. Select resident
+mode with `serve --resident` or manifest `"mode": "service"`. In-memory state is lost
+on restart. Use an explicit persistence service such as the
+[celld binding](../examples/durable-counter/README.md). The resident instance itself
+is not persisted as a Durable Object.
 
 ## Application manifest v1
 
@@ -75,47 +75,60 @@ HTTP trailer はこのモードでは転送しない。
 }
 ```
 
-`version`、`mode`、`component` は必須。未知のフィールド、未対応の version、空の build argv、
-不正な実行制限は起動前に拒否する。`mode` は `command` / `http` / `service`。
-`listen` の既定値は `127.0.0.1:8080`。`args` は command に渡す文字列配列。
-`runtime` は [RuntimeConfig](standalone-runtime.md#権限と制限) と同じ設定、
-`service` の期限は1〜86400000ms。service 以外では lifecycle 設定を使用しない。
+`version`, `mode`, and `component` are required. Unknown fields, unsupported versions,
+empty build argument vectors, and invalid limits are rejected before startup.
+`mode` is `command`, `http`, or `service`. `listen` defaults to `127.0.0.1:8080`.
+`args` is a string array for commands. `runtime` uses the same
+[RuntimeConfig](standalone-runtime.md#permissions-and-limits) settings.
+`service` deadlines accept 1–86400000 ms; lifecycle settings are unused outside service mode.
 
-component、watch、directory grant の host path は **manifest の親ディレクトリ基準**。
-`.wat` component も指定できる。build は argv 配列を順番にそのディレクトリで実行する。
-シェル展開は行わない。build はホストの環境を継承し、`runtime.env` は guest に渡す値を指定する。
+Component paths, watch paths, and directory-grant host paths are resolved **from
+the manifest's parent directory**. A component may be `.wat`. Build argument vectors
+run sequentially in that directory without shell expansion. Builds inherit the host
+environment; `runtime.env` specifies values passed to the guest.
 
 ```sh
-wasmplane build app.json  # build commands を実行し、component の存在を確認
-wasmplane start app.json  # 既にある component を起動
-wasmplane dev app.json    # build → start → 変更検出 → build → stop → start
+wasmplane build app.json  # Run build commands and verify the component exists
+wasmplane start app.json  # Start an existing component
+wasmplane dev app.json    # build → start → detect changes → build → stop → start
 ```
 
-`dev` は manifest を常に監視する。`watch` 省略時は component 自体を監視する。
-ファイル内容を100ms間隔で確認し、200ms安定してから再ビルドする。
-ディレクトリは再帰的に監視し、`target` / `_build` / `.git` / `node_modules` を除外する。
-symlink の参照先は追跡しないため、必要な参照先は `watch` に追加する。
+`dev` always watches the manifest. If `watch` is omitted, it also watches the component
+itself. It checks file contents every 100 ms and rebuilds after 200 ms without changes.
+Directories are watched recursively, excluding `target`, `_build`, `.git`, and
+`node_modules`. Symlink targets are not followed; add them to `watch` explicitly.
 
-manifest の編集ミスやビルド失敗では旧世代を継続する。ビルド中の編集も次のビルド対象になる。
-ビルド成功後は旧世代を停止して新しい instance を起動するため、切り替えには停止時間がある。
-新 component のリンク・初期化が失敗した場合はエラーを出し、次の編集を待つ。
-guest が異常終了した場合も自動再試行せず、変更を待つ。
-終了時はビルドを中断し、Unix ではその process group の子プロセスも終了する。
+Invalid manifests, build failures, and preflight validation failures preserve the old
+generation. Edits during a build trigger a subsequent build. After a successful build
+and validation, the old generation stops and a new instance starts, causing downtime.
+Guest initialization failures after the switch are reported while dev waits for
+another edit. Guest failures are not automatically retried. Shutdown interrupts the
+build; on Unix, it also terminates children in the build's process group.
 
-この manifest は単一のローカル component の実行契約である。
-パッケージ取得、registry、dependency resolution、複数 component の composition は含まない。
+This manifest describes execution of one local component. It does not provide
+package fetching, a registry, dependency resolution, or composition of multiple components.
 
-## SDK と検証
+## SDKs and verification
 
-[Rust SDK](../sdk/rust/src/lib.rs) は `Lifecycle` / `HttpHandler`、`export!`、
-`json` / `sleep_ms` と WASIp3 API を提供する。サンプルは [service-rust](../examples/service-rust/src/lib.rs)。
-標準 HTTP と独自 lifecycle の export を組み合わせ、共有 world と同じ契約を満たす。
+`wasmplane init <directory> --language rust|moonbit` generates an independent app
+with its SDK and WIT. `just sdk-pack` produces local `.crate` and `.tgz` distribution
+files. See the [I/O SDK](sdk-io.md) for shared file, environment, outbound HTTP, and
+Durable Object APIs. The [CLI reference](configuration.md) describes `inspect`,
+`check`, and dev's validation before switching generations. [Service benchmarks](service-benchmark.md)
+measure fresh/resident execution, RSS, startup/shutdown, and sustained load.
 
-[MoonBit SDK](../sdk/moonbit/service.mbt) は JSON 応答、sleep、標準出力の補助関数を提供する。
-[build script](../scripts/build-service-moonbit.mjs) が共有 WIT から async bindings を `target/generated` に生成し、
-SDK と [app.mbt](../examples/service-moonbit/app.mbt) を接続する。生成済み ABI コードは編集しない。
-アプリは `start` / `stop` / `handle` を実装し、バックグラウンド処理には export に渡される TaskGroup を使う。
+The [Rust SDK](../sdk/rust/src/lib.rs) provides `Lifecycle`, `HttpHandler`, `export!`,
+`json`, `sleep_ms`, and WASIp3 APIs. See [service-rust](../examples/service-rust/src/lib.rs).
+Its standard HTTP and custom lifecycle exports together satisfy the shared world.
 
-`just service-test` は両言語のビルドと共通 conformance test を実行する。
-初期化回数、状態保持、idle timer、body 受信中を含む drain、直列処理、受付制限、trap、
-CPU ループの中断、manifest、dev の再起動とビルド失敗からの回復を検証する。
+The [MoonBit SDK](../sdk/moonbit/service.mbt) provides helpers for JSON responses,
+sleep, and stdout. The [build script](../scripts/build-service-moonbit.mjs) generates
+async bindings from the shared WIT into `target/generated` and connects the SDK to
+[app.mbt](../examples/service-moonbit/app.mbt). Do not edit generated ABI code.
+Apps implement start, stop, and handle, using the TaskGroup passed to exports for
+background work.
+
+`just service-test` builds both languages and runs shared conformance tests covering
+initialization counts, retained state, idle timers, draining bodies still arriving,
+serial execution, admission limits, traps, CPU-loop interruption, manifests, dev
+restarts, and recovery after build failures.

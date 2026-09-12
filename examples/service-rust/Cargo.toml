@@ -9,3 +9,4 @@ crate-type = ["cdylib"]
 
 [dependencies]
 wasmplane-service-sdk = { path = "../../sdk/rust" }
+serde_json = "1"

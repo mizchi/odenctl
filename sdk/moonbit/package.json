@@ -1,0 +1,9 @@
+{
+  "name": "@wasmplane/moonbit-service-sdk",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "MIT",
+  "files": ["*.mbt", "moon.pkg.json", "build.mjs", "wit", "README.md"],
+  "exports": { "./build": "./build.mjs" },
+  "engines": { "node": ">=24" }
+}

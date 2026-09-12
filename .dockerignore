@@ -6,3 +6,15 @@ wasmplane.sqlite
 *.sqlite
 *.db
 examples/hello-worker/target
+
+# Keep local build outputs, SDK caches, and Terraform state out of image contexts.
+**/target
+**/node_modules
+**/.terraform
+**/*.tfstate
+**/*.tfstate.*
+**/*.tfplan
+perf-results
+reports
+**/*.tfvars
+**/*.tfvars.json

@@ -17,8 +17,8 @@ connectors:
       explicit:
         buckets: [10ms, 25ms, 50ms, 100ms, 250ms, 500ms, 1s, 2.5s, 5s]
     dimensions:
-      - name: http.method
-      - name: http.status_code
+      - name: http.request.method
+      - name: http.response.status_code
       - name: wasmplane.project_id
       - name: wasmplane.deployment_id
 
@@ -42,6 +42,10 @@ service:
       processors: [batch]
       exporters: [debug, spanmetrics]
     metrics:
-      receivers: [spanmetrics]
+      receivers: [otlp, spanmetrics]
       processors: [batch]
       exporters: [prometheus]
+    logs:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [debug]

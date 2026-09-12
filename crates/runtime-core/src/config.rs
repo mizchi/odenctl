@@ -13,6 +13,7 @@ pub struct RuntimeConfig {
     pub directories: Vec<DirectoryGrant>,
     pub outbound_origins: Vec<String>,
     pub durable: BTreeMap<String, crate::durable::GatewayBinding>,
+    pub telemetry: crate::telemetry::TelemetryConfig,
 }
 
 #[derive(Clone, Deserialize)]
@@ -35,12 +36,14 @@ impl Default for RuntimeConfig {
             directories: vec![],
             outbound_origins: vec![],
             durable: BTreeMap::new(),
+            telemetry: Default::default(),
         }
     }
 }
 
 impl RuntimeConfig {
     pub fn validate(&self) -> Result<()> {
+        self.telemetry.validate()?;
         ensure!(
             self.timeout_ms > 0 && self.timeout_ms <= 86_400_000,
             "timeout_ms must be 1..86400000"

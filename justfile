@@ -1,4 +1,5 @@
 set shell := ["bash", "-cu"]
+export WIT_BINDGEN := env_var_or_default("WIT_BINDGEN", justfile_directory() + "/target/telemetry-tools/bin/wit-bindgen")
 
 wac_git_url := env_var_or_default("WASMPLANE_WAC_GIT_URL", "https://github.com/mizchi/wac")
 wac_git_ref_arg := env_var_or_default("WASMPLANE_WAC_GIT_REF_ARG", "--tag wasmplane-wac-0.10.1-p1")
@@ -100,11 +101,58 @@ service-rust-build:
     rustup target add wasm32-wasip2
     cargo build --locked --manifest-path examples/service-rust/Cargo.toml --target wasm32-wasip2
 
-service-moonbit-build:
+service-moonbit-build: telemetry-bindgen-install
     node scripts/build-service-moonbit.mjs
+
+# Pin generators locally; leave the user's global tools untouched.
+telemetry-bindgen-install:
+    if ! "$WIT_BINDGEN" --version 2>/dev/null | rg -q '0\.62\.0'; then cargo install --root target/telemetry-tools --locked wit-bindgen-cli --version 0.62.0; fi
+
+telemetry-tools: telemetry-bindgen-install
+    if ! target/telemetry-tools/bin/wac --version >/dev/null 2>&1; then cargo install --root target/telemetry-tools --git "{{ wac_git_url }}" {{ wac_git_ref_arg }} --locked wac-cli; fi
+
+telemetry-moonbit-build: telemetry-bindgen-install
+    node scripts/build-telemetry-moonbit.mjs
+
+telemetry-compose-build: telemetry-tools telemetry-moonbit-build
+    cargo build --locked --manifest-path examples/telemetry-composition/provider/Cargo.toml --target wasm32-wasip2 --target-dir target/telemetry-example
+    cargo build --locked --manifest-path examples/telemetry-composition/app/Cargo.toml --target wasm32-wasip2 --target-dir target/telemetry-example
+
+telemetry-compose provider interface output *args: telemetry-tools
+    WAC="{{justfile_directory()}}/target/telemetry-tools/bin/wac" node scripts/compose-telemetry.mjs --provider {{quote(provider)}} --interface {{quote(interface)}} --output {{quote(output)}} {{args}}
+
+telemetry-test: rust-build service-rust-build service-moonbit-build telemetry-compose-build
+    cargo test -p wasmplane-runtime-core --test telemetry
+    WAC="{{justfile_directory()}}/target/telemetry-tools/bin/wac" WASMPLANE_SERVICE_BIN=target/debug/wasmplane WASMPLANE_SERVICE_RUST=examples/service-rust/target/wasm32-wasip2/debug/service_rust.wasm WASMPLANE_SERVICE_MOONBIT=examples/service-moonbit/target/service.wasm WASMPLANE_TELEMETRY_PROVIDER=target/telemetry-example/wasm32-wasip2/debug/telemetry_provider.wasm WASMPLANE_TELEMETRY_APP=target/telemetry-example/wasm32-wasip2/debug/telemetry_composed_app.wasm WASMPLANE_TELEMETRY_MOONBIT_PROVIDER=examples/telemetry-composition/moonbit/provider/target/provider.wasm WASMPLANE_TELEMETRY_MOONBIT_APP=examples/telemetry-composition/moonbit/app/target/service.wasm node --experimental-strip-types --test tests/telemetry-runtime.test.ts tests/telemetry-composition.test.ts
 
 service-test: rust-build service-rust-build service-moonbit-build
     WASMPLANE_SERVICE_BIN=target/debug/wasmplane WASMPLANE_SERVICE_RUST=examples/service-rust/target/wasm32-wasip2/debug/service_rust.wasm WASMPLANE_SERVICE_MOONBIT=examples/service-moonbit/target/service.wasm node --experimental-strip-types --test tests/service-runtime.test.ts tests/app-manifest.test.ts
+
+# Standalone tooling, packaged SDKs and common I/O conformance.
+sdk-pack:
+    node scripts/package-sdks.mjs
+
+sdk-test: rust-build service-rust-build service-moonbit-build sdk-pack
+    WASMPLANE_SDK_BIN=target/debug/wasmplane WASMPLANE_SDK_PACKAGES=target/sdk-packages node --experimental-strip-types --test tests/sdk-project.test.ts tests/component-check.test.ts
+    WASMPLANE_SERVICE_BIN=target/debug/wasmplane WASMPLANE_SERVICE_RUST=examples/service-rust/target/wasm32-wasip2/debug/service_rust.wasm WASMPLANE_SERVICE_MOONBIT=examples/service-moonbit/target/service.wasm node --experimental-strip-types --test tests/sdk-io.test.ts
+
+sdk-celld-test: rust-build service-rust-build service-moonbit-build
+    WASMPLANE_CELLD_BIN="${WASMPLANE_CELLD_BIN:-celld}" WASMPLANE_SERVICE_BIN=target/debug/wasmplane WASMPLANE_SERVICE_RUST=examples/service-rust/target/wasm32-wasip2/debug/service_rust.wasm WASMPLANE_SERVICE_MOONBIT=examples/service-moonbit/target/service.wasm node --experimental-strip-types --test tests/sdk-io.test.ts
+
+service-bench-build:
+    cargo build --release -p wasmplane-wasip3-host --bin wasmplane
+    rustup target add wasm32-wasip2
+    cargo build --locked --release --manifest-path examples/service-rust/Cargo.toml --target wasm32-wasip2
+
+service-bench *args: service-bench-build
+    node --experimental-strip-types src/service-bench.ts {{args}}
+
+service-bench-test: rust-build service-rust-build
+    WASMPLANE_SERVICE_BIN=target/debug/wasmplane WASMPLANE_SERVICE_RUST=examples/service-rust/target/wasm32-wasip2/debug/service_rust.wasm node --experimental-strip-types --test tests/service-bench.test.ts
+
+# Ten minutes per mode and concurrency, with three complete process lifecycles.
+service-soak duration_ms="600000" cycles="3": service-bench-build
+    node --experimental-strip-types src/service-bench.ts --duration-ms {{quote(duration_ms)}} --cycles {{quote(cycles)}} --output perf-results/service-soak.json
 
 app-build manifest: rust-build
     target/debug/wasmplane build {{quote(manifest)}}
@@ -347,11 +395,35 @@ fly-otel-evidence:
 tofu-fmt-check:
     tofu fmt -check -recursive infra/terraform
 
-tofu-validate:
+tofu-validate: aws-standalone-validate
     tofu -chdir=infra/terraform/aws init -backend=false
     tofu -chdir=infra/terraform/aws validate
     tofu -chdir=infra/terraform/gcp init -backend=false
     tofu -chdir=infra/terraform/gcp validate
+
+# Standalone runtime on AWS; kumo checks never use real AWS credentials.
+kumo-install:
+    node scripts/install-kumo.mjs
+
+aws-kumo-test: kumo-install
+    node --experimental-strip-types --test tests/kumo-drift.test.ts
+    node scripts/aws-kumo-smoke.mjs
+
+aws-standalone-validate:
+    tofu -chdir=infra/terraform/aws-standalone init -backend=false -input=false
+    tofu -chdir=infra/terraform/aws-standalone validate
+    tofu -chdir=infra/terraform/aws-standalone-kumo init -backend=false -input=false
+    tofu -chdir=infra/terraform/aws-standalone-kumo test
+
+aws-standalone-plan:
+    tofu -chdir=infra/terraform/aws-standalone init -input=false
+    tofu -chdir=infra/terraform/aws-standalone plan -out=plan.tfplan
+
+aws-image-test: service-bench-build
+    WASMPLANE_AWS_IMAGE_HOST=target/release/wasmplane WASMPLANE_AWS_IMAGE_COMPONENT=examples/service-rust/target/wasm32-wasip2/release/service_rust.wasm node --experimental-strip-types --test tests/aws-image.test.ts
+
+aws-image-build image="wasmplane-service:local" platform="linux/arm64":
+    docker buildx build --platform {{quote(platform)}} --load -f Dockerfile.standalone -t {{quote(image)}} .
 
 aws-terraform-plan:
     terraform -chdir=infra/terraform/aws init

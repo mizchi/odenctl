@@ -3,7 +3,7 @@ pub use wasip3;
 pub use wasip3::http::types;
 pub mod bindings {
     wasip3::wit_bindgen::generate!({
-        path: "../../wit/app", world: "lifecycle-hooks",
+        path: "wit/lifecycle.wit", world: "lifecycle-hooks",
         generate_all, pub_export_macro: true,
         default_bindings_module: "::wasmplane_service_sdk::bindings",
     });
@@ -35,3 +35,7 @@ pub fn json(body: String) -> types::Response {
 pub async fn sleep_ms(milliseconds: u64) {
     wasip3::clocks::monotonic_clock::wait_for(milliseconds.saturating_mul(1_000_000)).await;
 }
+
+pub mod durable;
+pub mod io;
+pub mod telemetry;

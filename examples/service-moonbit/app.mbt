@@ -23,7 +23,9 @@ pub async fn stop(_background_group : @async-core.TaskGroup[Unit]) -> Result[Uni
 
 pub async fn handle(request : @types.Request, _background_group : @async-core.TaskGroup[Unit]) -> Result[@types.Response, @types.ErrorCode] {
   let path = request.get_path_with_query().unwrap_or("")
+  if path == "/telemetry" { return Ok(@service.json(telemetry_example(request, _background_group))) }
   request.drop()
+  if io_example(path) is Some(value) { return Ok(@service.json(value.stringify())) }
   match path {
     "/trap" => abort("service test trap")
     "/loop" => while true { count.val += 1 }

@@ -1,7 +1,7 @@
 //! Local application contract and development supervisor. Build commands are
 //! argument vectors, never shell programs. Every path is relative to the manifest.
 use anyhow::{Context, Result, bail, ensure};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::hash_map::DefaultHasher,
     hash::{Hash, Hasher},
@@ -11,19 +11,11 @@ use std::{
 use tokio::{net::TcpListener, process::Command, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
 use wasmplane_runtime_core::{
+    component::{CheckedComponent, ComponentReport, Mode},
     config::RuntimeConfig,
     runtime::Runtime,
-    server::HttpServer,
-    service::{ResidentService, ServiceOptions},
+    service::ServiceOptions,
 };
-
-#[derive(Clone, Copy, Deserialize, PartialEq)]
-#[serde(rename_all = "lowercase")]
-pub enum Mode {
-    Command,
-    Http,
-    Service,
-}
 
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -53,6 +45,82 @@ pub struct App {
     manifest: PathBuf,
     directory: PathBuf,
     spec: Manifest,
+}
+
+pub struct PreparedApp {
+    app: App,
+    component: CheckedComponent,
+}
+
+#[derive(Default, Serialize)]
+pub struct Grants {
+    env: Vec<String>,
+    directories: Vec<DirectoryInfo>,
+    outbound_origins: Vec<String>,
+    durable: Vec<String>,
+}
+#[derive(Serialize)]
+struct DirectoryInfo {
+    host: PathBuf,
+    guest: String,
+    write: bool,
+}
+#[derive(Serialize)]
+pub struct CheckReport {
+    schema_version: u32,
+    pub valid: bool,
+    pub component: Option<ComponentReport>,
+    pub grants: Grants,
+    pub errors: Vec<String>,
+}
+
+pub fn check(path: &Path) -> CheckReport {
+    let mut report = CheckReport {
+        schema_version: 1,
+        valid: false,
+        component: None,
+        grants: Grants::default(),
+        errors: vec![],
+    };
+    let run = || -> Result<(ComponentReport, Option<String>, Grants)> {
+        let app = App::load(path)?;
+        let grants = Grants {
+            env: app.spec.runtime.env.keys().cloned().collect(),
+            directories: app
+                .spec
+                .runtime
+                .directories
+                .iter()
+                .map(|d| DirectoryInfo {
+                    host: d.host.clone(),
+                    guest: d.guest.clone(),
+                    write: d.write,
+                })
+                .collect(),
+            outbound_origins: app.spec.runtime.outbound_origins.clone(),
+            durable: app.spec.runtime.durable.keys().cloned().collect(),
+        };
+        let component =
+            CheckedComponent::load(Runtime::new(app.spec.runtime)?, &app.spec.component)?;
+        let error = component
+            .validate(app.spec.mode)
+            .err()
+            .map(|e| format!("{e:#}"));
+        Ok((component.report, error, grants))
+    };
+    match run() {
+        Ok((component, error, grants)) => {
+            report.component = Some(component);
+            report.grants = grants;
+            if let Some(error) = error {
+                report.errors.push(error);
+            } else {
+                report.valid = true;
+            }
+        }
+        Err(error) => report.errors.push(format!("{error:#}")),
+    }
+    report
 }
 
 impl App {
@@ -141,31 +209,17 @@ impl App {
     }
 
     pub async fn run(self, cancel: CancellationToken) -> Result<i32> {
-        let runtime = Runtime::new(self.spec.runtime)?;
-        match self.spec.mode {
-            Mode::Command => {
-                let mut args = vec![self.spec.component.to_string_lossy().into_owned()];
-                args.extend(self.spec.args);
-                tokio::select! { result = runtime.run(&self.spec.component, &args) => result, _ = cancel.cancelled() => Ok(0) }
-            }
-            Mode::Http => {
-                let server = HttpServer::new(runtime, &self.spec.component)?;
-                let listener = TcpListener::bind(&self.spec.listen).await?;
-                eprintln!("listening on http://{}", listener.local_addr()?);
-                server.serve(listener, cancel.cancelled()).await?;
-                Ok(0)
-            }
-            Mode::Service => {
-                let listener = TcpListener::bind(&self.spec.listen).await?;
-                let service = tokio::select! {
-                    result = ResidentService::start(runtime, &self.spec.component, self.spec.service) => result?,
-                    _ = cancel.cancelled() => return Ok(0),
-                };
-                eprintln!("listening on http://{}", listener.local_addr()?);
-                service.serve(listener, cancel.cancelled()).await?;
-                Ok(0)
-            }
-        }
+        self.prepare()?.run(cancel).await
+    }
+
+    pub fn prepare(&self) -> Result<PreparedApp> {
+        let runtime = Runtime::new(self.spec.runtime.clone())?;
+        let component = CheckedComponent::load(runtime, &self.spec.component)?;
+        component.validate(self.spec.mode)?;
+        Ok(PreparedApp {
+            app: self.clone(),
+            component,
+        })
     }
 
     fn fingerprint(&self) -> Result<u64> {
@@ -175,6 +229,42 @@ impl App {
             hash_path(path, &mut hash)?;
         }
         Ok(hash.finish())
+    }
+}
+
+impl PreparedApp {
+    async fn run(self, cancel: CancellationToken) -> Result<i32> {
+        let telemetry = self.component.telemetry();
+        let result = self.run_inner(cancel).await;
+        telemetry.flush().await;
+        result
+    }
+    async fn run_inner(self, cancel: CancellationToken) -> Result<i32> {
+        let spec = self.app.spec;
+        match spec.mode {
+            Mode::Command => {
+                let mut args = vec![spec.component.to_string_lossy().into_owned()];
+                args.extend(spec.args);
+                tokio::select! { result = self.component.command(&args) => result, _ = cancel.cancelled() => Ok(0) }
+            }
+            Mode::Http => {
+                let server = self.component.http()?;
+                let listener = TcpListener::bind(&spec.listen).await?;
+                eprintln!("listening on http://{}", listener.local_addr()?);
+                server.serve(listener, cancel.cancelled()).await?;
+                Ok(0)
+            }
+            Mode::Service => {
+                let listener = TcpListener::bind(&spec.listen).await?;
+                let service = tokio::select! {
+                    result = self.component.resident(spec.service) => result?,
+                    _ = cancel.cancelled() => return Ok(0),
+                };
+                eprintln!("listening on http://{}", listener.local_addr()?);
+                service.serve(listener, cancel.cancelled()).await?;
+                Ok(0)
+            }
+        }
     }
 }
 
@@ -215,7 +305,7 @@ struct Generation {
     task: JoinHandle<Result<i32>>,
 }
 impl Generation {
-    fn start(app: App) -> Self {
+    fn start(app: PreparedApp) -> Self {
         let cancel = CancellationToken::new();
         Self {
             task: tokio::spawn(app.run(cancel.clone())),
@@ -254,11 +344,31 @@ pub async fn dev(path: &Path, cancel: CancellationToken) -> Result<i32> {
                     previous = app.fingerprint()?;
                     match app.build(&cancel).await {
                         Ok(()) if !cancel.is_cancelled() => {
+                            // Compilation must not occupy an executor thread while the
+                            // old generation is still serving requests.
+                            let candidate = app.clone();
+                            let validation =
+                                tokio::task::spawn_blocking(move || candidate.prepare())
+                                    .await
+                                    .context("component validation task failed")
+                                    .and_then(|result| result);
+                            let prepared = match validation {
+                                Ok(prepared) => prepared,
+                                Err(error) => {
+                                    eprintln!(
+                                        "validation failed; keeping current generation: {error:#}"
+                                    );
+                                    continue;
+                                }
+                            };
+                            if cancel.is_cancelled() {
+                                break;
+                            }
                             if let Some(old) = generation.take() {
                                 old.stop().await;
                             }
                             eprintln!("starting application generation");
-                            generation = Some(Generation::start(app.clone()));
+                            generation = Some(Generation::start(prepared));
                         }
                         Err(error) if !cancel.is_cancelled() => {
                             eprintln!("build failed; keeping current generation: {error:#}")

@@ -1,105 +1,104 @@
-# celld / WIT ベンチマーク
+# celld / WIT Benchmarks
 
-実 celld に対して、gateway への直接 HTTP と Wasm 内からの WIT 呼び出しを比較する。
-`just` がホストと専用ゲストを **release** ビルドし、一時ディレクトリに celld を起動する。
-既存 gateway の起動や token 設定は不要。終了・失敗時はプロセスと一時データを削除する。
+Compare direct HTTP requests to the gateway with WIT calls from Wasm against a real celld process.
+`just` builds the host and dedicated guest in **release** mode, then starts celld in a temporary directory.
+No existing gateway or token configuration is required. Processes and temporary data are cleaned up on exit or failure.
 
 ```sh
 pnpm install --frozen-lockfile
 WASMPLANE_CELLD_BIN=/absolute/path/to/celld just celld-bench
 
-# 各ケース 1000 回、warmup 100 回、同時実行数 1 / 8 / 32
+# 1000 measured requests and 100 warmup requests per case, concurrency 1 / 8 / 32
 WASMPLANE_CELLD_BIN=/absolute/path/to/celld just celld-bench \
   --iterations 1000 --warmup 100 --concurrency 1,8,32 \
   --output perf-results/celld-single-object.json
 
-# 同じ負荷を 8 個の object に分散
+# Distribute the same load across 8 objects
 WASMPLANE_CELLD_BIN=/absolute/path/to/celld just celld-bench \
   --iterations 1000 --warmup 100 --concurrency 1,8 --objects 8 \
   --output perf-results/celld-eight-objects.json
 ```
 
-celld 0.4.1、Rust（wasm32-wasip2）、Node.js 24+、pnpm、just を使う。
-初回は Wasmtime の release ビルドに時間がかかる。ビルド時間と celld 起動時間は計測対象外。
+Requires celld 0.4.1, Rust (`wasm32-wasip2`), Node.js 24+, pnpm, and just.
+The first Wasmtime release build takes time. Build time and celld startup time are excluded from measurements.
 
-## ケース
+## Cases
 
-| 名前 | 経路 | 操作 |
+| Name | Path | Operation |
 | --- | --- | --- |
-| `gateway.read` | Node.js fetch → gateway → actor | `GET /`、値の読み取り |
-| `wit.read` | Wasm → WIT → Rust ホスト → gateway → actor | 同じ読み取り |
-| `gateway.increment` | Node.js fetch → gateway → actor | `POST /increment`、transaction による更新 |
-| `wit.increment` | Wasm → WIT → Rust ホスト → gateway → actor | 同じ更新 |
+| `gateway.read` | Node.js fetch → gateway → actor | `GET /`, read the value |
+| `wit.read` | Wasm → WIT → Rust host → gateway → actor | The same read |
+| `gateway.increment` | Node.js fetch → gateway → actor | `POST /increment`, update in a transaction |
+| `wit.increment` | Wasm → WIT → Rust host → gateway → actor | The same update |
 
-すべて同じ `COUNTER` namespace、認証、JSON/base64 envelope と空の request body を使う。
-各ケースには新しい object 名を割り当てる。`--objects 1` では単一 actor への集中、
-`--objects N` では index 順に N 個へ分散する。指定並行数は待機中を含む最大呼び出し数。
-到着率を固定する負荷ではなく、応答が完了したら次を送る方式で測る。
-warmup はケース全体の合計回数で、object ごとの回数ではない。
+All cases use the same `COUNTER` namespace, authentication, JSON/base64 envelope, and empty request body.
+Each case gets new object names. `--objects 1` concentrates traffic on one actor;
+`--objects N` distributes requests across N objects in index order. Concurrency is the maximum number of
+outstanding calls, including queued calls. This is a closed-loop load: each completed request allows the
+next one to start, rather than maintaining a fixed arrival rate. Warmup counts apply to the entire case, not each object.
 
-更新の request ID はケース・warmup/本計測・リクエスト index ごとに異なる。
-重複排除 record への書き込みも更新コストに含める。
-最後に各 object の値を読み、warmup と本計測の更新がすべて反映されたことを確認する。
-HTTP/WIT エラー、応答不正、件数不一致はベンチマークを失敗させる。
-失敗時は終了コード `1` とエラー詳細を返し、成功レポートは出力しない。自動再送はしない。
+Mutation request IDs are unique to the case, phase (warmup or measurement), and request index.
+The cost of writing deduplication records is included. At the end, the benchmark reads each object's
+value and verifies that all warmup and measured updates took effect.
+HTTP/WIT errors, invalid responses, or count mismatches fail the benchmark.
+Failures return exit code `1` with error details and no success report. Requests are not automatically retried.
 
-## 時間の範囲
+## Timing scope
 
-- p50/p95/p99・平均・最小・最大: request の組み立てから actor 応答 body の JSON 検証まで。
-  WIT 側はゲストの `Instant`、直接 HTTP 側は Node.js の `performance.now()` を使う。
-  WIT handle は batch 開始前に `open` して使い回す。
-  percentile は nearest rank で求め、小数第3位まで表示する。
-- RPS: 成功した本計測リクエスト数 / batch 全体の経過秒数。並行数を掛けた推定値ではない。
-  warmup と最後の状態検証は含めない。
-- `warmupElapsedMs`: warmup batch の経過時間。p50 等には含めない。
-- `processElapsedMs` / 表の `CLI total ms`: WIT ケース全体のプロセス実行時間。
-  起動・engine 作成・component 読み込み/コンパイル・instantiate・warmup・本計測・
-  状態検証・標準出力・終了を含む。純粋な起動時間や 1 リクエストの latency ではない。
+- p50/p95/p99, mean, minimum, and maximum: from request construction through JSON validation of the actor response body.
+  WIT uses the guest's `Instant`; direct HTTP uses Node.js `performance.now()`.
+  WIT handles are opened before the batch and reused. Percentiles use nearest rank and are displayed to three decimal places.
+- RPS: successful measured requests divided by the batch's elapsed seconds, not an estimate multiplied by concurrency.
+  Excludes warmup and final state verification.
+- `warmupElapsedMs`: elapsed time for the warmup batch, excluded from p50 and other request statistics.
+- `processElapsedMs` / `CLI total ms` in the table: total process time for a WIT case.
+  Includes startup, engine creation, component loading/compilation, instantiation, warmup, measurement,
+  state verification, standard output, and shutdown. This is neither pure startup time nor per-request latency.
 
-WIT 側はケースごとに Wasm を一度起動し、その中で複数の async `fetch` を進める。
-呼び出しごとの CLI 起動や component 再コンパイルは行わない。
-ゲストの測定ループは [benchmark.rs](../examples/durable-counter/src/benchmark.rs)、
-集計と実行制御は [celld-bench.ts](../src/celld-bench.ts)。
+Each WIT case starts Wasm once and runs multiple async `fetch` calls within that process.
+It does not start the CLI or recompile the component for each call.
+The guest measurement loop is in [benchmark.rs](../examples/durable-counter/src/benchmark.rs);
+aggregation and orchestration are in [celld-bench.ts](../src/celld-bench.ts).
 
-直接 HTTP は Node.js fetch、WIT ホストは reqwest なので、両者の差には HTTP クライアントや
-ゲストの JSON 処理・時計呼び出しの差も入る。**WIT だけのオーバーヘッドを測るものではない。**
-また、celld dev のローカル SQLite を対象としており、fleet、remote durability、障害時の性能は含まない。
+Direct HTTP uses Node.js fetch, while the WIT host uses reqwest. Differences therefore include HTTP client
+behavior, guest JSON processing, and clock calls. **These measurements do not isolate WIT overhead.**
+They also use local SQLite in celld dev mode and do not cover fleet operation, remote durability, or performance during failures.
 
-2026-09-11 の celld 0.4.1 / macOS arm64 では、8 object・並行数32・warmup 100・本計測1000の
-`wit.read` で HTTP 503 `cell request limit reached` を2回観測した。
-celld ログは `cell_overload_refused` / `in_flight=64, limit=64`。クライアントの並行数32に対して
-celld の計数が64に達する理由はこのベンチマークでは調査していない。
-この条件のスコアは採用せず、成功した単一 object の結果とは分けて扱う。
+On 2026-09-11, celld 0.4.1 on macOS arm64 returned HTTP 503 `cell request limit reached` twice for
+`wit.read` with 8 objects, concurrency 32, 100 warmup requests, and 1000 measured requests.
+The celld logs reported `cell_overload_refused` / `in_flight=64, limit=64`.
+Why celld reached a count of 64 at client concurrency 32 has not been investigated in this benchmark.
+Scores under those conditions are excluded and treated separately from successful single-object results.
 
-## オプションと結果
+## Options and reports
 
-| オプション | 既定値 | 内容 |
+| Option | Default | Description |
 | --- | --- | --- |
-| `--iterations` | `100` | 各ケースの本計測回数 |
-| `--warmup` | `10` | 各ケースの除外する呼び出し回数。`0` も可 |
-| `--concurrency` | `1,8` | 同時実行数のリスト |
-| `--objects` | `1` | 各ケースで使う object 数 |
-| `--timeout-ms` | `60000` | 各ケースの実行期限。WIT のプロセス監視はさらに起動猶予 30 秒 |
-| `--format` | `markdown` | 標準出力の `markdown` / `json` |
-| `--output` | なし | JSON レポートの保存先。標準出力形式とは独立 |
-| `--celld-bin` | 環境変数または `celld` | celld 実行ファイル |
-| `--host-bin` | `target/release/wasmplane` | ホスト実行ファイル |
-| `--component` | 専用 release ゲスト | ベンチマーク feature でビルドした component |
+| `--iterations` | `100` | Measured requests per case |
+| `--warmup` | `10` | Excluded warmup calls per case; `0` is allowed |
+| `--concurrency` | `1,8` | List of concurrency levels |
+| `--objects` | `1` | Objects per case |
+| `--timeout-ms` | `60000` | Deadline per case; the WIT process monitor allows another 30 seconds for startup |
+| `--format` | `markdown` | Standard output format: `markdown` or `json` |
+| `--output` | None | JSON report destination, independent of the standard output format |
+| `--celld-bin` | Environment variable or `celld` | celld executable |
+| `--host-bin` | `target/release/wasmplane` | Host executable |
+| `--component` | Dedicated release guest | Component built with the benchmark feature |
 
-JSON は schemaVersion `1`。測定条件・件数・エラー数・各統計に加えて Node / Wasmtime / celld の
-バージョン、CPU/OS、ホストパス、ゲスト SHA-256 を保存する。token は出力しない。
-`perf-results/` は Git 管理外。
+JSON reports use schemaVersion `1`. They record measurement conditions, request and error counts,
+statistics, Node / Wasmtime / celld versions, CPU/OS, the host path, and the guest SHA-256. Tokens are omitted.
+`perf-results/` is ignored by Git.
 
-通常の Counter サンプルは変更せず使える。ベンチマーク版は Cargo feature `benchmark` を有効にし、
-`examples/durable-counter/target/benchmark/` に分けて生成する。
-ビルド済みなら `pnpm celld-bench ...` でも実行できる。
+The regular Counter sample remains usable as is. The benchmark variant enables the Cargo feature
+`benchmark` and builds separately under `examples/durable-counter/target/benchmark/`.
+Once built, it can also be run with `pnpm celld-bench ...`.
 
-## テスト
+## Tests
 
 ```sh
-# 集計・入力検証・HTTP エラー・warmup/更新 ID の検証
+# Aggregation, input validation, HTTP errors, and warmup/mutation IDs
 node --experimental-strip-types --test tests/celld-bench.test.ts
 
-# 実 celld + Wasm による小規模な全ケース検証（所要時間の閾値は設けない）
+# Small runs of all cases with real celld + Wasm (no duration thresholds)
 WASMPLANE_CELLD_BIN=/absolute/path/to/celld just celld-bench-test
 ```

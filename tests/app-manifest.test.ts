@@ -23,9 +23,13 @@ async function fixture(t: TestContext) {
     runtime: { timeout_ms: 2000 }, service: { shutdown_timeout_ms: 1000 } };
   await writeFile(manifest, JSON.stringify(app));
   await writeFile(join(dir, "source.txt"), "ok");
-  await writeFile(join(dir, "build.mjs"), `import {readFileSync,mkdirSync,copyFileSync} from 'node:fs';
+  await writeFile(join(dir, "build.mjs"), `import {readFileSync,mkdirSync,copyFileSync,writeFileSync} from 'node:fs';
 if(readFileSync('source.txt','utf8') === 'fail') process.exit(7);
-mkdirSync('build',{recursive:true});copyFileSync(${JSON.stringify(component)},'build/service.wasm');`);
+mkdirSync('build',{recursive:true});
+if(readFileSync('source.txt','utf8') === 'invalid') {
+  writeFileSync('build/service.wasm','(component (import "unavailable:package/api@1.0.0" (instance (export "required" (func)))))');process.exit(0);
+}
+copyFileSync(${JSON.stringify(component)},'build/service.wasm');`);
   return { dir, manifest, app };
 }
 
@@ -97,6 +101,10 @@ test("dev preserves the running generation on build failure and gracefully reloa
   await until(() => logs.includes("build failed"), () => logs);
   assert.equal((await (await fetch(addresses()[0])).json()).count, 3);
   assert.equal(addresses().length, 1);
+  await writeFile(join(dir, "source.txt"), "invalid");
+  await until(() => logs.includes("validation failed"), () => logs);
+  assert.equal((await (await fetch(addresses()[0])).json()).count, 4);
+  assert.equal(addresses().length, 1, "an unlinkable build must preserve the current generation");
   await writeFile(join(dir, "source.txt"), "recovered");
   await until(() => addresses().length === 2, () => logs);
   assert.equal((await (await fetch(addresses()[1])).json()).count, 1);

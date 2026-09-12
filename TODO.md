@@ -350,3 +350,14 @@ The numbered production-readiness sections below retain the existing implementat
 - [x] Add project member removal and role update APIs with owner-safety checks.
 - [x] Add custom domain removal with route ownership checks.
 - [x] Add customer-visible audit history for key, member, domain, billing, and deploy actions.
+
+
+## 42. Standalone runtime developer tools and SDKs
+
+- [x] Generate self-contained Rust/MoonBit services with `wasmplane init`.
+- [x] Package SDKs locally and build consumer projects outside this repository.
+- [x] Inspect imports, exports, compatible modes and potential capabilities without executing a guest.
+- [x] Check manifest contracts and host grants; validate a compiled snapshot before dev replaces its current generation.
+- [x] Benchmark startup, fresh/resident HTTP, RSS, queue pressure and process reclamation; add duration/restart soak workloads.
+- [x] Provide shared environment, bounded file/HTTP I/O and celld WIT adapters in both SDKs.
+- [x] Test grants, denials, repeated resource cleanup and real celld calls in both guest languages.

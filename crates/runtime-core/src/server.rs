@@ -64,8 +64,19 @@ impl Body for ResponseBody {
 
 impl HttpServer {
     pub fn new(runtime: Arc<Runtime>, path: &std::path::Path) -> Result<Arc<Self>> {
-        let component = Component::from_file(&runtime.engine, path)?;
-        let pre = prepare_http(&runtime, &component)?;
+        let span = runtime
+            .telemetry
+            .start("component.compile", None, 1, "compile");
+        let result = Component::from_file(&runtime.engine, path);
+        span.finish(if result.is_ok() { "ok" } else { "error" });
+        let component = result?;
+        Self::from_component(runtime, &component)
+    }
+    pub(crate) fn from_component(
+        runtime: Arc<Runtime>,
+        component: &Component,
+    ) -> Result<Arc<Self>> {
+        let pre = prepare_http(&runtime, component)?;
         let permits = Arc::new(Semaphore::new(runtime.config.max_concurrent_requests));
         Ok(Arc::new(Self {
             runtime,
@@ -110,7 +121,21 @@ impl HttpServer {
         result
     }
 
-    async fn respond(self: Arc<Self>, request: Request<Incoming>) -> Response<ResponseBody> {
+    async fn respond(
+        self: Arc<Self>,
+        mut request: Request<Incoming>,
+    ) -> Response<crate::telemetry::body::TrackedBody<ResponseBody>> {
+        let method = request.method().to_string();
+        let span = self
+            .runtime
+            .telemetry
+            .request(request.headers_mut(), &method);
+        let response = self.respond_inner(request).await;
+        let status = response.status().as_u16();
+        response.map(|body| crate::telemetry::body::TrackedBody::new(body, span, status))
+    }
+
+    async fn respond_inner(self: Arc<Self>, request: Request<Incoming>) -> Response<ResponseBody> {
         let limit = self.runtime.config.max_body_bytes;
         if request
             .body()
@@ -122,7 +147,10 @@ impl HttpServer {
         }
         let permit = match self.permits.clone().try_acquire_owned() {
             Ok(permit) => permit,
-            Err(_) => return error_response(503, "runtime at capacity"),
+            Err(_) => {
+                self.runtime.telemetry.reject();
+                return error_response(503, "runtime at capacity");
+            }
         };
         let cancel = self.shutdown.child_token();
         let guard = cancel.clone().drop_guard();
@@ -139,12 +167,34 @@ impl HttpServer {
         self.tasks.spawn(async move {
             let run = async {
                 let mut store = server.runtime.store(&[])?;
-                let proxy = server.pre.instantiate_async(&mut store).await?;
+                let parent = crate::telemetry::TraceContext::from_headers(request.headers());
+                let span = server.runtime.telemetry.start(
+                    "component.instantiate",
+                    parent.as_ref(),
+                    1,
+                    "instantiate",
+                );
+                let result = server.pre.instantiate_async(&mut store).await;
+                span.finish(if result.is_ok() { "ok" } else { "error" });
+                let proxy = result?;
+                let execution =
+                    server
+                        .runtime
+                        .telemetry
+                        .start("http.handle", parent.as_ref(), 1, "run");
                 let prepared =
-                    Prepared::new(store.as_context_mut(), &proxy, request, Host::http, tx)?;
+                    match Prepared::new(store.as_context_mut(), &proxy, request, Host::http, tx) {
+                        Ok(prepared) => prepared,
+                        Err(error) => {
+                            execution.finish("error");
+                            return Err(error.into());
+                        }
+                    };
                 store
                     .run_concurrent(async |accessor| {
-                        prepared.run(accessor, std::future::pending()).await?;
+                        let result = prepared.run(accessor, std::future::pending()).await;
+                        execution.finish(if result.is_ok() { "ok" } else { "error" });
+                        result?;
                         // A p3 handler may return before its response stream has finished.
                         task_cancel.cancelled().await;
                         Ok::<_, wasmtime::Error>(())

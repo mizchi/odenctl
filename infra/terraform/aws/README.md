@@ -1,5 +1,9 @@
 # wasmplane AWS Terraform POC
 
+For the standalone Wasm runtime and local kumo validation, use the
+[new ECS deployment guide](../aws-standalone/README.md). This directory contains
+the older control-plane/runtime-node scaffold.
+
 This scaffold maps the current Fly split onto AWS:
 
 - control plane: ECS/Fargate service behind an ALB host rule

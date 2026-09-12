@@ -15,3 +15,11 @@ reports/
 
 # APM dependencies
 apm_modules/
+
+# Library lockfile is generated during package verification.
+/sdk/rust/Cargo.lock
+
+# Local Terraform plans and environment-specific values.
+*.tfplan
+*.tfvars
+*.tfvars.json

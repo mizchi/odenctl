@@ -175,11 +175,21 @@ impl DurableClient {
             body: STANDARD.encode(request.body),
             request_id: request.request_id,
         };
+        let mut trace_headers = reqwest::header::HeaderMap::new();
+        for (name, value) in &wire.headers {
+            if name.eq_ignore_ascii_case("traceparent") || name.eq_ignore_ascii_case("tracestate") {
+                trace_headers.append(
+                    reqwest::header::HeaderName::from_bytes(name.as_bytes()).unwrap(),
+                    value.parse().unwrap(),
+                );
+            }
+        }
         // Never retry: an absent response does not establish that the actor did not commit.
         tokio::time::timeout_at(deadline, async {
             let mut response = self
                 .client
                 .post(url)
+                .headers(trace_headers)
                 .header(
                     reqwest::header::AUTHORIZATION,
                     gateway.authorization.clone(),
@@ -316,12 +326,52 @@ impl<T: Send> objects::HostObjectWithStore<T> for Host {
     async fn fetch(
         accessor: &Accessor<T, Self>,
         object: Resource<ObjectHandle>,
-        request: FetchRequest,
+        mut request: FetchRequest,
     ) -> wasmtime::Result<Result<FetchResponse, FetchError>> {
-        let (client, object) = accessor.with(|mut access| {
+        let (client, object, telemetry) = accessor.with(|mut access| {
             let host = access.get();
-            Ok::<_, wasmtime::Error>((Arc::clone(&host.durable), host.table.get(&object)?.clone()))
+            Ok::<_, wasmtime::Error>((
+                Arc::clone(&host.durable),
+                host.table.get(&object)?.clone(),
+                host.telemetry.clone(),
+            ))
         })?;
-        Ok(client.fetch(&object, request).await)
+        let mut headers = hyper::HeaderMap::new();
+        for (name, value) in &request.headers {
+            if let (Ok(name), Ok(value)) = (
+                hyper::header::HeaderName::from_bytes(name.as_bytes()),
+                value.parse::<hyper::header::HeaderValue>(),
+            ) {
+                headers.append(name, value);
+            }
+        }
+        let parent = crate::telemetry::TraceContext::from_headers(&headers);
+        let span = telemetry.start("durable.fetch", parent.as_ref(), 3, "durable");
+        span.attribute(
+            "wasmplane.durable.binding",
+            serde_json::json!(object.binding),
+        );
+        span.context().inject(&mut headers);
+        request.headers.retain(|(n, _)| {
+            !n.eq_ignore_ascii_case("traceparent") && !n.eq_ignore_ascii_case("tracestate")
+        });
+        for name in ["traceparent", "tracestate"] {
+            if let Some(value) = headers.get(name) {
+                request
+                    .headers
+                    .push((name.into(), value.to_str().unwrap().into()));
+            }
+        }
+        let result = client.fetch(&object, request).await;
+        if let Ok(response) = &result {
+            span.http_status(response.status);
+        }
+        span.finish(match &result {
+            Ok(r) if r.status < 400 => "ok",
+            Err(FetchError::OutcomeUnknown) => "outcome-unknown",
+            Err(FetchError::DeadlineExceeded) => "timeout",
+            _ => "error",
+        });
+        Ok(result)
     }
 }

@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "mode": "service",
+  "component": "service.wasm",
+  "listen": "0.0.0.0:8080",
+  "runtime": {
+    "timeout_ms": 5000,
+    "memory_mb": 128,
+    "max_body_bytes": 1048576,
+    "max_concurrent_requests": 64
+  },
+  "service": {
+    "startup_timeout_ms": 10000,
+    "shutdown_timeout_ms": 10000
+  }
+}

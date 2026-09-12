@@ -3,6 +3,8 @@ members = ["crates/runtime-core", "crates/wasip3-host"]
 exclude = [
   "sdk/rust",
   "examples/service-rust",
+  "examples/telemetry-composition/provider",
+  "examples/telemetry-composition/app",
   "examples/standard-http",
   "examples/standard-http-p3",
   "examples/durable-counter",

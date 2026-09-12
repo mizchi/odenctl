@@ -1,6 +1,6 @@
 # wasmplane
 
-[利用者向けドキュメント（日本語）](docs/README.md) · [クイックスタート](docs/getting-started.md)
+[User guide](docs/README.md) · [Quickstart](docs/getting-started.md)
 
 `wasmplane` is a standalone Wasm application runtime with an optional control plane.
 The Rust runtime uses Wasmtime **48.0.2**, supports WASIp2/WASIp3 command and HTTP components,
@@ -565,7 +565,8 @@ destructive checks remain explicit.
 Fly remains the most exercised deployment target, but the repository now includes first-pass
 scaffolds for other clouds:
 
-- AWS ECS/Fargate: `infra/terraform/aws`
+- AWS standalone runtime + kumo validation: [ECS/Fargate guide](infra/terraform/aws-standalone/README.md)
+- AWS control-plane scaffold: `infra/terraform/aws`
 - GCP Cloud Run: `infra/terraform/gcp`
 - Cloudflare Containers control-plane POC: `cloudflare/containers-control`
 
@@ -650,7 +651,7 @@ The node adapter applies memory limits, request/response byte limits, outbound o
 subrequest counters, and a deadline through body completion. `cpuMs` remains a conservative elapsed-time
 cap including I/O. Standard WASI bodies stream between guest and host; the existing node JSON/route
 transport collects them within its limits. Use `wasmplane serve` for streaming to the network client.
-See [node contracts and migration](docs/standalone-runtime.md#control-plane-からの実行).
+See [node contracts and migration](docs/standalone-runtime.md#running-through-the-control-plane).
 
 The control plane stores local secret values through `POST /secrets`, but all public API responses
 return only secret metadata. Set `WASMPLANE_SECRET_KMS_KEY_BASE64` to a 32-byte base64 key to store

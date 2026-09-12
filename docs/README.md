@@ -1,51 +1,57 @@
-# wasmplane 利用者ガイド
+# wasmplane User Guide
 
-wasmplane は Wasm component を実行するランタイムです。Rust や MoonBit で書いたアプリを、
-コマンド、HTTP サーバー、状態を保持する常駐サービスとして動かせます。
-ローカルで使うときは control plane やデータベースの準備は不要です。
+wasmplane runs Wasm components as commands, HTTP servers, or resident services that
+retain state. You can write applications in Rust or MoonBit and run them locally
+without setting up a control plane or database.
 
-初めて使う場合は **[クイックスタート](getting-started.md)** から進めてください。
-ランタイムをビルドし、最小の WAT と常駐 HTTP サービスを実行します。
+Start with the **[Quickstart](getting-started.md)** to build the runtime and run a
+minimal WAT command and a resident HTTP service.
 
-## 目的から探す
+## Find a guide
 
-| やりたいこと | 読むページ |
+| Task | Guide |
 | --- | --- |
-| インストールしてサンプルを動かす | [クイックスタート](getting-started.md) |
-| Rust / MoonBit でサービスを書く | [アプリの作り方](writing-services.md) |
-| 起動コマンド、ポート、環境変数、権限を設定する | [CLI・設定リファレンス](configuration.md) |
-| 再起動しても残る状態を扱う | [celld Durable Objects を使う](durable-objects.md) |
-| 起動できない、変更が反映されない、要求が失敗する | [トラブルシューティング](troubleshooting.md) |
-| celld 呼び出しの性能を測る | [ベンチマーク](celld-benchmark.md) |
+| Install the runtime and run examples | [Quickstart](getting-started.md) |
+| Write a Rust or MoonBit service | [Writing services](writing-services.md) |
+| Use files, environment variables, and outbound HTTP | [Shared I/O SDK](sdk-io.md) |
+| Trace requests, background tasks, and composed components | [Built-in telemetry](telemetry.md) |
+| Compare fresh/resident performance and sustained load | [Service benchmarks](service-benchmark.md) |
+| Configure commands, ports, environment variables, and permissions | [CLI and configuration reference](configuration.md) |
+| Keep state across restarts | [celld Durable Objects](durable-objects.md) |
+| Diagnose startup, reload, or request failures | [Troubleshooting](troubleshooting.md) |
+| Measure celld calls | [celld benchmarks](celld-benchmark.md) |
 
-## 実行モードを選ぶ
+## Choose an execution mode
 
-| 用途 | コマンド | manifest の mode | 状態と寿命 |
+| Use case | Command | Manifest mode | State and lifetime |
 | --- | --- | --- | --- |
-| バッチや CLI ツール | `wasmplane run app.wasm` | `command` | 実行して終了します |
-| 要求ごとに独立した HTTP 処理 | `wasmplane serve app.wasm` | `http` | 要求ごとに新しい instance を作ります |
-| 状態やバックグラウンド処理を持つ HTTP アプリ | `wasmplane serve app.wasm --resident` | `service` | 起動から終了まで1つの instance を保持します |
+| Batch jobs and CLI tools | `wasmplane run app.wasm` | `command` | Runs once and exits |
+| Independent HTTP request handling | `wasmplane serve app.wasm` | `http` | Creates a new instance for each request |
+| HTTP apps with state or background tasks | `wasmplane serve app.wasm --resident` | `service` | Keeps one instance from startup to shutdown |
 
-開発中は `wasmplane dev app.json` でビルドと変更監視をまとめて実行できます。
-`app.json` は component の場所、実行モード、ビルドコマンド、権限を記述するファイルです。
+During development, `wasmplane dev app.json` combines building, running, and watching
+for changes. `app.json` specifies the component path, execution mode, build commands,
+and permissions.
 
-ここでいう *component* は、標準 WASI や WIT で定義した関数を公開・利用する Wasm の実行単位です。
-ランタイムに渡すのは `.wasm` または `(component ...)` 形式の `.wat` です。
-`.rs` / `.mbt` は各言語のツールで component にビルドしてから実行します。
-現在、JavaScript / TypeScript の直接実行や Node.js API / npm パッケージの互換機能はありません。
+A *component* is a Wasm execution unit that exports or imports functions defined by
+standard WASI or WIT contracts. Pass a `.wasm` file or a `.wat` file in `(component ...)`
+format to the runtime. Compile `.rs` or `.mbt` source into a component with the
+language's tools first. Direct JavaScript/TypeScript execution, Node.js API
+compatibility, and npm package compatibility are not currently implemented.
 
-常駐サービスのメモリ上の状態は、再起動すると初期化されます。
-HTTP は直列に処理し、要求・応答 body は設定上限内に蓄積します。
-継続的な streaming が必要な場合は、要求ごとに独立した `http` モードを検討してください。
-その場合も要求の実行期限が適用されます。詳細は [モードごとの制限](configuration.md#実行制限)を参照してください。
+Resident services reset their in-memory state on restart. They process HTTP requests
+serially and buffer request and response bodies within the configured limits.
+For streaming, consider `http` mode, which creates an independent instance per
+request. Request deadlines still apply. See [execution limits](configuration.md#execution-limits).
 
-## このガイドの範囲
+## Scope
 
-リポジトリ内の Rust バイナリ `wasmplane` を使う手順を説明します。
-`pnpm wasmplane` は control plane を操作する別の CLI です。
-このガイドのコマンドは、特記しない限りリポジトリのルートで実行してください。
+This guide covers the Rust `wasmplane` binary in this repository.
+`pnpm wasmplane` is a separate CLI for managing the control plane.
+Run commands from the repository root unless a guide says otherwise.
 
-実行エンジンはリポジトリで固定している Wasmtime 48.0.2 です。
-利用可能な機能と制限は現在の実装に合わせて記載しています。
-内部の動作を調べる場合は [standalone runtime](standalone-runtime.md)、
-[service runtime](service-runtime.md)、[設計方針](runtime-direction.md)を参照してください。
+The execution engine is pinned to Wasmtime 48.0.2. These guides describe the current
+implementation and its limits. For internals, see the [standalone runtime](standalone-runtime.md),
+[service runtime](service-runtime.md), and [runtime direction](runtime-direction.md).
+
+For AWS hosting, see [Standalone runtime on ECS/Fargate](../infra/terraform/aws-standalone/README.md), including local Terraform validation with kumo.

@@ -1,0 +1,27 @@
+package wasmplane:telemetry@0.1.0;
+
+/// Explicit contexts are values and may cross tasks and composed components.
+/// Never keep a shared "current span" across an async suspension.
+interface tracing {
+  record context {
+    traceparent: string,
+    tracestate: string,
+  }
+  variant value { text(string), signed(s64), real(f64), boolean(bool) }
+  record attribute { key: string, value: value }
+  enum outcome { ok, error, cancelled }
+  enum level { trace, debug, info, warn, error }
+  resource span {
+    context: func() -> context;
+    event: func(name: string);
+    set-attribute: func(attribute: attribute);
+    link: func(context: context);
+    /// Idempotent; drop without end records cancellation. The host also owns
+    /// cleanup when the component traps or its Store is destroyed.
+    end: func(outcome: outcome);
+  }
+  /// None means disabled or the per-Store live span budget was exhausted.
+  start-span: func(parent: option<context>, name: string) -> option<span>;
+  log: func(context: option<context>, level: level, message: string, attributes: list<attribute>);
+}
+world client { import tracing; }

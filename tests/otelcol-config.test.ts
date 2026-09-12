@@ -8,7 +8,8 @@ test("OTel collector derives span metrics and exposes Prometheus metrics", async
   assert.match(config, /connectors:\n\s+spanmetrics:/);
   assert.match(config, /namespace: wasmplane/);
   assert.match(config, /prometheus:\n\s+endpoint: "\[::\]:9464"/);
-  assert.match(config, /metrics:\n\s+receivers: \[spanmetrics\]/);
+  assert.match(config, /metrics:\n\s+receivers: \[otlp, spanmetrics\]/);
+  assert.match(config, /logs:\n\s+receivers: \[otlp\]/);
   assert.match(config, /exporters: \[prometheus\]/);
 });
 

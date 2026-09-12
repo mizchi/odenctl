@@ -1,0 +1,12 @@
+package wasmplane:app@0.1.0;
+
+/// Shared application contract for every supported guest language.
+world service {
+  include wasi:http/service@0.3.0;
+  import wasi:filesystem/types@0.3.0;
+  import wasi:filesystem/preopens@0.3.0;
+  import wasi:cli/environment@0.3.0;
+  include wasmplane:durable/client@0.1.0;
+  import wasmplane:telemetry/tracing@0.1.0;
+  export lifecycle;
+}

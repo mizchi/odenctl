@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "mode": "service",
+  "component": "target/service.wasm",
+  "listen": "127.0.0.1:8080",
+  "build": [["node", "vendor/wasmplane-sdk/build.mjs", "."]],
+  "watch": ["."] ,
+  "runtime": { "timeout_ms": 5000 }
+}

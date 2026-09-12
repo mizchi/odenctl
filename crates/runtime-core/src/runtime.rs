@@ -18,6 +18,7 @@ pub struct Runtime {
     pub(crate) config: RuntimeConfig,
     _ticker: EpochTicker,
     durable: Arc<crate::durable::DurableClient>,
+    pub telemetry: crate::telemetry::Telemetry,
 }
 
 pub(crate) struct Host {
@@ -27,6 +28,9 @@ pub(crate) struct Host {
     pub(crate) durable: Arc<crate::durable::DurableClient>,
     limits: StoreLimits,
     hooks: HttpPolicy,
+    pub(crate) telemetry: crate::telemetry::Telemetry,
+    pub(crate) telemetry_spans: usize,
+    _store_gauge: crate::telemetry::GaugeGuard,
 }
 
 impl WasiView for Host {
@@ -54,18 +58,28 @@ struct HttpPolicy {
     origins: Vec<String>,
     body_limit: usize,
     remaining_requests: Option<u32>,
+    telemetry: crate::telemetry::Telemetry,
 }
 type IoResult = Box<dyn Future<Output = Result<(), wasmtime_wasi_http::Error>> + Send>;
 impl WasiHttpHooks for HttpPolicy {
     fn send_request(
         &mut self,
-        request: hyper::Request<WasiBody>,
+        mut request: hyper::Request<WasiBody>,
         options: Option<RequestOptions>,
         _fut: IoResult,
     ) -> Box<
         dyn Future<Output = wasmtime_wasi_http::Result<(hyper::Response<WasiBody>, IoResult)>>
             + Send,
     > {
+        let parent = crate::telemetry::TraceContext::from_headers(request.headers());
+        let span = self
+            .telemetry
+            .start("HTTP send", parent.as_ref(), 3, "http.client");
+        span.attribute(
+            "http.request.method",
+            serde_json::json!(request.method().as_str()),
+        );
+        span.context().inject(request.headers_mut());
         let allowed = self.remaining_requests != Some(0)
             && reqwest::Url::parse(&request.uri().to_string())
                 .ok()
@@ -80,6 +94,7 @@ impl WasiHttpHooks for HttpPolicy {
         let limit = self.body_limit;
         Box::new(async move {
             if !allowed {
+                span.finish("error");
                 return Err(wasmtime_wasi_http::Error::HttpRequestDenied);
             }
             let request = request.map(|body| {
@@ -87,7 +102,23 @@ impl WasiHttpHooks for HttpPolicy {
                     .map_err(|e| wasmtime_wasi_http::Error::InternalError(Some(e.to_string())))
                     .boxed_unsync()
             });
-            let (response, io) = wasmtime_wasi_http::default_send_request(request, options).await?;
+            let (response, io) =
+                match wasmtime_wasi_http::default_send_request(request, options).await {
+                    Ok(value) => value,
+                    Err(error) => {
+                        span.finish("error");
+                        return Err(error);
+                    }
+                };
+            span.http_status(response.status().as_u16());
+            // Client spans end at headers; streaming does not hold them open.
+            span.finish(
+                if response.status().is_client_error() || response.status().is_server_error() {
+                    "error"
+                } else {
+                    "ok"
+                },
+            );
             Ok((
                 response.map(|body| {
                     http_body_util::Limited::new(body, limit)
@@ -101,7 +132,23 @@ impl WasiHttpHooks for HttpPolicy {
 }
 
 impl Runtime {
-    pub fn new(config: RuntimeConfig) -> Result<Arc<Self>> {
+    pub fn new(mut config: RuntimeConfig) -> Result<Arc<Self>> {
+        if config.telemetry.endpoint.is_none() {
+            config.telemetry.endpoint = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
+                .ok()
+                .filter(|value| !value.is_empty());
+        }
+        if let Ok(name) = std::env::var("OTEL_SERVICE_NAME") {
+            config.telemetry.service_name = name;
+        }
+        if config.telemetry.headers_env.is_none()
+            && std::env::var_os("OTEL_EXPORTER_OTLP_HEADERS").is_some()
+        {
+            config.telemetry.headers_env = Some("OTEL_EXPORTER_OTLP_HEADERS".into());
+        }
+        if std::env::var("OTEL_SDK_DISABLED").is_ok_and(|v| v.eq_ignore_ascii_case("true")) {
+            config.telemetry.enabled = false;
+        }
         config.validate()?;
         let mut engine_config = Config::new();
         engine_config
@@ -117,6 +164,7 @@ impl Runtime {
 
     pub(crate) fn with_engine(config: RuntimeConfig, engine: Engine) -> Result<Arc<Self>> {
         config.validate()?;
+        let telemetry = crate::telemetry::Telemetry::new(config.telemetry.clone())?;
         let ticker = EpochTicker::new(engine.clone());
         let durable = Arc::new(crate::durable::DurableClient::new(
             config.durable.clone(),
@@ -130,6 +178,7 @@ impl Runtime {
             config,
             _ticker: ticker,
             durable,
+            telemetry,
         }))
     }
 
@@ -140,6 +189,7 @@ impl Runtime {
         wasmtime_wasi_http::p2::add_only_http_to_linker_async(&mut linker)?;
         wasmtime_wasi_http::p3::add_to_linker(&mut linker)?;
         crate::durable::add_to_linker(&mut linker)?;
+        crate::telemetry::guest::add_to_linker(&mut linker)?;
         Ok(linker)
     }
 
@@ -186,7 +236,11 @@ impl Runtime {
                 origins: config.outbound_origins.clone(),
                 body_limit: config.max_body_bytes,
                 remaining_requests: subrequests,
+                telemetry: self.telemetry.clone(),
             },
+            telemetry: self.telemetry.clone(),
+            telemetry_spans: 0,
+            _store_gauge: self.telemetry.store(),
         };
         let mut store = Store::new(&self.engine, host);
         store.limiter(|host| &mut host.limits);
@@ -203,13 +257,34 @@ impl Runtime {
     }
 
     pub async fn run(&self, path: &Path, args: &[String]) -> Result<i32> {
-        let component =
-            Component::from_file(&self.engine, path).context("load command component")?;
+        let span = self
+            .telemetry
+            .start("component.compile", None, 1, "compile");
+        let result = Component::from_file(&self.engine, path).context("load command component");
+        span.finish(if result.is_ok() { "ok" } else { "error" });
+        let component = result?;
+        self.run_component(&component, args).await
+    }
+
+    pub(crate) async fn run_component(
+        &self,
+        component: &Component,
+        args: &[String],
+    ) -> Result<i32> {
         let linker = self.linker()?;
         let mut store = self.store(args)?;
+        let run = self.telemetry.start("command.run", None, 1, "run");
         let result: Result<i32> = self
             .deadline(async {
-                let instance = linker.instantiate_async(&mut store, &component).await?;
+                let instance = self
+                    .telemetry
+                    .observe(
+                        "component.instantiate",
+                        "instantiate",
+                        Some(&run.context()),
+                        linker.instantiate_async(&mut store, component),
+                    )
+                    .await?;
                 if let Ok(command) =
                     wasmtime_wasi::p3::bindings::Command::new(&mut store, &instance)
                 {
@@ -232,17 +307,26 @@ impl Runtime {
                 }
             })
             .await;
-        match result {
+        let result = match result {
             Err(error) if error.downcast_ref::<wasmtime_wasi::I32Exit>().is_some() => {
                 Ok(error.downcast_ref::<wasmtime_wasi::I32Exit>().unwrap().0)
             }
             Err(error)
                 if error.downcast_ref::<wasmtime::Trap>() == Some(&wasmtime::Trap::Interrupt) =>
             {
-                bail!("execution deadline exceeded")
+                Err(anyhow::anyhow!("execution deadline exceeded"))
             }
             result => result,
+        };
+        if let Ok(code) = &result {
+            run.attribute("process.exit.code", serde_json::json!(code));
         }
+        run.finish(if matches!(result, Ok(0)) {
+            "ok"
+        } else {
+            "error"
+        });
+        result
     }
 
     pub(crate) async fn deadline<T>(&self, future: impl Future<Output = Result<T>>) -> Result<T> {

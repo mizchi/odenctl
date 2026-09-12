@@ -29,6 +29,12 @@ mod bindings {
     });
 }
 
+pub(crate) fn validate_pre(pre: wasmtime::component::InstancePre<Host>) -> Result<()> {
+    bindings::LifecycleHooksPre::new(pre)
+        .context("resident service must export wasmplane:app/lifecycle@0.1.0")?;
+    Ok(())
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ServiceOptions {
@@ -61,6 +67,8 @@ struct Call {
     request: Request<Bytes>,
     response: oneshot::Sender<Result<Response<Bytes>>>,
     deadline: Instant,
+    queue_span: crate::telemetry::Span,
+    queued: crate::telemetry::GaugeGuard,
 }
 
 pub struct ResidentService {
@@ -79,15 +87,35 @@ impl ResidentService {
         options: ServiceOptions,
     ) -> Result<Self> {
         options.validate()?;
-        let component =
-            Component::from_file(&runtime.engine, path).context("load resident service")?;
+        let span = runtime
+            .telemetry
+            .start("component.compile", None, 1, "compile");
+        let result = Component::from_file(&runtime.engine, path).context("load resident service");
+        span.finish(if result.is_ok() { "ok" } else { "error" });
+        let component = result?;
+        Self::from_component(runtime, &component, options).await
+    }
+
+    pub(crate) async fn from_component(
+        runtime: Arc<Runtime>,
+        component: &Component,
+        options: ServiceOptions,
+    ) -> Result<Self> {
+        options.validate()?;
         let linker = runtime.linker()?;
-        let pre = linker.instantiate_pre(&component)?;
+        let pre = linker.instantiate_pre(component)?;
         let mut store = runtime.store(&[])?;
         let startup_deadline = Instant::now() + Duration::from_millis(options.startup_timeout_ms);
-        let instance = tokio::time::timeout_at(startup_deadline, pre.instantiate_async(&mut store))
-            .await
-            .context("service instantiation deadline exceeded")??;
+        let instance = runtime
+            .telemetry
+            .observe("component.instantiate", "instantiate", None, async {
+                Ok::<_, anyhow::Error>(
+                    tokio::time::timeout_at(startup_deadline, pre.instantiate_async(&mut store))
+                        .await
+                        .context("service instantiation deadline exceeded")??,
+                )
+            })
+            .await?;
         let hooks = bindings::LifecycleHooks::new(&mut store, &instance)
             .context("resident service must export wasmplane:app/lifecycle@0.1.0")?;
         let proxy = match wasmtime_wasi_http::p3::bindings::Service::new(&mut store, &instance) {
@@ -105,6 +133,7 @@ impl ResidentService {
         let done_guard = done.clone().drop_guard();
         let worker_options = options.clone();
         let body_limit = runtime.config.max_body_bytes;
+        let telemetry = runtime.telemetry.clone();
         let worker = tokio::spawn(async move {
             let _done = done_guard;
             // Wasmtime may hold the Store while running guest code, so a timer
@@ -115,13 +144,17 @@ impl ResidentService {
             let failure = failed.clone();
             let (failure_tx, mut failure_rx) = oneshot::channel();
             let execution = store.run_concurrent(async |accessor| {
-                tokio::time::timeout_at(
-                    startup_deadline,
-                    hooks.wasmplane_app_lifecycle().call_start(accessor),
-                )
-                .await
-                .context("service start deadline exceeded")??
-                .map_err(|error| anyhow::anyhow!("service start: {error}"))?;
+                telemetry
+                    .observe("lifecycle.start", "start", None, async {
+                        tokio::time::timeout_at(
+                            startup_deadline,
+                            hooks.wasmplane_app_lifecycle().call_start(accessor),
+                        )
+                        .await
+                        .context("service start deadline exceeded")??
+                        .map_err(|error| anyhow::anyhow!("service start: {error}"))
+                    })
+                    .await?;
                 let _ = ready_tx.send(());
                 deadline_tx.send_replace(None);
                 let mut draining = false;
@@ -133,6 +166,8 @@ impl ResidentService {
                         }
                         call = receiver.recv() => match call { Some(call) => call, None => break },
                     };
+                    call.queue_span.finish("ok");
+                    drop(call.queued);
                     if call.response.is_closed() {
                         continue;
                     }
@@ -145,6 +180,9 @@ impl ResidentService {
                         continue;
                     }
                     deadline_tx.send_replace(Some(call.deadline));
+                    let parent =
+                        crate::telemetry::TraceContext::from_headers(call.request.headers());
+                    let invocation = telemetry.start("http.handle", parent.as_ref(), 1, "run");
                     let run = async {
                         let request = call.request.map(|body| {
                             Full::new(body)
@@ -157,6 +195,7 @@ impl ResidentService {
                         })?;
                         let handle = async {
                             prepared.run(accessor, std::future::pending()).await?;
+                            invocation.event("handler.returned");
                             Ok::<_, anyhow::Error>(())
                         };
                         let body = async {
@@ -175,10 +214,12 @@ impl ResidentService {
                     };
                     match tokio::time::timeout_at(call.deadline, run).await {
                         Ok(Ok(response)) => {
+                            invocation.finish("ok");
                             deadline_tx.send_replace(None);
                             let _ = call.response.send(Ok(response));
                         }
                         result => {
+                            invocation.finish(if result.is_err() { "timeout" } else { "error" });
                             let error = match result {
                                 Ok(Err(error)) => error,
                                 Err(_) => anyhow::anyhow!("service request deadline exceeded"),
@@ -194,13 +235,17 @@ impl ResidentService {
                 deadline_tx.send_replace(Some(
                     Instant::now() + Duration::from_millis(worker_options.shutdown_timeout_ms),
                 ));
-                tokio::time::timeout(
-                    Duration::from_millis(worker_options.shutdown_timeout_ms),
-                    hooks.wasmplane_app_lifecycle().call_stop(accessor),
-                )
-                .await
-                .context("service stop deadline exceeded")??
-                .map_err(|error| anyhow::anyhow!("service stop: {error}"))?;
+                telemetry
+                    .observe("lifecycle.stop", "stop", None, async {
+                        tokio::time::timeout(
+                            Duration::from_millis(worker_options.shutdown_timeout_ms),
+                            hooks.wasmplane_app_lifecycle().call_stop(accessor),
+                        )
+                        .await
+                        .context("service stop deadline exceeded")??
+                        .map_err(|error| anyhow::anyhow!("service stop: {error}"))
+                    })
+                    .await?;
                 Ok::<_, anyhow::Error>(())
             });
             tokio::pin!(execution);
@@ -315,6 +360,20 @@ impl Drop for ResidentService {
 }
 
 async fn respond(
+    mut request: Request<Incoming>,
+    sender: mpsc::Sender<Call>,
+    permits: Arc<Semaphore>,
+    runtime: Arc<Runtime>,
+    drain: CancellationToken,
+) -> Result<Response<crate::telemetry::body::TrackedBody<Full<Bytes>>>, Infallible> {
+    let method = request.method().to_string();
+    let span = runtime.telemetry.request(request.headers_mut(), &method);
+    let response = respond_inner(request, sender, permits, runtime, drain).await?;
+    let status = response.status().as_u16();
+    Ok(response.map(|body| crate::telemetry::body::TrackedBody::new(body, span, status)))
+}
+
+async fn respond_inner(
     request: Request<Incoming>,
     sender: mpsc::Sender<Call>,
     permits: Arc<Semaphore>,
@@ -332,7 +391,10 @@ async fn respond(
     }
     let _permit = match permits.try_acquire_owned() {
         Ok(permit) => permit,
-        Err(_) => return Ok(error(503, "service at capacity")),
+        Err(_) => {
+            runtime.telemetry.reject();
+            return Ok(error(503, "service at capacity"));
+        }
     };
     let deadline = Instant::now() + Duration::from_millis(runtime.config.timeout_ms);
     let (parts, body) = request.into_parts();
@@ -347,11 +409,17 @@ async fn respond(
         Err(_) => return Ok(error(408, "request body deadline exceeded")),
     };
     let (tx, rx) = oneshot::channel();
+    let parent = crate::telemetry::TraceContext::from_headers(&parts.headers);
+    let queue_span = runtime
+        .telemetry
+        .start("service.queue", parent.as_ref(), 1, "queue");
     if sender
         .send(Call {
             request: Request::from_parts(parts, bytes),
             response: tx,
             deadline,
+            queue_span,
+            queued: runtime.telemetry.queue(),
         })
         .await
         .is_err()

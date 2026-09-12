@@ -1,0 +1,17 @@
+package example:boundary@0.1.0;
+interface operations {
+  use wasmplane:telemetry/tracing@0.1.0.{context};
+  enum mode { steady, burst }
+  variant detail { empty, text(string), numbers(list<u32>) }
+  record payload {
+    label: string,
+    value: u32,
+    modes: list<mode>,
+    detail: option<detail>,
+    pair: tuple<u32, string>,
+  }
+  work: async func(context: context, input: payload) -> result<payload, string>;
+  echo: func(span: payload) -> payload;
+}
+world provider { export operations; }
+world app { import operations; }
