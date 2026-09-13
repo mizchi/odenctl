@@ -14,13 +14,14 @@ Use the Rust `wasmplane` binary built in the [Quickstart](getting-started.md).
 | `wasmplane inspect <component> [--json]` | Report imports, exports, supported modes, and potential capability interfaces |
 | `wasmplane check <app.json> [--json]` | Validate the manifest, component contract, and host configuration |
 | `wasmplane run <component>` | Run a WASI CLI component once |
+| `wasmplane test <component>` | Discover and run exported `-test` functions in fresh instances |
 | `wasmplane serve <component>` | Handle HTTP requests in independent instances |
 | `wasmplane serve <component> --resident` | Start a resident HTTP service with lifecycle hooks |
 | `wasmplane build <app.json>` | Execute the manifest's build commands in order |
 | `wasmplane start <app.json>` | Start the existing component specified by the manifest |
 | `wasmplane dev <app.json>` | Build, start, watch for changes, and rebuild |
 
-`run` and `serve` accept `.wasm` binaries and `.wat` files in `(component ...)` format.
+`run`, `serve`, and `test` accept `.wasm` binaries and `.wat` files in `(component ...)` format.
 `run` supports WASI CLI 0.2 and 0.3; ordinary `serve` supports WASI HTTP 0.2 and 0.3.
 `--resident` additionally requires the `wasmplane:app/lifecycle@0.1.0` export.
 The service SDKs use WASI HTTP 0.3.
@@ -29,8 +30,11 @@ The service SDKs use WASI HTTP 0.3.
 
 | Option | Commands | Meaning |
 | --- | --- | --- |
-| `--config runtime.json` | run / serve | Set permissions and execution limits |
-| `--timeout-ms 5000` | run / serve | Override `timeout_ms` from the configuration file |
+| `--config runtime.json` | run / serve / test | Set permissions and execution limits |
+| `--timeout-ms 5000` | run / serve / test | Override `timeout_ms` from the configuration file; per test in test mode |
+| `--filter text` | test | Select exported test paths containing this case-sensitive substring |
+| `--list` | test | Discover tests and validate signatures without instantiating |
+| `--json` | test | Emit a machine-readable test report |
 | `--addr 127.0.0.1:8081` | serve | Listen address; defaults to `127.0.0.1:8080` |
 | `--resident` | serve | Select resident mode |
 | `-- arg1 arg2` | run | Pass arguments after `--` to the guest |
@@ -43,6 +47,9 @@ wasmplane serve examples/service-rust/target/wasm32-wasip2/debug/service_rust.wa
 
 `build`, `start`, and `dev` accept only a manifest path. Set ports and execution
 limits in the manifest.
+
+See [testing component exports](testing.md) for supported function signatures,
+async behavior, isolation, and test exit codes.
 
 ### Preflight checks
 

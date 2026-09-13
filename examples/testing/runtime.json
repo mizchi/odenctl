@@ -1,0 +1,8 @@
+{
+  "timeout_ms": 2000,
+  "env": {
+    "UPSTREAM_AUTHORITY": "127.0.0.1:8787",
+    "EXAMPLE_GREETING": "hello 日本語"
+  },
+  "outbound_origins": ["http://127.0.0.1:8787"]
+}

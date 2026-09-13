@@ -1,6 +1,7 @@
 [workspace]
 members = ["crates/runtime-core", "crates/wasip3-host"]
 exclude = [
+  "infra/aws-image/service",
   "sdk/rust",
   "examples/service-rust",
   "examples/telemetry-composition/provider",

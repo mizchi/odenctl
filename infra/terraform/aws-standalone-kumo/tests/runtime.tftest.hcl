@@ -21,4 +21,8 @@ run "deployment_contract" {
     condition     = module.runtime.stop_timeout_seconds > 10 && module.runtime.deregistration_delay_seconds >= 30
     error_message = "The container and ALB must leave time for the default 10-second guest shutdown."
   }
+  assert {
+    condition     = module.runtime.health_check_path == "/healthz"
+    error_message = "The deployment sample must use its side-effect-free readiness route."
+  }
 }

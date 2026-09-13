@@ -8,3 +8,4 @@ pub mod runtime;
 pub mod server;
 pub mod service;
 pub mod telemetry;
+pub mod test_runner;

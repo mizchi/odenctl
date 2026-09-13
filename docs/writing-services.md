@@ -171,6 +171,12 @@ The app's generated binding imports continue to use `wasmplane/service-sdk/...`.
 
 ## Verify the application
 
+For component-level assertions, export functions such as
+`pricing-test: func() -> result<_, string>` from a test world and run
+`wasmplane test tests.wasm`. Both Rust and MoonBit support async tests with the
+same host permissions as the service. See [testing](testing.md) and the
+[exported test examples](../examples/testing/README.md).
+
 ```sh
 curl http://127.0.0.1:8080
 curl http://127.0.0.1:8080

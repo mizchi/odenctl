@@ -50,9 +50,9 @@ variable "cpu_architecture" {
   }
 }
 variable "health_check_path" {
-  description = "Guest route returning HTTP 200. The example uses /; choose a side-effect-free route for your app."
+  description = "Side-effect-free guest route returning HTTP 200 after the service is ready."
   type        = string
-  default     = "/"
+  default     = "/healthz"
   validation {
     condition     = startswith(var.health_check_path, "/")
     error_message = "The health check path must start with /."

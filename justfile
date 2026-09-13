@@ -128,6 +128,23 @@ telemetry-test: rust-build service-rust-build service-moonbit-build telemetry-co
 service-test: rust-build service-rust-build service-moonbit-build
     WASMPLANE_SERVICE_BIN=target/debug/wasmplane WASMPLANE_SERVICE_RUST=examples/service-rust/target/wasm32-wasip2/debug/service_rust.wasm WASMPLANE_SERVICE_MOONBIT=examples/service-moonbit/target/service.wasm node --experimental-strip-types --test tests/service-runtime.test.ts tests/app-manifest.test.ts
 
+# Language-neutral test discovery and runnable WAT, Rust and MoonBit examples.
+component-test component *args: rust-build
+    target/debug/wasmplane test {{quote(component)}} {{args}}
+
+test-examples-build: telemetry-bindgen-install
+    rustup target add wasm32-wasip2
+    cargo build --locked --manifest-path examples/testing/rust/Cargo.toml --target wasm32-wasip2
+    node examples/testing/moonbit/build.mjs
+    mkdir -p examples/testing/target
+    wasm-tools parse examples/testing/basic.wat -o examples/testing/target/basic.wasm
+
+test-runner-test: rust-build test-examples-build
+    cargo test -p wasmplane-wasip3-host --test test_runner
+    target/debug/wasmplane test examples/testing/basic.wat
+    target/debug/wasmplane test examples/testing/target/basic.wasm
+    WASMPLANE_TEST_BIN=target/debug/wasmplane node --experimental-strip-types --test tests/test-runner-examples.test.ts
+
 # Standalone tooling, packaged SDKs and common I/O conformance.
 sdk-pack:
     node scripts/package-sdks.mjs
@@ -419,11 +436,18 @@ aws-standalone-plan:
     tofu -chdir=infra/terraform/aws-standalone init -input=false
     tofu -chdir=infra/terraform/aws-standalone plan -out=plan.tfplan
 
-aws-image-test: service-bench-build
-    WASMPLANE_AWS_IMAGE_HOST=target/release/wasmplane WASMPLANE_AWS_IMAGE_COMPONENT=examples/service-rust/target/wasm32-wasip2/release/service_rust.wasm node --experimental-strip-types --test tests/aws-image.test.ts
+aws-sample-build:
+    rustup target add wasm32-wasip2
+    cargo build --locked --release --manifest-path infra/aws-image/service/Cargo.toml --target wasm32-wasip2
+
+aws-image-test: rust-build aws-sample-build
+    WASMPLANE_AWS_IMAGE_HOST=target/debug/wasmplane WASMPLANE_AWS_IMAGE_COMPONENT=infra/aws-image/service/target/wasm32-wasip2/release/wasmplane_deployment_sample.wasm node --experimental-strip-types --test tests/aws-image.test.ts
 
 aws-image-build image="wasmplane-service:local" platform="linux/arm64":
     docker buildx build --platform {{quote(platform)}} --load -f Dockerfile.standalone -t {{quote(image)}} .
+
+aws-container-test image="wasmplane-service:local":
+    WASMPLANE_AWS_IMAGE={{quote(image)}} node --experimental-strip-types --test tests/aws-image.test.ts
 
 aws-terraform-plan:
     terraform -chdir=infra/terraform/aws init

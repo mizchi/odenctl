@@ -1,0 +1,26 @@
+package example:testing@0.1.0;
+
+// Test discovery uses these exported names, independently of the source language.
+interface checks {
+  arithmetic-test: func() -> result<_, string>;
+  validation-test: func() -> result<_, string>;
+  state-first-test: func();
+  state-second-test: func();
+  timer-test: async func() -> result;
+  background-test: async func() -> result<_, string>;
+  http-test: async func() -> result<_, string>;
+}
+
+world suite {
+  import wasi:clocks/monotonic-clock@0.3.0;
+  import wasi:cli/environment@0.3.0;
+  import wasi:http/client@0.3.0;
+  // The shared I/O SDK also supports these capabilities. Importing them grants
+  // no access: runtime.json still controls environment, files and destinations.
+  import wasi:filesystem/types@0.3.0;
+  import wasi:filesystem/preopens@0.3.0;
+  import wasi:cli/stdout@0.3.0;
+  import wasmplane:telemetry/tracing@0.1.0;
+  include wasmplane:durable/client@0.1.0;
+  export checks;
+}

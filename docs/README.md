@@ -13,9 +13,12 @@ minimal WAT command and a resident HTTP service.
 | --- | --- |
 | Install the runtime and run examples | [Quickstart](getting-started.md) |
 | Write a Rust or MoonBit service | [Writing services](writing-services.md) |
+| Run exported component tests in any language | [Testing](testing.md) |
+| Browse runnable WAT, Rust, and MoonBit examples | [Examples](../examples/README.md) |
 | Use files, environment variables, and outbound HTTP | [Shared I/O SDK](sdk-io.md) |
 | Trace requests, background tasks, and composed components | [Built-in telemetry](telemetry.md) |
 | Compare fresh/resident performance and sustained load | [Service benchmarks](service-benchmark.md) |
+| Prepare, deploy, observe and recover a service | [First service deployment](operations.md) |
 | Configure commands, ports, environment variables, and permissions | [CLI and configuration reference](configuration.md) |
 | Keep state across restarts | [celld Durable Objects](durable-objects.md) |
 | Diagnose startup, reload, or request failures | [Troubleshooting](troubleshooting.md) |

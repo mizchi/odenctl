@@ -13,3 +13,4 @@ output "listener_protocol" { value = aws_lb_listener.https.protocol }
 output "http_action" { value = aws_lb_listener.http.default_action[0].type }
 output "stop_timeout_seconds" { value = jsondecode(aws_ecs_task_definition.app.container_definitions)[0].stopTimeout }
 output "deregistration_delay_seconds" { value = tonumber(aws_lb_target_group.app.deregistration_delay) }
+output "health_check_path" { value = aws_lb_target_group.app.health_check[0].path }

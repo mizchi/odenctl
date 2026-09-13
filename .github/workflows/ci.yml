@@ -14,6 +14,20 @@ env:
   CI: true
 
 jobs:
+  deployment-image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: "24"
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+      - name: Build the deployment image on Linux
+        run: just aws-image-build wasmplane-service:ci linux/amd64
+      - name: Verify HTTP and graceful restarts in the restricted container
+        run: just aws-container-test wasmplane-service:ci
+
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -127,6 +141,9 @@ jobs:
 
       - name: Verify standalone SDK packages and I/O
         run: just sdk-test
+
+      - name: Verify exported tests with WAT, Rust and MoonBit
+        run: just test-runner-test
 
       - name: Verify host telemetry, SDK context propagation and WAC wrappers
         run: just telemetry-test

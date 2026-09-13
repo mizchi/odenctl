@@ -41,7 +41,7 @@ variable "availability_zones" {
 }
 variable "health_check_path" {
   type    = string
-  default = "/"
+  default = "/healthz"
 }
 variable "tags" {
   type    = map(string)

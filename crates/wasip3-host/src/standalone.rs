@@ -39,6 +39,7 @@ async fn run() -> Result<i32> {
         println!("wasmplane inspect <component> [--json]");
         println!("wasmplane check <app.json> [--json]");
         println!("wasmplane run <component> [--config <json>] [--timeout-ms <ms>] [-- <args>]");
+        println!("wasmplane test <component> [--filter <text>] [--list] [--json] [--config <json>] [--timeout-ms <ms>]");
         println!(
             "wasmplane serve <component> [--resident] [--addr 127.0.0.1:8080] [--config <json>]"
         );
@@ -100,6 +101,12 @@ async fn run() -> Result<i32> {
             print_component(&component.report);
         }
         return Ok(0);
+    }
+    if command == "test" {
+        return tokio::select! {
+            result = test_command::run(args) => result,
+            code = shutdown_signal() => code,
+        };
     }
     if matches!(command.as_str(), "build" | "start" | "dev") {
         let path = PathBuf::from(args.next().context("missing app manifest path")?);
@@ -242,3 +249,4 @@ async fn shutdown_signal() -> Result<i32> {
 }
 mod app;
 mod scaffold;
+mod test_command;

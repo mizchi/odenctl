@@ -45,12 +45,13 @@ restricted to the ALB security group. This avoids a NAT gateway in the initial d
 The ALB connects to task private IPs. For a private-subnet deployment, supply NAT or
 VPC endpoints and adapt the module's networking. See [Fargate networking](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/fargate-task-networking.html).
 
-Replicas have independent resident state. Restarting or replacing a task resets its
-in-memory counter, and rolling updates can temporarily run old and new tasks together.
+Replicas have independent resident state. Restarting or replacing a task resets any
+in-memory state, and rolling updates can temporarily run old and new tasks together.
 No shared filesystem, database, control plane, or celld fleet is provisioned here.
-Use an external persistence service for durable state. The sample's `/` health check
-increments its counter; real applications should provide a side-effect-free health route
-and set `health_check_path` accordingly.
+Use an external persistence service for durable state. The deployment sample is
+stateless and exposes a side-effect-free `/healthz` route, which is the default ALB
+health check. `/` returns service metadata. Diagnostic `/trap`, `/loop` and `/slow`
+routes belong to the SDK test fixture and are not included in this image.
 
 ## Validate locally with kumo
 
@@ -104,18 +105,32 @@ explicitly recorded and discarded by terminating the owned in-memory kumo proces
 The native runtime passed the packaged-manifest HTTP/SIGTERM test. Docker image
 building and actual AWS deployment were not performed in that verification run.
 
+On 2026-09-13, the stateless deployment sample passed both the native manifest
+test and the actual Linux ARM64 container test. The container completed two
+start/SIGTERM cycles at 0.5 CPU and 1 GiB with a read-only root filesystem and
+non-root user. Kumo validation passed again with the `/healthz` default. These
+checks do not include an actual AWS deployment. See the
+[first-service operating procedure](../../../docs/operations.md) for release,
+observability and recovery steps.
+
 ## Build and test the application image
 
 The [standalone Dockerfile](../../../Dockerfile.standalone) builds the Rust host and
-bundled Rust service in release mode, then packages them in a Debian image without Node.js.
+bundled [deployment sample](../../aws-image/service/src/lib.rs) in release mode,
+then packages them in a Debian image without Node.js.
 
 ```sh
 just aws-image-test
 just aws-image-build
+just aws-container-test
 ```
 
 `aws-image-test` uses the host binary to verify the packaged manifest, guest imports/exports,
-HTTP responses, retained state, and graceful SIGTERM shutdown. It does not start Docker.
+HTTP responses, health checks, absent diagnostic routes, and graceful SIGTERM
+shutdown. It does not start Docker. `aws-container-test` starts the actual image
+with a read-only root filesystem, no added Linux capabilities, 0.5 CPU and 1 GiB
+of memory. It checks HTTP behavior and graceful shutdown across two starts, then
+removes its own container.
 `aws-image-build` requires a running Docker daemon with Buildx and defaults to `linux/arm64`.
 For x86 Fargate, use `just aws-image-build wasmplane-service:local linux/amd64` and
 set `cpu_architecture = "X86_64"` in Terraform.

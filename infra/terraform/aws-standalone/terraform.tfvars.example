@@ -9,4 +9,4 @@ desired_count = 0
 # desired_count = 1
 cpu_architecture   = "ARM64"
 availability_zones = ["ap-northeast-1a", "ap-northeast-1c"]
-health_check_path  = "/"
+health_check_path  = "/healthz"
