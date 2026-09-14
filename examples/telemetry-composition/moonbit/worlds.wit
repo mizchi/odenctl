@@ -1,12 +1,12 @@
 package example:telemetry-moonbit@0.1.0;
 
 world provider {
-  import wasmplane:telemetry/tracing@0.1.0;
+  import oden:telemetry/tracing@0.1.0;
   import wasi:clocks/monotonic-clock@0.3.0;
   export example:boundary/operations@0.1.0;
 }
 
 world app {
-  include wasmplane:app/service@0.1.0;
+  include oden:app/service@0.1.0;
   import example:boundary/operations@0.1.0;
 }

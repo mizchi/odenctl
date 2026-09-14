@@ -6,8 +6,8 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test, { type TestContext } from "node:test";
 
-const binary = process.env.WASMPLANE_SERVICE_BIN && resolve(process.env.WASMPLANE_SERVICE_BIN);
-const component = process.env.WASMPLANE_SERVICE_RUST && resolve(process.env.WASMPLANE_SERVICE_RUST);
+const binary = process.env.ODEN_SERVICE_BIN && resolve(process.env.ODEN_SERVICE_BIN);
+const component = process.env.ODEN_SERVICE_RUST && resolve(process.env.ODEN_SERVICE_RUST);
 const enabled = Boolean(binary && component);
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 async function until(check: () => boolean, logs: () => string) {
@@ -15,7 +15,7 @@ async function until(check: () => boolean, logs: () => string) {
   while (!check()) { if (Date.now() > deadline) throw new Error(`timeout: ${logs()}`); await sleep(25); }
 }
 async function fixture(t: TestContext) {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-app-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-app-"));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const manifest = join(dir, "app.json");
   const app = { version: 1, component: "build/service.wasm", mode: "service", listen: "127.0.0.1:0",

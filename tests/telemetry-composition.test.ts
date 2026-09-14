@@ -38,14 +38,14 @@ test("boundary generation rejects resource and streaming lifetimes before compil
   }
 });
 
-const binary = process.env.WASMPLANE_SERVICE_BIN;
+const binary = process.env.ODEN_SERVICE_BIN;
 const providers = [
-  ["Rust", process.env.WASMPLANE_TELEMETRY_PROVIDER],
-  ["MoonBit", process.env.WASMPLANE_TELEMETRY_MOONBIT_PROVIDER],
+  ["Rust", process.env.ODEN_TELEMETRY_PROVIDER],
+  ["MoonBit", process.env.ODEN_TELEMETRY_MOONBIT_PROVIDER],
 ] as const;
 const apps = [
-  ["Rust", process.env.WASMPLANE_TELEMETRY_APP],
-  ["MoonBit", process.env.WASMPLANE_TELEMETRY_MOONBIT_APP],
+  ["Rust", process.env.ODEN_TELEMETRY_APP],
+  ["MoonBit", process.env.ODEN_TELEMETRY_MOONBIT_APP],
 ] as const;
 for (const [providerLanguage, provider] of providers) {
   for (const [appLanguage, app] of apps) {
@@ -53,7 +53,7 @@ for (const [providerLanguage, provider] of providers) {
       `${appLanguage} app → ${providerLanguage} provider: WIT wrapper preserves values, errors and trace context`,
       { skip: !(binary && provider && app), timeout: 180_000 },
       async (t) => {
-        const dir = await mkdtemp(join(tmpdir(), "wasmplane-compose-trace-"));
+        const dir = await mkdtemp(join(tmpdir(), "odenctl-compose-trace-"));
         t.after(() => rm(dir, { recursive: true, force: true }));
         const output = join(dir, "composed.wasm");
         compose({

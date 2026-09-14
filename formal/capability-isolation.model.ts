@@ -47,7 +47,7 @@ export function runCapabilityIsolationModel(): FormalCapabilityIsolationReport {
       "src/control-plane/contracts.ts: CapabilityPolicy and normalizeCapabilities",
       "src/control-plane/service.ts and async-service.ts: deployment capability target validation",
       "src/control-plane/admission.ts: service allowlist admission policy",
-      "crates/wasip3-host/src/main.rs: node rejects removed service/state bindings",
+      "crates/oden/src/main.rs: node rejects removed service/state bindings",
     ],
     tool: "bounded TypeScript capability relation model",
     scope: "control-plane policy only (not WASI network reachability): worker-to-worker access, project-scoped state resources, privileged host capabilities, and ambient outbound separation",

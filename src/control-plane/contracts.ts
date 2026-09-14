@@ -135,7 +135,7 @@ export interface BetaOnboardingChecklistItem {
 }
 
 export interface BetaOnboardingNextSteps {
-  tokenEnv: "WASMPLANE_CONTROL_PLANE_TOKEN";
+  tokenEnv: "ODENCTL_CONTROL_PLANE_TOKEN";
   deployCommand: string;
   usageUrl: string;
   billingUrl: string;

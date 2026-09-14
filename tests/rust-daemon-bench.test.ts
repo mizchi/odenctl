@@ -12,7 +12,7 @@ test("rust daemon benchmark args parse route and pooling settings", () => {
     "--component",
     "worker.component.wasm",
     "--host-bin",
-    "target/debug/wasmplane-wasip3-host",
+    "target/debug/oden-host",
     "--port",
     "8791",
     "--iterations",
@@ -34,7 +34,7 @@ test("rust daemon benchmark args parse route and pooling settings", () => {
   ]);
 
   assert.equal(options.componentPath, "worker.component.wasm");
-  assert.equal(options.hostBin, "target/debug/wasmplane-wasip3-host");
+  assert.equal(options.hostBin, "target/debug/oden-host");
   assert.equal(options.port, 8791);
   assert.deepEqual(options.concurrency, [1, 8, 32]);
   assert.equal(options.hostHeader, "hello.example.dev");
@@ -102,6 +102,6 @@ test("rust daemon benchmark markdown labels direct daemon results", () => {
     }],
   });
 
-  assert.match(markdown, /# wasmplane Rust daemon benchmark/);
+  assert.match(markdown, /# odenctl Rust daemon benchmark/);
   assert.match(markdown, /\| rust-daemon\.http \| 1 \| 10 \| 100 \|/);
 });

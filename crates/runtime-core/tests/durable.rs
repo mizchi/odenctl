@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use wasmplane_runtime_core::durable::{DurableClient, FetchError, FetchRequest, GatewayBinding};
+use oden_runtime_core::durable::{DurableClient, FetchError, FetchRequest, GatewayBinding};
 
 #[tokio::test]
 async fn unbound_objects_are_rejected_before_network_access() {

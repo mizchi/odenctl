@@ -1,41 +1,41 @@
 {
   "import": [
-    { "path": "wasmplane/service-sdk/interface/wasmplane/telemetry/tracing", "alias": "tracing" },
+    { "path": "oden/service-sdk/interface/oden/telemetry/tracing", "alias": "tracing" },
     {
-      "path": "wasmplane/service-sdk/async-core",
+      "path": "oden/service-sdk/async-core",
       "alias": "async-core"
     },
     {
-      "path": "wasmplane/service-sdk/interface/wasi/http/types",
+      "path": "oden/service-sdk/interface/wasi/http/types",
       "alias": "types"
     },
     {
-      "path": "wasmplane/service-sdk/interface/wasi/cli/stdout",
+      "path": "oden/service-sdk/interface/wasi/cli/stdout",
       "alias": "stdout"
     },
     {
-      "path": "wasmplane/service-sdk/interface/wasi/clocks/monotonic-clock",
+      "path": "oden/service-sdk/interface/wasi/clocks/monotonic-clock",
       "alias": "clock"
     },
     "moonbitlang/core/encoding/utf8",
     {
-      "path": "wasmplane/service-sdk/interface/wasi/filesystem/types",
+      "path": "oden/service-sdk/interface/wasi/filesystem/types",
       "alias": "fs"
     },
     {
-      "path": "wasmplane/service-sdk/interface/wasi/filesystem/preopens",
+      "path": "oden/service-sdk/interface/wasi/filesystem/preopens",
       "alias": "preopens"
     },
     {
-      "path": "wasmplane/service-sdk/interface/wasi/cli/environment",
+      "path": "oden/service-sdk/interface/wasi/cli/environment",
       "alias": "environment"
     },
     {
-      "path": "wasmplane/service-sdk/interface/wasi/http/client",
+      "path": "oden/service-sdk/interface/wasi/http/client",
       "alias": "client"
     },
     {
-      "path": "wasmplane/service-sdk/interface/wasmplane/durable/objects",
+      "path": "oden/service-sdk/interface/oden/durable/objects",
       "alias": "objects"
     },
     "moonbitlang/core/buffer"

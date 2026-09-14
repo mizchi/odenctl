@@ -37,7 +37,7 @@ impl Default for TelemetryConfig {
         Self {
             enabled: true,
             endpoint: None,
-            service_name: "wasmplane".into(),
+            service_name: "oden".into(),
             queue_capacity: 2048,
             batch_size: 128,
             interval_ms: 1000,
@@ -453,7 +453,7 @@ impl Span {
             return;
         }
         data.attributes
-            .insert("wasmplane.outcome".into(), json!(outcome));
+            .insert("oden.outcome".into(), json!(outcome));
         if outcome != "ok" {
             data.attributes.insert("error.type".into(), json!(outcome));
         }

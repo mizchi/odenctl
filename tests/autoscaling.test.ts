@@ -102,7 +102,7 @@ test("warm and activate registers a new runtime as draining before publishing", 
       region: "nrt",
       labels: { pool: "default" },
       capacity: { concurrentRequests: 100, memoryMb: 512 },
-      version: "wasmplane-runtime/0.1.0",
+      version: "oden-runtime/0.1.0",
     },
     snapshot: emptySnapshot(),
     runtimeNodeToken: "runtime-secret",
@@ -152,10 +152,10 @@ test("Fly autoscaler creates and stops machines from autoscaling decisions", asy
   };
 
   const scaleUp = await reconcileFlyMachinesAutoscaling({
-    appName: "wasmplane-runtime",
+    appName: "oden-runtime",
     apiToken: "fly-token",
     region: "nrt",
-    machineConfig: { image: "registry.fly.io/wasmplane-runtime:deployment-1" },
+    machineConfig: { image: "registry.fly.io/oden-runtime:deployment-1" },
     decision: {
       action: "scale_up",
       reason: "load_above_threshold",
@@ -169,7 +169,7 @@ test("Fly autoscaler creates and stops machines from autoscaling decisions", asy
     fetch: fetchImpl as any,
   });
   const scaleDown = await reconcileFlyMachinesAutoscaling({
-    appName: "wasmplane-runtime",
+    appName: "oden-runtime",
     apiToken: "fly-token",
     region: "nrt",
     machineConfig: {},
@@ -191,16 +191,16 @@ test("Fly autoscaler creates and stops machines from autoscaling decisions", asy
   assert.deepEqual(scaleDown.actions, [{ type: "stop", machineId: "machine-old", ok: true, status: 200 }]);
   assert.deepEqual(calls, [
     {
-      url: "https://api.machines.dev/v1/apps/wasmplane-runtime/machines",
+      url: "https://api.machines.dev/v1/apps/oden-runtime/machines",
       method: "POST",
       authorization: "Bearer fly-token",
       body: {
-        config: { image: "registry.fly.io/wasmplane-runtime:deployment-1" },
+        config: { image: "registry.fly.io/oden-runtime:deployment-1" },
         region: "nrt",
       },
     },
     {
-      url: "https://api.machines.dev/v1/apps/wasmplane-runtime/machines/machine-old/stop",
+      url: "https://api.machines.dev/v1/apps/oden-runtime/machines/machine-old/stop",
       method: "POST",
       authorization: "Bearer fly-token",
       body: undefined,
@@ -211,7 +211,7 @@ test("Fly autoscaler creates and stops machines from autoscaling decisions", asy
 test("Fly autoscaler skips reconciliation when another controller holds the lease", async () => {
   const coordination = createInMemoryFlyAutoscalerCoordinationStore();
   assert.equal(await coordination.acquireLease({
-    key: "fly:wasmplane-runtime:nrt",
+    key: "fly:oden-runtime:nrt",
     holder: "controller-a",
     ttlMs: 30_000,
     nowMs: 1_000,
@@ -219,10 +219,10 @@ test("Fly autoscaler skips reconciliation when another controller holds the leas
   let calls = 0;
 
   const report = await reconcileFlyMachinesAutoscaling({
-    appName: "wasmplane-runtime",
+    appName: "oden-runtime",
     apiToken: "fly-token",
     region: "nrt",
-    machineConfig: { image: "registry.fly.io/wasmplane-runtime:deployment-1" },
+    machineConfig: { image: "registry.fly.io/oden-runtime:deployment-1" },
     decision: {
       action: "scale_up",
       reason: "load_above_threshold",
@@ -247,7 +247,7 @@ test("Fly autoscaler skips reconciliation when another controller holds the leas
   assert.deepEqual(report.actions, []);
   assert.equal(report.skippedReason, "lease_unavailable");
   assert.deepEqual(report.lease, {
-    key: "fly:wasmplane-runtime:nrt",
+    key: "fly:oden-runtime:nrt",
     holder: "controller-b",
     acquired: false,
   });
@@ -273,10 +273,10 @@ test("Fly autoscaler records cooldown after scaling and skips until it expires",
   };
 
   const first = await reconcileFlyMachinesAutoscaling({
-    appName: "wasmplane-runtime",
+    appName: "oden-runtime",
     apiToken: "fly-token",
     region: "nrt",
-    machineConfig: { image: "registry.fly.io/wasmplane-runtime:deployment-1" },
+    machineConfig: { image: "registry.fly.io/oden-runtime:deployment-1" },
     decision,
     controllerId: "controller-a",
     lease: { ttlMs: 30_000 },
@@ -287,10 +287,10 @@ test("Fly autoscaler records cooldown after scaling and skips until it expires",
   });
   nowMs = 20_000;
   const second = await reconcileFlyMachinesAutoscaling({
-    appName: "wasmplane-runtime",
+    appName: "oden-runtime",
     apiToken: "fly-token",
     region: "nrt",
-    machineConfig: { image: "registry.fly.io/wasmplane-runtime:deployment-1" },
+    machineConfig: { image: "registry.fly.io/oden-runtime:deployment-1" },
     decision,
     controllerId: "controller-b",
     lease: { ttlMs: 30_000 },
@@ -301,10 +301,10 @@ test("Fly autoscaler records cooldown after scaling and skips until it expires",
   });
   nowMs = 71_000;
   const third = await reconcileFlyMachinesAutoscaling({
-    appName: "wasmplane-runtime",
+    appName: "oden-runtime",
     apiToken: "fly-token",
     region: "nrt",
-    machineConfig: { image: "registry.fly.io/wasmplane-runtime:deployment-1" },
+    machineConfig: { image: "registry.fly.io/oden-runtime:deployment-1" },
     decision,
     controllerId: "controller-c",
     lease: { ttlMs: 30_000 },
@@ -319,7 +319,7 @@ test("Fly autoscaler records cooldown after scaling and skips until it expires",
   assert.deepEqual(second.actions, []);
   assert.equal(second.skippedReason, "cooldown");
   assert.deepEqual(second.cooldown, {
-    key: "fly:wasmplane-runtime:nrt",
+    key: "fly:oden-runtime:nrt",
     active: true,
     untilMs: 70_000,
     remainingMs: 50_000,
@@ -329,24 +329,24 @@ test("Fly autoscaler records cooldown after scaling and skips until it expires",
 });
 
 test("SQLite Fly autoscaler coordination store persists leases and cooldowns", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-autoscaler-coordination-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-autoscaler-coordination-"));
   const path = join(dir, "coordination.sqlite");
   const first = createSqliteFlyAutoscalerCoordinationStore(path);
 
   assert.equal(await first.acquireLease({
-    key: "fly:wasmplane-runtime:nrt",
+    key: "fly:oden-runtime:nrt",
     holder: "controller-a",
     ttlMs: 30_000,
     nowMs: 10_000,
   }), true);
   assert.equal(await first.acquireLease({
-    key: "fly:wasmplane-runtime:nrt",
+    key: "fly:oden-runtime:nrt",
     holder: "controller-b",
     ttlMs: 30_000,
     nowMs: 20_000,
   }), false);
   await first.writeCooldown({
-    key: "fly:wasmplane-runtime:nrt",
+    key: "fly:oden-runtime:nrt",
     action: "scale_up",
     atMs: 10_000,
     untilMs: 70_000,
@@ -355,20 +355,20 @@ test("SQLite Fly autoscaler coordination store persists leases and cooldowns", a
 
   const second = createSqliteFlyAutoscalerCoordinationStore(path);
   assert.equal(await second.acquireLease({
-    key: "fly:wasmplane-runtime:nrt",
+    key: "fly:oden-runtime:nrt",
     holder: "controller-b",
     ttlMs: 30_000,
     nowMs: 20_000,
   }), false);
-  assert.deepEqual(await second.readCooldown("fly:wasmplane-runtime:nrt"), {
-    key: "fly:wasmplane-runtime:nrt",
+  assert.deepEqual(await second.readCooldown("fly:oden-runtime:nrt"), {
+    key: "fly:oden-runtime:nrt",
     action: "scale_up",
     atMs: 10_000,
     untilMs: 70_000,
   });
-  await second.releaseLease({ key: "fly:wasmplane-runtime:nrt", holder: "controller-a" });
+  await second.releaseLease({ key: "fly:oden-runtime:nrt", holder: "controller-a" });
   assert.equal(await second.acquireLease({
-    key: "fly:wasmplane-runtime:nrt",
+    key: "fly:oden-runtime:nrt",
     holder: "controller-b",
     ttlMs: 30_000,
     nowMs: 20_000,
@@ -436,32 +436,32 @@ test("Postgres Fly autoscaler coordination store persists leases and cooldowns",
   const store = createPostgresFlyAutoscalerCoordinationStore(pool);
 
   assert.equal(await store.acquireLease({
-    key: "fly:wasmplane-runtime:nrt",
+    key: "fly:oden-runtime:nrt",
     holder: "controller-a",
     ttlMs: 30_000,
     nowMs: 10_000,
   }), true);
   assert.equal(await store.acquireLease({
-    key: "fly:wasmplane-runtime:nrt",
+    key: "fly:oden-runtime:nrt",
     holder: "controller-b",
     ttlMs: 30_000,
     nowMs: 20_000,
   }), false);
   await store.writeCooldown({
-    key: "fly:wasmplane-runtime:nrt",
+    key: "fly:oden-runtime:nrt",
     action: "scale_up",
     atMs: 10_000,
     untilMs: 70_000,
   });
-  assert.deepEqual(await store.readCooldown("fly:wasmplane-runtime:nrt"), {
-    key: "fly:wasmplane-runtime:nrt",
+  assert.deepEqual(await store.readCooldown("fly:oden-runtime:nrt"), {
+    key: "fly:oden-runtime:nrt",
     action: "scale_up",
     atMs: 10_000,
     untilMs: 70_000,
   });
-  await store.releaseLease({ key: "fly:wasmplane-runtime:nrt", holder: "controller-a" });
+  await store.releaseLease({ key: "fly:oden-runtime:nrt", holder: "controller-a" });
   assert.equal(await store.acquireLease({
-    key: "fly:wasmplane-runtime:nrt",
+    key: "fly:oden-runtime:nrt",
     holder: "controller-b",
     ttlMs: 30_000,
     nowMs: 20_000,

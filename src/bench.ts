@@ -188,7 +188,7 @@ export async function runColdStartBenchmarks(options: BenchOptions): Promise<Ben
     digest,
     location: pathToFileURL(componentPath).href,
   };
-  const cacheDir = await mkdtemp(join(tmpdir(), "wasmplane-bench-cache-"));
+  const cacheDir = await mkdtemp(join(tmpdir(), "odenctl-bench-cache-"));
   const artifactStore = createFileArtifactStore();
 
   async function prepareWithNewSupervisor() {
@@ -341,7 +341,7 @@ async function precompileComponentForBenchmark(
   options: BenchOptions,
   componentPath: string,
 ): Promise<string> {
-  const cacheDir = await mkdtemp(join(tmpdir(), "wasmplane-bench-cwasm-"));
+  const cacheDir = await mkdtemp(join(tmpdir(), "odenctl-bench-cwasm-"));
   const precompiledPath = join(cacheDir, "worker.component.cwasm");
   await runCommand(
     options.hostBin,
@@ -357,7 +357,7 @@ export function parseBenchArgs(args: string[]): BenchOptions {
   const items = isMode(first) ? rest : args;
   const options: BenchOptions = {
     mode,
-    hostBin: "target/debug/wasmplane-wasip3-host",
+    hostBin: "target/debug/oden-host",
     iterations: 50,
     warmup: 5,
     concurrency: [1, 2, 4],
@@ -437,7 +437,7 @@ export function parseBenchArgs(args: string[]): BenchOptions {
 
 export function formatBenchmarkMarkdown(report: BenchmarkReport): string {
   const lines = [
-    "# wasmplane benchmark",
+    "# odenctl benchmark",
     "",
     `generated: ${report.generatedAt}`,
     `environment: node ${report.environment.node}, ${report.environment.platform}/${report.environment.arch}, cpus=${report.environment.cpus}`,

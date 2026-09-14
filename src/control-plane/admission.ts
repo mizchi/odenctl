@@ -31,46 +31,46 @@ export function admissionPolicyFromEnv(
   env: Record<string, string | undefined> = process.env,
 ): ControlPlaneAdmissionPolicy | undefined {
   const policy: ControlPlaneAdmissionPolicy = {};
-  if (truthy(env.WASMPLANE_ADMISSION_REQUIRE_ARTIFACT_SIGNATURE)) {
+  if (truthy(env.ODENCTL_ADMISSION_REQUIRE_ARTIFACT_SIGNATURE)) {
     policy.requireArtifactSignature = true;
   }
-  const signatureKeyIds = csv(env.WASMPLANE_ADMISSION_ARTIFACT_SIGNATURE_KEY_IDS);
+  const signatureKeyIds = csv(env.ODENCTL_ADMISSION_ARTIFACT_SIGNATURE_KEY_IDS);
   if (signatureKeyIds.length > 0) {
     policy.allowedArtifactSignatureKeyIds = signatureKeyIds;
   }
-  const maxArtifactSizeBytes = positiveInteger(env.WASMPLANE_ADMISSION_MAX_ARTIFACT_SIZE_BYTES);
+  const maxArtifactSizeBytes = positiveInteger(env.ODENCTL_ADMISSION_MAX_ARTIFACT_SIZE_BYTES);
   if (maxArtifactSizeBytes) {
     policy.maxArtifactSizeBytes = maxArtifactSizeBytes;
   }
-  const worlds = csv(env.WASMPLANE_ADMISSION_ALLOWED_WORLDS);
+  const worlds = csv(env.ODENCTL_ADMISSION_ALLOWED_WORLDS);
   if (worlds.length > 0) {
     policy.allowedWorlds = worlds;
   }
-  const worldVersions = csv(env.WASMPLANE_ADMISSION_ALLOWED_WORLD_VERSIONS);
+  const worldVersions = csv(env.ODENCTL_ADMISSION_ALLOWED_WORLD_VERSIONS);
   if (worldVersions.length > 0) {
     policy.allowedWorldVersions = worldVersions;
   }
-  const outboundPrefixes = csv(env.WASMPLANE_ADMISSION_OUTBOUND_HTTP_PREFIXES);
+  const outboundPrefixes = csv(env.ODENCTL_ADMISSION_OUTBOUND_HTTP_PREFIXES);
   if (outboundPrefixes.length > 0) {
     policy.allowedOutboundHttpPrefixes = outboundPrefixes;
   }
-  const kvNamespaceIds = csv(env.WASMPLANE_ADMISSION_KV_NAMESPACE_IDS);
+  const kvNamespaceIds = csv(env.ODENCTL_ADMISSION_KV_NAMESPACE_IDS);
   if (kvNamespaceIds.length > 0) {
     policy.allowedKvNamespaceIds = kvNamespaceIds;
   }
-  const durableObjectNamespaceIds = csv(env.WASMPLANE_ADMISSION_DURABLE_OBJECT_NAMESPACE_IDS);
+  const durableObjectNamespaceIds = csv(env.ODENCTL_ADMISSION_DURABLE_OBJECT_NAMESPACE_IDS);
   if (durableObjectNamespaceIds.length > 0) {
     policy.allowedDurableObjectNamespaceIds = durableObjectNamespaceIds;
   }
-  const secretIds = csv(env.WASMPLANE_ADMISSION_SECRET_IDS);
+  const secretIds = csv(env.ODENCTL_ADMISSION_SECRET_IDS);
   if (secretIds.length > 0) {
     policy.allowedSecretIds = secretIds;
   }
-  const serviceProjectIds = csv(env.WASMPLANE_ADMISSION_SERVICE_PROJECT_IDS);
+  const serviceProjectIds = csv(env.ODENCTL_ADMISSION_SERVICE_PROJECT_IDS);
   if (serviceProjectIds.length > 0) {
     policy.allowedServiceProjectIds = serviceProjectIds;
   }
-  const serviceUrlPrefixes = csv(env.WASMPLANE_ADMISSION_SERVICE_URL_PREFIXES);
+  const serviceUrlPrefixes = csv(env.ODENCTL_ADMISSION_SERVICE_URL_PREFIXES);
   if (serviceUrlPrefixes.length > 0) {
     policy.allowedServiceUrlPrefixes = serviceUrlPrefixes;
   }

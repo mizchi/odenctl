@@ -151,7 +151,7 @@ export async function runWacMigrationProbe(options: WacMigrationProbeOptions = {
 
 export function formatWacMigrationMarkdown(report: WacMigrationReport): string {
   const lines = [
-    "# wasmplane WAC migration",
+    "# odenctl WAC migration",
     "",
     `status: ${report.status}`,
     `tracking ok: ${report.ok ? "yes" : "no"}`,
@@ -187,8 +187,8 @@ export function formatWacMigrationMarkdown(report: WacMigrationReport): string {
 }
 
 export function resolveWacSource(env: NodeJS.ProcessEnv = process.env): WacSource {
-  const gitUrl = env.WASMPLANE_WAC_GIT_URL ?? WAC_FORK_GIT_URL;
-  const refArg = env.WASMPLANE_WAC_GIT_REF_ARG ?? WAC_FORK_REF_ARG;
+  const gitUrl = env.ODEN_WAC_GIT_URL ?? WAC_FORK_GIT_URL;
+  const refArg = env.ODEN_WAC_GIT_REF_ARG ?? WAC_FORK_REF_ARG;
   const ownerRepo = gitUrl.match(/github\.com[:/]([^/]+\/[^/.]+)(?:\.git)?$/)?.[1] ?? gitUrl;
   const ref = parseCargoGitRefArg(refArg) ?? WAC_FORK_REF;
   const url = gitUrl.startsWith("https://github.com/")
@@ -249,7 +249,7 @@ export function analyzeWacRuntimeWorkerWit(path: string, wit: string): WacRuntim
     notes.push("The WIT includes async functions, so the probe should keep tracking stock WAC issue #180.");
   }
   if (hasResources) {
-    notes.push("The WIT includes resources, matching the resource-heavy worker shape used by wasmplane.");
+    notes.push("The WIT includes resources, matching the resource-heavy worker shape used by oden.");
   }
 
   return {

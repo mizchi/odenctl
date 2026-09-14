@@ -11,7 +11,7 @@ import { createDurableObjectStorageNamespace } from "../src/control-plane/durabl
 import { createVolumeSqliteRegistry } from "../src/control-plane/volume-sqlite.ts";
 
 test("durable object alarm dispatcher invokes due alarms and clears handled alarms", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-do-alarm-dispatch-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-do-alarm-dispatch-"));
   const registry = createVolumeSqliteRegistry({ rootDir: dir });
   const rooms = createDurableObjectStorageNamespace({ namespace: "rooms", registry });
   const lobby = rooms.get(rooms.idFromName("lobby"));
@@ -52,7 +52,7 @@ test("durable object alarm dispatcher invokes due alarms and clears handled alar
 });
 
 test("durable object alarm dispatcher preserves alarms when handlers fail", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-do-alarm-dispatch-fail-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-do-alarm-dispatch-fail-"));
   const registry = createVolumeSqliteRegistry({ rootDir: dir });
   const rooms = createDurableObjectStorageNamespace({ namespace: "rooms", registry });
   const lobby = rooms.get(rooms.idFromName("lobby"));

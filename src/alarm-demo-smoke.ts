@@ -24,12 +24,12 @@ export interface AlarmDemoSmokeResult {
 
 interface AlarmDemoSmokeEnv {
   FLY_CONTROL_APP?: string;
-  WASMPLANE_CONTROL_PLANE_URL?: string;
+  ODENCTL_CONTROL_PLANE_URL?: string;
   CONTROL_PLANE_URL?: string;
-  WASMPLANE_CONTROL_PLANE_TOKEN?: string;
+  ODENCTL_CONTROL_PLANE_TOKEN?: string;
   CONTROL_PLANE_TOKEN?: string;
-  WASMPLANE_ALARM_DEMO_OBJECT?: string;
-  WASMPLANE_ALARM_DEMO_MESSAGE?: string;
+  ODENCTL_ALARM_DEMO_OBJECT?: string;
+  ODENCTL_ALARM_DEMO_MESSAGE?: string;
 }
 
 export function parseAlarmDemoSmokeArgs(
@@ -40,11 +40,11 @@ export function parseAlarmDemoSmokeArgs(
   const controlApp = flags["control-app"] ?? env.FLY_CONTROL_APP ?? "mz-wasmplane-control";
   return {
     controlUrl: normalizeBaseUrl(
-      flags["control-url"] ?? env.WASMPLANE_CONTROL_PLANE_URL ?? env.CONTROL_PLANE_URL ?? flyUrl(controlApp),
+      flags["control-url"] ?? env.ODENCTL_CONTROL_PLANE_URL ?? env.CONTROL_PLANE_URL ?? flyUrl(controlApp),
     ),
-    token: nonEmpty(flags["token"] ?? env.WASMPLANE_CONTROL_PLANE_TOKEN ?? env.CONTROL_PLANE_TOKEN),
-    objectName: nonEmpty(flags["object"] ?? env.WASMPLANE_ALARM_DEMO_OBJECT) ?? "heartbeat",
-    message: flags["message"] ?? env.WASMPLANE_ALARM_DEMO_MESSAGE ?? "alarm-demo-smoke",
+    token: nonEmpty(flags["token"] ?? env.ODENCTL_CONTROL_PLANE_TOKEN ?? env.CONTROL_PLANE_TOKEN),
+    objectName: nonEmpty(flags["object"] ?? env.ODENCTL_ALARM_DEMO_OBJECT) ?? "heartbeat",
+    message: flags["message"] ?? env.ODENCTL_ALARM_DEMO_MESSAGE ?? "alarm-demo-smoke",
     delayMs: nonnegativeInteger(flagNumber(flags["delay-ms"], 1000), "delay-ms"),
     repeatMs: optionalPositiveInteger(flags["repeat-ms"], "repeat-ms"),
     repeatLimit: optionalNonnegativeInteger(flags["repeat-limit"], "repeat-limit"),

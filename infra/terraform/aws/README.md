@@ -1,4 +1,4 @@
-# wasmplane AWS Terraform POC
+# odenctl AWS Terraform POC
 
 For the standalone Wasm runtime and local kumo validation, use the
 [new ECS deployment guide](../aws-standalone/README.md). This directory contains
@@ -23,8 +23,8 @@ terraform -chdir=infra/terraform/aws plan \
   -var='private_subnet_ids=["subnet-private-a","subnet-private-c"]' \
   -var='control_host=control.example.com' \
   -var='runtime_host=runtime.example.com' \
-  -var='control_image=<account>.dkr.ecr.ap-northeast-1.amazonaws.com/wasmplane:sha' \
-  -var='runtime_image=<account>.dkr.ecr.ap-northeast-1.amazonaws.com/wasmplane:sha' \
+  -var='control_image=<account>.dkr.ecr.ap-northeast-1.amazonaws.com/oden:sha' \
+  -var='runtime_image=<account>.dkr.ecr.ap-northeast-1.amazonaws.com/oden:sha' \
   -var='database_url_secret_arn=arn:aws:secretsmanager:...' \
   -var='api_token_secret_arn=arn:aws:secretsmanager:...' \
   -var='runtime_token_secret_arn=arn:aws:secretsmanager:...' \
@@ -35,7 +35,7 @@ terraform -chdir=infra/terraform/aws plan \
 Production follow-ups:
 
 - add HTTPS listener and ACM certificate wiring
-- replace static `WASMPLANE_RUNTIME_NODES` with ECS task discovery or heartbeat registration
+- replace static `ODENCTL_RUNTIME_NODES` with ECS task discovery or heartbeat registration
 - add RDS/Aurora Postgres and backup policy
 - add OTEL Collector service and Prometheus/AMP export path
 - move artifact credentials to IAM-role based signing in the application

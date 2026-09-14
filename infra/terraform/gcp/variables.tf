@@ -4,9 +4,9 @@ variable "project_id" {
 }
 
 variable "name" {
-  description = "Name prefix for wasmplane GCP resources."
+  description = "Name prefix for odenctl GCP resources."
   type        = string
-  default     = "wasmplane"
+  default     = "odenctl"
 }
 
 variable "region" {
@@ -49,22 +49,22 @@ variable "database_url_secret_id" {
 }
 
 variable "api_token_secret_id" {
-  description = "Secret Manager secret id containing WASMPLANE_API_TOKEN."
+  description = "Secret Manager secret id containing ODENCTL_API_TOKEN."
   type        = string
 }
 
 variable "runtime_token_secret_id" {
-  description = "Secret Manager secret id containing WASMPLANE_RUNTIME_TOKEN."
+  description = "Secret Manager secret id containing ODEN_RUNTIME_TOKEN."
   type        = string
 }
 
 variable "artifact_access_key_id_secret_id" {
-  description = "Secret Manager secret id containing WASMPLANE_ARTIFACT_ACCESS_KEY_ID for the S3-compatible artifact endpoint."
+  description = "Secret Manager secret id containing ODENCTL_ARTIFACT_ACCESS_KEY_ID for the S3-compatible artifact endpoint."
   type        = string
 }
 
 variable "artifact_secret_access_key_secret_id" {
-  description = "Secret Manager secret id containing WASMPLANE_ARTIFACT_SECRET_ACCESS_KEY for the S3-compatible artifact endpoint."
+  description = "Secret Manager secret id containing ODENCTL_ARTIFACT_SECRET_ACCESS_KEY for the S3-compatible artifact endpoint."
   type        = string
 }
 

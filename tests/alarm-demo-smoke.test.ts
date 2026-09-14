@@ -7,7 +7,7 @@ import {
 
 test("alarm demo smoke args default to Fly control app and env token", () => {
   const parsed = parseAlarmDemoSmokeArgs([], {
-    WASMPLANE_CONTROL_PLANE_TOKEN: "control-token",
+    ODENCTL_CONTROL_PLANE_TOKEN: "control-token",
   });
 
   assert.equal(parsed.controlUrl, "https://mz-wasmplane-control.fly.dev");

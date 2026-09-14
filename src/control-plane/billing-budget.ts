@@ -90,7 +90,7 @@ export function projectBillingBudgetsFromEnv(
   env: Record<string, string | undefined> = process.env,
 ): ProjectBillingBudgetPolicies | undefined {
   const policies: ProjectBillingBudgetPolicies = {};
-  for (const [projectId, value] of parseProjectValues(env.WASMPLANE_BILLING_MONTHLY_USD_LIMITS)) {
+  for (const [projectId, value] of parseProjectValues(env.ODENCTL_BILLING_MONTHLY_USD_LIMITS)) {
     const maxUsd = positiveUsd(Number(value));
     if (maxUsd === undefined) {
       continue;

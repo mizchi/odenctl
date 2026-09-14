@@ -4,7 +4,7 @@ import { test } from "node:test";
 
 test("multi-cloud infra roadmap covers AWS, GCP, and Cloudflare Containers", async () => {
   const todo = await readFile("TODO.md", "utf8");
-  const readme = await readFile("README.md", "utf8");
+  const readme = await readFile("docs/developer/control-plane-reference.md", "utf8");
   const justfile = await readFile("justfile", "utf8");
   const workflow = await readFile(".github/workflows/ci.yml", "utf8");
 
@@ -31,7 +31,7 @@ test("AWS Terraform scaffold defines ECS control and runtime services", async ()
   assert.match(main, /resource "aws_ecs_service" "control"/);
   assert.match(main, /resource "aws_ecs_service" "runtime"/);
   assert.match(main, /resource "aws_s3_bucket" "artifacts"/);
-  assert.match(main, /WASMPLANE_WASIP3_HOST_DAEMON/);
+  assert.match(main, /ODEN_WASIP3_HOST_DAEMON/);
   assert.match(variables, /database_url_secret_arn/);
   assert.match(variables, /artifact_access_key_id_secret_arn/);
   assert.match(readme, /ECS\/Fargate/);
@@ -45,7 +45,7 @@ test("GCP Terraform scaffold defines Cloud Run control and runtime services", as
   assert.match(main, /resource "google_cloud_run_v2_service" "control"/);
   assert.match(main, /resource "google_cloud_run_v2_service" "runtime"/);
   assert.match(main, /resource "google_storage_bucket" "artifacts"/);
-  assert.match(main, /WASMPLANE_RUNTIME_NODES/);
+  assert.match(main, /ODENCTL_RUNTIME_NODES/);
   assert.match(variables, /database_url_secret_id/);
   assert.match(variables, /artifact_access_key_id_secret_id/);
   assert.match(readme, /Cloud Run/);

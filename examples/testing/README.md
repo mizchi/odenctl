@@ -1,6 +1,6 @@
 # Exported tests in WAT, Rust, and MoonBit
 
-These examples use the built-in `wasmplane test` runner. Rust and MoonBit implement
+These examples use the built-in `oden test` runner. Rust and MoonBit implement
 the same [WIT interface](wit/suite.wit) with seven tests each:
 
 | Test | Demonstrates |
@@ -12,7 +12,7 @@ the same [WIT interface](wit/suite.wit) with seven tests each:
 | `background-test` | Spawn and await a worker before returning |
 | `http-test` | Fetch a bounded response with explicit environment and origin grants |
 
-Run commands from the repository root. See [testing](../../docs/testing.md) for
+Run commands from the repository root. See [testing](../../docs/user/testing.md) for
 the full discovery, failure, and isolation contract.
 
 ## WAT: no guest compiler required
@@ -25,7 +25,7 @@ This runs three passing tests directly from `(component ...)` text.
 
 ## Build Rust and MoonBit
 
-Install the [development toolchains](../../docs/getting-started.md), including
+Install the [development toolchains](../../docs/user/getting-started.md), including
 `moon`, `wasm-tools`, and Rust's `wasm32-wasip2` target. The recipe installs the
 pinned `wit-bindgen` 0.62.0 locally when needed.
 
@@ -33,8 +33,8 @@ pinned `wit-bindgen` 0.62.0 locally when needed.
 just rust-build
 just test-examples-build
 
-target/debug/wasmplane test examples/testing/rust/target/wasm32-wasip2/debug/exported_tests.wasm --list
-target/debug/wasmplane test examples/testing/moonbit/target/tests.wasm --list
+target/debug/oden test examples/testing/rust/target/wasm32-wasip2/debug/exported_tests.wasm --list
+target/debug/oden test examples/testing/moonbit/target/tests.wasm --list
 ```
 
 The Rust target is named `wasm32-wasip2`, while its WIT bindings use WASI P3 async.
@@ -45,8 +45,8 @@ command: it is a test suite with explicit exported entry points.
 Pure logic, instance isolation, and async clock/background tests need no grants:
 
 ```sh
-target/debug/wasmplane test examples/testing/rust/target/wasm32-wasip2/debug/exported_tests.wasm --filter arithmetic
-target/debug/wasmplane test examples/testing/moonbit/target/tests.wasm --filter background
+target/debug/oden test examples/testing/rust/target/wasm32-wasip2/debug/exported_tests.wasm --filter arithmetic
+target/debug/oden test examples/testing/moonbit/target/tests.wasm --filter background
 ```
 
 ## Run all seven tests, including HTTP
@@ -60,9 +60,9 @@ node examples/testing/upstream.mjs
 Then grant access using the checked-in runtime configuration:
 
 ```sh
-target/debug/wasmplane test examples/testing/rust/target/wasm32-wasip2/debug/exported_tests.wasm \
+target/debug/oden test examples/testing/rust/target/wasm32-wasip2/debug/exported_tests.wasm \
   --config examples/testing/runtime.json
-target/debug/wasmplane test examples/testing/moonbit/target/tests.wasm \
+target/debug/oden test examples/testing/moonbit/target/tests.wasm \
   --config examples/testing/runtime.json --json
 ```
 

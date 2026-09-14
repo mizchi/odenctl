@@ -8,7 +8,7 @@ locals {
 
 resource "google_service_account" "runtime" {
   account_id   = "${var.name}-runtime"
-  display_name = "wasmplane Cloud Run runtime"
+  display_name = "odenctl Cloud Run runtime"
 }
 
 resource "google_storage_bucket" "artifacts" {
@@ -57,31 +57,31 @@ resource "google_cloud_run_v2_service" "runtime" {
         value = var.control_plane_url
       }
       env {
-        name  = "WASMPLANE_CACHE_DIR"
-        value = "/tmp/wasmplane/cache"
+        name  = "ODEN_CACHE_DIR"
+        value = "/tmp/odenctl/cache"
       }
       env {
-        name  = "WASMPLANE_ARTIFACT_CACHE_DIR"
-        value = "/tmp/wasmplane/artifacts"
+        name  = "ODEN_ARTIFACT_CACHE_DIR"
+        value = "/tmp/odenctl/artifacts"
       }
       env {
-        name  = "WASMPLANE_WASIP3_HOST_BIN"
-        value = "/usr/local/bin/wasmplane-wasip3-host"
+        name  = "ODEN_WASIP3_HOST_BIN"
+        value = "/usr/local/bin/oden-host"
       }
       env {
-        name  = "WASMPLANE_WASIP3_HOST_DAEMON"
+        name  = "ODEN_WASIP3_HOST_DAEMON"
         value = "1"
       }
       env {
-        name  = "WASMPLANE_WASIP3_HOST_DAEMON_ROUTES"
+        name  = "ODEN_WASIP3_HOST_DAEMON_ROUTES"
         value = "1"
       }
       env {
-        name  = "WASMPLANE_WASIP3_HOST_DAEMON_WORKER_PROXY"
+        name  = "ODEN_WASIP3_HOST_DAEMON_WORKER_PROXY"
         value = "1"
       }
       env {
-        name = "WASMPLANE_CONTROL_PLANE_TOKEN"
+        name = "ODENCTL_CONTROL_PLANE_TOKEN"
         value_source {
           secret_key_ref {
             secret  = var.api_token_secret_id
@@ -90,7 +90,7 @@ resource "google_cloud_run_v2_service" "runtime" {
         }
       }
       env {
-        name = "WASMPLANE_RUNTIME_TOKEN"
+        name = "ODEN_RUNTIME_TOKEN"
         value_source {
           secret_key_ref {
             secret  = var.runtime_token_secret_id
@@ -99,7 +99,7 @@ resource "google_cloud_run_v2_service" "runtime" {
         }
       }
       env {
-        name = "WASMPLANE_ARTIFACT_ACCESS_KEY_ID"
+        name = "ODENCTL_ARTIFACT_ACCESS_KEY_ID"
         value_source {
           secret_key_ref {
             secret  = var.artifact_access_key_id_secret_id
@@ -108,7 +108,7 @@ resource "google_cloud_run_v2_service" "runtime" {
         }
       }
       env {
-        name = "WASMPLANE_ARTIFACT_SECRET_ACCESS_KEY"
+        name = "ODENCTL_ARTIFACT_SECRET_ACCESS_KEY"
         value_source {
           secret_key_ref {
             secret  = var.artifact_secret_access_key_secret_id
@@ -151,31 +151,31 @@ resource "google_cloud_run_v2_service" "control" {
         value = "8080"
       }
       env {
-        name  = "WASMPLANE_ARTIFACT_STORE"
+        name  = "ODENCTL_ARTIFACT_STORE"
         value = "s3"
       }
       env {
-        name  = "WASMPLANE_ARTIFACT_BUCKET"
+        name  = "ODENCTL_ARTIFACT_BUCKET"
         value = google_storage_bucket.artifacts.name
       }
       env {
-        name  = "WASMPLANE_ARTIFACT_ENDPOINT"
+        name  = "ODENCTL_ARTIFACT_ENDPOINT"
         value = "https://storage.googleapis.com"
       }
       env {
-        name  = "WASMPLANE_ARTIFACT_REGION"
+        name  = "ODENCTL_ARTIFACT_REGION"
         value = "auto"
       }
       env {
-        name  = "WASMPLANE_RUNTIME_NODES"
+        name  = "ODENCTL_RUNTIME_NODES"
         value = google_cloud_run_v2_service.runtime.uri
       }
       env {
-        name  = "WASMPLANE_REQUIRE_EXTERNAL_DATABASE"
+        name  = "ODENCTL_REQUIRE_EXTERNAL_DATABASE"
         value = "1"
       }
       env {
-        name  = "WASMPLANE_REQUIRE_EXTERNAL_ARTIFACT_STORE"
+        name  = "ODENCTL_REQUIRE_EXTERNAL_ARTIFACT_STORE"
         value = "1"
       }
       env {
@@ -188,7 +188,7 @@ resource "google_cloud_run_v2_service" "control" {
         }
       }
       env {
-        name = "WASMPLANE_API_TOKEN"
+        name = "ODENCTL_API_TOKEN"
         value_source {
           secret_key_ref {
             secret  = var.api_token_secret_id
@@ -197,7 +197,7 @@ resource "google_cloud_run_v2_service" "control" {
         }
       }
       env {
-        name = "WASMPLANE_RUNTIME_TOKEN"
+        name = "ODEN_RUNTIME_TOKEN"
         value_source {
           secret_key_ref {
             secret  = var.runtime_token_secret_id
@@ -206,7 +206,7 @@ resource "google_cloud_run_v2_service" "control" {
         }
       }
       env {
-        name = "WASMPLANE_ARTIFACT_ACCESS_KEY_ID"
+        name = "ODENCTL_ARTIFACT_ACCESS_KEY_ID"
         value_source {
           secret_key_ref {
             secret  = var.artifact_access_key_id_secret_id
@@ -215,7 +215,7 @@ resource "google_cloud_run_v2_service" "control" {
         }
       }
       env {
-        name = "WASMPLANE_ARTIFACT_SECRET_ACCESS_KEY"
+        name = "ODENCTL_ARTIFACT_SECRET_ACCESS_KEY"
         value_source {
           secret_key_ref {
             secret  = var.artifact_secret_access_key_secret_id

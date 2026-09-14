@@ -1,0 +1,15 @@
+{
+  "maxBytes": 33554432,
+  "maxEntries": 256,
+  "maxEntryBytes": 1048576,
+  "maxPending": 128,
+  "rules": [
+    {
+      "projectId": "prj_cache_demo",
+      "host": "cache.example.local",
+      "pathPrefix": "/public",
+      "maxTtlSeconds": 60,
+      "varyHeaders": ["accept-encoding", "accept-language"]
+    }
+  ]
+}

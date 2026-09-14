@@ -5,8 +5,8 @@ import { join, resolve } from "node:path";
 import test from "node:test";
 import { parseServiceBenchOptions, runServiceBenchmark } from "../src/service-bench.ts";
 
-const host = process.env.WASMPLANE_SERVICE_BIN;
-const component = process.env.WASMPLANE_SERVICE_RUST;
+const host = process.env.ODEN_SERVICE_BIN;
+const component = process.env.ODEN_SERVICE_RUST;
 test("service benchmark validates bounded workloads and rejects unknown flags", () => {
   assert.throws(() => parseServiceBenchOptions(["--duration-ms", "-1"]), /duration/);
   assert.throws(() => parseServiceBenchOptions(["--concurrency", "0"]), /concurrency/);
@@ -34,7 +34,7 @@ test("service benchmark measures both Store models, sustained load and cleanup o
   }
 });
 test("service benchmark reports queue admission failures as errors and still reaps the process", { skip: !(host && component), timeout: 30_000 }, async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-bench-")); t.after(() => rm(dir, { recursive: true, force: true }));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-bench-")); t.after(() => rm(dir, { recursive: true, force: true }));
   const config = join(dir, "runtime.json");
   await writeFile(config, JSON.stringify({ max_concurrent_requests: 1 }));
   const report = await runServiceBenchmark({ ...parseServiceBenchOptions([]), hostBin: resolve(host!), component: resolve(component!), config, modes: ["resident"], path: "/slow", iterations: 8, warmup: 0, concurrency: [4] });

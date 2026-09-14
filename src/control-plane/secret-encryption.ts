@@ -110,6 +110,7 @@ export interface ConfiguredSecretCipherOptions {
   >;
 }
 
+// Persisted format identifier; keep existing encrypted secrets readable.
 const envelopePrefix = "wasmplane:v1:aes-256-gcm:";
 const ivBytes = 12;
 
@@ -356,11 +357,11 @@ export function createConfiguredSecretCipher(
       "cloud KMS secret providers require createConfiguredSecretCipherAsync",
     );
   }
-  const command = firstNonEmpty(env.WASMPLANE_SECRET_KMS_KEY_PROVIDER_COMMAND);
+  const command = firstNonEmpty(env.ODENCTL_SECRET_KMS_KEY_PROVIDER_COMMAND);
   if (command) {
     return createSecretCipherFromKeyProvider(createCommandSecretKeyProvider({
       command,
-      args: parseCommandArgs(firstNonEmpty(env.WASMPLANE_SECRET_KMS_KEY_PROVIDER_ARGS)),
+      args: parseCommandArgs(firstNonEmpty(env.ODENCTL_SECRET_KMS_KEY_PROVIDER_ARGS)),
     }));
   }
 
@@ -400,13 +401,13 @@ async function createConfiguredAwsKmsSecretKeyProvider(
   env: Record<string, string | undefined>,
   overrides: ConfiguredSecretCipherOptions["awsKms"] = {},
 ): Promise<SecretKeyProvider> {
-  const provider = firstNonEmpty(env.WASMPLANE_SECRET_KMS_PROVIDER)?.toLowerCase();
+  const provider = firstNonEmpty(env.ODENCTL_SECRET_KMS_PROVIDER)?.toLowerCase();
   if (provider && provider !== "aws") {
     throw new ControlPlaneError("validation", `unsupported secret KMS provider ${provider}`);
   }
-  const parsed = parseAwsKmsWrappedKeysEnv(firstNonEmpty(env.WASMPLANE_SECRET_KMS_AWS_WRAPPED_KEYS));
+  const parsed = parseAwsKmsWrappedKeysEnv(firstNonEmpty(env.ODENCTL_SECRET_KMS_AWS_WRAPPED_KEYS));
   const region = firstNonEmpty(
-    env.WASMPLANE_SECRET_KMS_AWS_REGION,
+    env.ODENCTL_SECRET_KMS_AWS_REGION,
     env.AWS_REGION,
     env.AWS_DEFAULT_REGION,
   );
@@ -415,8 +416,8 @@ async function createConfiguredAwsKmsSecretKeyProvider(
   }
   return createAwsKmsSecretKeyProvider({
     region,
-    primaryKeyId: firstNonEmpty(env.WASMPLANE_SECRET_KMS_KEY_ID, parsed.primaryKeyId),
-    endpoint: overrides.endpoint ?? firstNonEmpty(env.WASMPLANE_SECRET_KMS_AWS_ENDPOINT),
+    primaryKeyId: firstNonEmpty(env.ODENCTL_SECRET_KMS_KEY_ID, parsed.primaryKeyId),
+    endpoint: overrides.endpoint ?? firstNonEmpty(env.ODENCTL_SECRET_KMS_AWS_ENDPOINT),
     credentials: overrides.credentials ?? awsKmsCredentialsFromEnv(env),
     fetch: overrides.fetch,
     now: overrides.now,
@@ -428,11 +429,11 @@ async function createConfiguredGcpKmsSecretKeyProvider(
   env: Record<string, string | undefined>,
   overrides: ConfiguredSecretCipherOptions["gcpKms"] = {},
 ): Promise<SecretKeyProvider> {
-  const parsed = parseGcpKmsWrappedKeysEnv(firstNonEmpty(env.WASMPLANE_SECRET_KMS_GCP_WRAPPED_KEYS));
+  const parsed = parseGcpKmsWrappedKeysEnv(firstNonEmpty(env.ODENCTL_SECRET_KMS_GCP_WRAPPED_KEYS));
   return createGcpKmsSecretKeyProvider({
-    primaryKeyId: firstNonEmpty(env.WASMPLANE_SECRET_KMS_KEY_ID, parsed.primaryKeyId),
-    endpoint: overrides.endpoint ?? firstNonEmpty(env.WASMPLANE_SECRET_KMS_GCP_ENDPOINT),
-    accessToken: overrides.accessToken ?? firstNonEmpty(env.WASMPLANE_SECRET_KMS_GCP_ACCESS_TOKEN),
+    primaryKeyId: firstNonEmpty(env.ODENCTL_SECRET_KMS_KEY_ID, parsed.primaryKeyId),
+    endpoint: overrides.endpoint ?? firstNonEmpty(env.ODENCTL_SECRET_KMS_GCP_ENDPOINT),
+    accessToken: overrides.accessToken ?? firstNonEmpty(env.ODENCTL_SECRET_KMS_GCP_ACCESS_TOKEN),
     getAccessToken: overrides.getAccessToken,
     fetch: overrides.fetch,
     wrappedKeys: parsed.keys,
@@ -443,11 +444,11 @@ async function createConfiguredAzureKeyVaultSecretKeyProvider(
   env: Record<string, string | undefined>,
   overrides: ConfiguredSecretCipherOptions["azureKeyVault"] = {},
 ): Promise<SecretKeyProvider> {
-  const parsed = parseAzureKeyVaultWrappedKeysEnv(firstNonEmpty(env.WASMPLANE_SECRET_KMS_AZURE_WRAPPED_KEYS));
+  const parsed = parseAzureKeyVaultWrappedKeysEnv(firstNonEmpty(env.ODENCTL_SECRET_KMS_AZURE_WRAPPED_KEYS));
   return createAzureKeyVaultSecretKeyProvider({
-    primaryKeyId: firstNonEmpty(env.WASMPLANE_SECRET_KMS_KEY_ID, parsed.primaryKeyId),
-    apiVersion: overrides.apiVersion ?? firstNonEmpty(env.WASMPLANE_SECRET_KMS_AZURE_API_VERSION),
-    accessToken: overrides.accessToken ?? firstNonEmpty(env.WASMPLANE_SECRET_KMS_AZURE_ACCESS_TOKEN),
+    primaryKeyId: firstNonEmpty(env.ODENCTL_SECRET_KMS_KEY_ID, parsed.primaryKeyId),
+    apiVersion: overrides.apiVersion ?? firstNonEmpty(env.ODENCTL_SECRET_KMS_AZURE_API_VERSION),
+    accessToken: overrides.accessToken ?? firstNonEmpty(env.ODENCTL_SECRET_KMS_AZURE_ACCESS_TOKEN),
     getAccessToken: overrides.getAccessToken,
     fetch: overrides.fetch,
     wrappedKeys: parsed.keys,
@@ -457,13 +458,13 @@ async function createConfiguredAzureKeyVaultSecretKeyProvider(
 function configuredLocalKeyring(
   env: Record<string, string | undefined>,
 ): KeyringSecretCipherOptions | undefined {
-  const base64Key = firstNonEmpty(env.WASMPLANE_SECRET_KMS_KEY_BASE64);
-  const passphraseKey = firstNonEmpty(env.WASMPLANE_SECRET_KMS_KEY);
-  const extraKeys = parseKeyringEnv(firstNonEmpty(env.WASMPLANE_SECRET_KMS_KEYS_BASE64));
+  const base64Key = firstNonEmpty(env.ODENCTL_SECRET_KMS_KEY_BASE64);
+  const passphraseKey = firstNonEmpty(env.ODENCTL_SECRET_KMS_KEY);
+  const extraKeys = parseKeyringEnv(firstNonEmpty(env.ODENCTL_SECRET_KMS_KEYS_BASE64));
   if (!base64Key && !passphraseKey && extraKeys.length === 0) {
     return undefined;
   }
-  const configuredKeyId = firstNonEmpty(env.WASMPLANE_SECRET_KMS_KEY_ID);
+  const configuredKeyId = firstNonEmpty(env.ODENCTL_SECRET_KMS_KEY_ID);
   const keys: SecretDataKey[] = [];
   if (base64Key || passphraseKey) {
     const key = base64Key
@@ -505,7 +506,7 @@ function base64url(value: Buffer | Uint8Array): string {
 
 function parseSecretEnvelope(value: string) {
   if (!isEncryptedSecretValue(value)) {
-    throw new ControlPlaneError("validation", "secret value is not an encrypted wasmplane envelope");
+    throw new ControlPlaneError("validation", "secret value is not an encrypted odenctl envelope");
   }
   const parts = value.split(":");
   if (parts.length !== 7) {
@@ -575,7 +576,7 @@ function isCloudKmsConfigured(env: Record<string, string | undefined>): boolean 
 }
 
 function configuredCloudKmsProvider(env: Record<string, string | undefined>): "aws" | "gcp" | "azure" | undefined {
-  const provider = firstNonEmpty(env.WASMPLANE_SECRET_KMS_PROVIDER)?.toLowerCase();
+  const provider = firstNonEmpty(env.ODENCTL_SECRET_KMS_PROVIDER)?.toLowerCase();
   const supported = ["aws", "gcp", "azure", "command", "env", "local"];
   if (provider && !supported.includes(provider)) {
     throw new ControlPlaneError("validation", `unsupported secret KMS provider ${provider}`);
@@ -584,9 +585,9 @@ function configuredCloudKmsProvider(env: Record<string, string | undefined>): "a
     return provider;
   }
   const inferred = [
-    firstNonEmpty(env.WASMPLANE_SECRET_KMS_AWS_WRAPPED_KEYS) ? "aws" as const : undefined,
-    firstNonEmpty(env.WASMPLANE_SECRET_KMS_GCP_WRAPPED_KEYS) ? "gcp" as const : undefined,
-    firstNonEmpty(env.WASMPLANE_SECRET_KMS_AZURE_WRAPPED_KEYS) ? "azure" as const : undefined,
+    firstNonEmpty(env.ODENCTL_SECRET_KMS_AWS_WRAPPED_KEYS) ? "aws" as const : undefined,
+    firstNonEmpty(env.ODENCTL_SECRET_KMS_GCP_WRAPPED_KEYS) ? "gcp" as const : undefined,
+    firstNonEmpty(env.ODENCTL_SECRET_KMS_AZURE_WRAPPED_KEYS) ? "azure" as const : undefined,
   ].filter((value): value is "aws" | "gcp" | "azure" => value !== undefined);
   if (inferred.length > 1) {
     throw new ControlPlaneError("validation", "multiple cloud KMS wrapped key configs are set");
@@ -627,7 +628,7 @@ function parseAwsKmsWrappedKeysEnv(value: string | undefined): {
   try {
     parsed = JSON.parse(value);
   } catch {
-    throw new ControlPlaneError("validation", "WASMPLANE_SECRET_KMS_AWS_WRAPPED_KEYS must be valid JSON");
+    throw new ControlPlaneError("validation", "ODENCTL_SECRET_KMS_AWS_WRAPPED_KEYS must be valid JSON");
   }
   const record = Array.isArray(parsed)
     ? { keys: parsed }
@@ -665,7 +666,7 @@ function parseGcpKmsWrappedKeysEnv(value: string | undefined): {
   try {
     parsed = JSON.parse(value);
   } catch {
-    throw new ControlPlaneError("validation", "WASMPLANE_SECRET_KMS_GCP_WRAPPED_KEYS must be valid JSON");
+    throw new ControlPlaneError("validation", "ODENCTL_SECRET_KMS_GCP_WRAPPED_KEYS must be valid JSON");
   }
   const record = Array.isArray(parsed)
     ? { keys: parsed }
@@ -712,7 +713,7 @@ function parseAzureKeyVaultWrappedKeysEnv(value: string | undefined): {
   try {
     parsed = JSON.parse(value);
   } catch {
-    throw new ControlPlaneError("validation", "WASMPLANE_SECRET_KMS_AZURE_WRAPPED_KEYS must be valid JSON");
+    throw new ControlPlaneError("validation", "ODENCTL_SECRET_KMS_AZURE_WRAPPED_KEYS must be valid JSON");
   }
   const record = Array.isArray(parsed)
     ? { keys: parsed }
@@ -791,7 +792,7 @@ function parseKeyringEnv(value: string | undefined): SecretDataKey[] {
   return value.split(",").filter((entry) => entry.trim().length > 0).map((entry) => {
     const separator = entry.indexOf("=");
     if (separator <= 0) {
-      throw new ControlPlaneError("validation", "WASMPLANE_SECRET_KMS_KEYS_BASE64 entries must be keyId=base64");
+      throw new ControlPlaneError("validation", "ODENCTL_SECRET_KMS_KEYS_BASE64 entries must be keyId=base64");
     }
     const keyId = entry.slice(0, separator).trim();
     const keyBase64 = entry.slice(separator + 1).trim();
@@ -810,7 +811,7 @@ function parseCommandArgs(value: string | undefined): string[] {
     }
     return parsed;
   } catch {
-    throw new ControlPlaneError("validation", "WASMPLANE_SECRET_KMS_KEY_PROVIDER_ARGS must be a JSON string array");
+    throw new ControlPlaneError("validation", "ODENCTL_SECRET_KMS_KEY_PROVIDER_ARGS must be a JSON string array");
   }
 }
 

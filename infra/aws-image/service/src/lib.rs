@@ -1,8 +1,8 @@
 //! Stateless deployment sample with no diagnostic or fault-injection routes.
-use wasmplane_service_sdk::{HttpHandler, Lifecycle, types, wasip3};
+use oden_service_sdk::{HttpHandler, Lifecycle, types, wasip3};
 
 struct App;
-wasmplane_service_sdk::export!(App);
+oden_service_sdk::export!(App);
 
 impl Lifecycle for App {
     async fn start() -> Result<(), String> {
@@ -30,10 +30,10 @@ impl HttpHandler for App {
         let path = request.get_path_with_query().unwrap_or_default();
         let (status, body) = match path.split('?').next().unwrap_or_default() {
             "/healthz" => (200, r#"{"status":"ok"}"#),
-            "/" => (200, r#"{"service":"wasmplane","status":"ok"}"#),
+            "/" => (200, r#"{"service":"oden","status":"ok"}"#),
             _ => (404, r#"{"error":"not found"}"#),
         };
-        let response = wasmplane_service_sdk::json(if head { String::new() } else { body.into() });
+        let response = oden_service_sdk::json(if head { String::new() } else { body.into() });
         response.set_status_code(status).expect("valid HTTP status");
         Ok(response)
     }

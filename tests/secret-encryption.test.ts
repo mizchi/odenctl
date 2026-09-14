@@ -31,8 +31,8 @@ test("AES-GCM secret cipher encrypts and decrypts envelope values", () => {
 
 test("configured secret cipher reads base64 local KMS key", () => {
   const cipher = createConfiguredSecretCipher({
-    WASMPLANE_SECRET_KMS_KEY_ID: "fly-local",
-    WASMPLANE_SECRET_KMS_KEY_BASE64: Buffer.alloc(32, 9).toString("base64"),
+    ODENCTL_SECRET_KMS_KEY_ID: "fly-local",
+    ODENCTL_SECRET_KMS_KEY_BASE64: Buffer.alloc(32, 9).toString("base64"),
   });
 
   assert.ok(cipher);
@@ -50,9 +50,9 @@ test("configured secret cipher decrypts old key ids while encrypting with the pr
     },
   });
   const cipher = createConfiguredSecretCipher({
-    WASMPLANE_SECRET_KMS_KEY_ID: "new",
-    WASMPLANE_SECRET_KMS_KEY_BASE64: Buffer.alloc(32, 3).toString("base64"),
-    WASMPLANE_SECRET_KMS_KEYS_BASE64: `old=${Buffer.alloc(32, 1).toString("base64")}`,
+    ODENCTL_SECRET_KMS_KEY_ID: "new",
+    ODENCTL_SECRET_KMS_KEY_BASE64: Buffer.alloc(32, 3).toString("base64"),
+    ODENCTL_SECRET_KMS_KEYS_BASE64: `old=${Buffer.alloc(32, 1).toString("base64")}`,
   });
 
   assert.ok(cipher);
@@ -123,7 +123,7 @@ test("AWS KMS secret key provider unwraps data keys for rotation", async () => {
         keyId: "aws-old",
         ciphertext: Buffer.from("wrapped-old"),
         kmsKeyId: "arn:aws:kms:us-east-1:123456789012:key/old",
-        encryptionContext: { service: "wasmplane", stage: "test" },
+        encryptionContext: { service: "odenctl", stage: "test" },
       },
       {
         keyId: "aws-new",
@@ -144,7 +144,7 @@ test("AWS KMS secret key provider unwraps data keys for rotation", async () => {
     requests[0].headers.get("authorization") ?? "",
     /AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE\/20260102\/us-east-1\/kms\/aws4_request/,
   );
-  assert.deepEqual(requests[0].body.EncryptionContext, { service: "wasmplane", stage: "test" });
+  assert.deepEqual(requests[0].body.EncryptionContext, { service: "odenctl", stage: "test" });
 
   const oldCipher = createAesGcmSecretCipher({
     key: Buffer.alloc(32, 8),
@@ -184,7 +184,7 @@ test("GCP KMS secret key provider unwraps data keys for rotation", async () => {
         keyId: "gcp-old",
         ciphertext: Buffer.from("gcp-wrapped-old"),
         cryptoKeyName: "projects/p/locations/global/keyRings/r/cryptoKeys/old",
-        additionalAuthenticatedData: Buffer.from("wasmplane"),
+        additionalAuthenticatedData: Buffer.from("odenctl"),
       },
       {
         keyId: "gcp-new",
@@ -198,7 +198,7 @@ test("GCP KMS secret key provider unwraps data keys for rotation", async () => {
   assert.equal(provider.keys().length, 2);
   assert.equal(requests[0].url, "https://cloudkms.googleapis.com/v1/projects/p/locations/global/keyRings/r/cryptoKeys/old:decrypt");
   assert.equal(requests[0].headers.get("authorization"), "Bearer gcp-token");
-  assert.equal(requests[0].body.additionalAuthenticatedData, Buffer.from("wasmplane").toString("base64"));
+  assert.equal(requests[0].body.additionalAuthenticatedData, Buffer.from("odenctl").toString("base64"));
 
   const cipher = createSecretCipherFromKeyProvider(provider, {
     randomBytes(size) {
@@ -229,7 +229,7 @@ test("Azure Key Vault secret key provider unwraps data keys for rotation", async
       {
         keyId: "azure-old",
         ciphertext: Buffer.from("azure-wrapped-old"),
-        vaultUrl: "https://wasmplane.vault.azure.net",
+        vaultUrl: "https://oden.vault.azure.net",
         keyName: "old-key",
         keyVersion: "v1",
         algorithm: "RSA-OAEP-256",
@@ -237,7 +237,7 @@ test("Azure Key Vault secret key provider unwraps data keys for rotation", async
       {
         keyId: "azure-new",
         ciphertext: Buffer.from("azure-wrapped-new"),
-        vaultUrl: "https://wasmplane.vault.azure.net/",
+        vaultUrl: "https://oden.vault.azure.net/",
         keyName: "new-key",
         keyVersion: "v2",
         algorithm: "RSA-OAEP-256",
@@ -249,7 +249,7 @@ test("Azure Key Vault secret key provider unwraps data keys for rotation", async
   assert.equal(provider.keys().length, 2);
   assert.equal(
     requests[0].url,
-    "https://wasmplane.vault.azure.net/keys/old-key/v1/decrypt?api-version=2025-07-01",
+    "https://oden.vault.azure.net/keys/old-key/v1/decrypt?api-version=2025-07-01",
   );
   assert.equal(requests[0].headers.get("authorization"), "Bearer azure-token");
   assert.equal(requests[0].body.alg, "RSA-OAEP-256");
@@ -266,10 +266,10 @@ test("Azure Key Vault secret key provider unwraps data keys for rotation", async
 test("configured async secret cipher reads AWS KMS wrapped keys", async () => {
   const cipher = await createConfiguredSecretCipherAsync({
     env: {
-      WASMPLANE_SECRET_KMS_PROVIDER: "aws",
-      WASMPLANE_SECRET_KMS_KEY_ID: "aws-primary",
-      WASMPLANE_SECRET_KMS_AWS_REGION: "ap-northeast-1",
-      WASMPLANE_SECRET_KMS_AWS_WRAPPED_KEYS: JSON.stringify({
+      ODENCTL_SECRET_KMS_PROVIDER: "aws",
+      ODENCTL_SECRET_KMS_KEY_ID: "aws-primary",
+      ODENCTL_SECRET_KMS_AWS_REGION: "ap-northeast-1",
+      ODENCTL_SECRET_KMS_AWS_WRAPPED_KEYS: JSON.stringify({
         keys: [
           {
             keyId: "aws-primary",
@@ -300,10 +300,10 @@ test("configured async secret cipher reads AWS KMS wrapped keys", async () => {
 test("configured async secret cipher reads GCP KMS wrapped keys", async () => {
   const cipher = await createConfiguredSecretCipherAsync({
     env: {
-      WASMPLANE_SECRET_KMS_PROVIDER: "gcp",
-      WASMPLANE_SECRET_KMS_KEY_ID: "gcp-primary",
-      WASMPLANE_SECRET_KMS_GCP_ACCESS_TOKEN: "gcp-token",
-      WASMPLANE_SECRET_KMS_GCP_WRAPPED_KEYS: JSON.stringify({
+      ODENCTL_SECRET_KMS_PROVIDER: "gcp",
+      ODENCTL_SECRET_KMS_KEY_ID: "gcp-primary",
+      ODENCTL_SECRET_KMS_GCP_ACCESS_TOKEN: "gcp-token",
+      ODENCTL_SECRET_KMS_GCP_WRAPPED_KEYS: JSON.stringify({
         keys: [
           {
             keyId: "gcp-primary",
@@ -331,15 +331,15 @@ test("configured async secret cipher reads GCP KMS wrapped keys", async () => {
 test("configured async secret cipher reads Azure Key Vault wrapped keys", async () => {
   const cipher = await createConfiguredSecretCipherAsync({
     env: {
-      WASMPLANE_SECRET_KMS_PROVIDER: "azure",
-      WASMPLANE_SECRET_KMS_KEY_ID: "azure-primary",
-      WASMPLANE_SECRET_KMS_AZURE_ACCESS_TOKEN: "azure-token",
-      WASMPLANE_SECRET_KMS_AZURE_WRAPPED_KEYS: JSON.stringify({
+      ODENCTL_SECRET_KMS_PROVIDER: "azure",
+      ODENCTL_SECRET_KMS_KEY_ID: "azure-primary",
+      ODENCTL_SECRET_KMS_AZURE_ACCESS_TOKEN: "azure-token",
+      ODENCTL_SECRET_KMS_AZURE_WRAPPED_KEYS: JSON.stringify({
         keys: [
           {
             keyId: "azure-primary",
             ciphertextBase64: Buffer.from("wrapped-primary").toString("base64"),
-            vaultUrl: "https://wasmplane.vault.azure.net",
+            vaultUrl: "https://oden.vault.azure.net",
             keyName: "primary",
             keyVersion: "v1",
             algorithm: "RSA-OAEP-256",
@@ -365,8 +365,8 @@ test("configured async secret cipher reads Azure Key Vault wrapped keys", async 
 test("sync configured secret cipher asks callers to use async factory for cloud KMS", () => {
   assert.throws(
     () => createConfiguredSecretCipher({
-      WASMPLANE_SECRET_KMS_PROVIDER: "gcp",
-      WASMPLANE_SECRET_KMS_GCP_WRAPPED_KEYS: JSON.stringify({ keys: [] }),
+      ODENCTL_SECRET_KMS_PROVIDER: "gcp",
+      ODENCTL_SECRET_KMS_GCP_WRAPPED_KEYS: JSON.stringify({ keys: [] }),
     }),
     /createConfiguredSecretCipherAsync/,
   );

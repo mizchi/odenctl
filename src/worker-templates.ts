@@ -27,7 +27,7 @@ export interface WorkerTemplateResult {
   nextSteps: string[];
 }
 export function listWorkerTemplates(): WorkerTemplateCatalogEntry[] {
-  return [{ language: "rust", world: MVP_WORKER_WORLD, sdkFiles: ["src/wasmplane.rs"], description: "Rust WASIp3 HTTP service with standard streaming bodies." }];
+  return [{ language: "rust", world: MVP_WORKER_WORLD, sdkFiles: ["src/oden.rs"], description: "Rust WASIp3 HTTP service with standard streaming bodies." }];
 }
 export async function workerTemplateFiles(input: WorkerTemplateInput): Promise<WorkerTemplateFile[]> {
   const name = workerName(input.name);
@@ -46,17 +46,17 @@ crate-type = ["cdylib"]
 [dependencies]
 wasip3 = { version = "=0.9.0", features = ["async-spawn"] }
 ` },
-    { path: "src/lib.rs", contents: `mod wasmplane;
+    { path: "src/lib.rs", contents: `mod oden;
 use wasip3::http::types::{ErrorCode, Request, Response};
 struct App;
 wasip3::http::service::export!(App);
 impl wasip3::exports::http::handler::Guest for App {
     async fn handle(request: Request) -> Result<Response, ErrorCode> {
-        Ok(wasmplane::text_response(format!("hello from ${name}: {}", request.get_path_with_query().unwrap_or_default())))
+        Ok(oden::text_response(format!("hello from ${name}: {}", request.get_path_with_query().unwrap_or_default())))
     }
 }
 ` },
-    { path: "src/wasmplane.rs", contents: `use wasip3::http::types::{Fields, Response};
+    { path: "src/oden.rs", contents: `use wasip3::http::types::{Fields, Response};
 use wasip3::{wit_bindgen, wit_future, wit_stream};
 pub fn text_response(text: String) -> Response {
     let (mut writer, reader) = wit_stream::new();
@@ -76,13 +76,13 @@ build:
     cargo build --target wasm32-wasip2
 
 serve: build
-    wasmplane serve target/wasm32-wasip2/debug/${rustCrateFileStem(name)}.wasm
+    oden serve target/wasm32-wasip2/debug/${rustCrateFileStem(name)}.wasm
 ` },
     { path: "README.md", contents: `# ${name}
 
 Standard WASI HTTP service: ${MVP_WORKER_WORLD}.
 
-Build with \`just build\`, then serve with \`just serve\` (wasmplane on PATH).
+Build with \`just build\`, then serve with \`just serve\` (oden on PATH).
 The wasip3 crate provides the standard bindings; no custom WIT generation is needed.
 ` },
   ];

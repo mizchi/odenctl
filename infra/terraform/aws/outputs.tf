@@ -4,7 +4,7 @@ output "alb_dns_name" {
 }
 
 output "artifact_bucket" {
-  description = "S3 bucket for wasmplane artifacts."
+  description = "S3 bucket for odenctl artifacts."
   value       = aws_s3_bucket.artifacts.bucket
 }
 

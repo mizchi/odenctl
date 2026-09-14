@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-flyctl_version="${WASMPLANE_FLYCTL_VERSION:-0.4.67}"
+flyctl_version="${ODENCTL_FLYCTL_VERSION:-0.4.67}"
 
 case "$(uname -s)-$(uname -m)" in
   Linux-x86_64)
@@ -26,11 +26,11 @@ case "$(uname -s)-$(uname -m)" in
     ;;
 esac
 
-flyctl_sha256="${WASMPLANE_FLYCTL_SHA256:-$default_sha256}"
+flyctl_sha256="${ODENCTL_FLYCTL_SHA256:-$default_sha256}"
 archive="flyctl_${flyctl_version}_${platform}.tar.gz"
 url="https://github.com/superfly/flyctl/releases/download/v${flyctl_version}/${archive}"
-install_dir="${WASMPLANE_CI_BIN_DIR:-$HOME/.local/bin}"
-work_dir="${RUNNER_TEMP:-/tmp}/wasmplane-flyctl"
+install_dir="${ODENCTL_CI_BIN_DIR:-$HOME/.local/bin}"
+work_dir="${RUNNER_TEMP:-/tmp}/odenctl-flyctl"
 target_dir="$work_dir/flyctl-$flyctl_version-$platform"
 
 mkdir -p "$install_dir" "$target_dir"

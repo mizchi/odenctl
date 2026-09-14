@@ -2,7 +2,7 @@
 mod bindings {
     wasip3::wit_bindgen::generate!({ path: "wit/durable.wit", world: "client", generate_all });
 }
-pub use bindings::wasmplane::durable::objects::{Error, Object, Request, Response, open};
+pub use bindings::oden::durable::objects::{Error, Object, Request, Response, open};
 
 /// Opens a scoped object handle, dispatches once and drops the handle.
 /// An unknown outcome is returned to the caller; this function never retries.

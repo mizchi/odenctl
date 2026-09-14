@@ -8,10 +8,10 @@ import { join, resolve } from "node:path";
 import test from "node:test";
 import { startCelldDev } from "../src/celld-dev.ts";
 
-const binary = process.env.WASMPLANE_SERVICE_BIN;
-for (const [language, component] of [["rust", process.env.WASMPLANE_SERVICE_RUST], ["moonbit", process.env.WASMPLANE_SERVICE_MOONBIT]] as const) {
+const binary = process.env.ODEN_SERVICE_BIN;
+for (const [language, component] of [["rust", process.env.ODEN_SERVICE_RUST], ["moonbit", process.env.ODEN_SERVICE_MOONBIT]] as const) {
   test(`${language} SDK uses granted I/O, bounds reads and releases resources across repeated calls`, { skip: !(binary && component), timeout: 40_000 }, async (t) => {
-    const dir = await mkdtemp(join(tmpdir(), "wasmplane-io-"));
+    const dir = await mkdtemp(join(tmpdir(), "odenctl-io-"));
     t.after(() => rm(dir, { recursive: true, force: true }));
     const upstream = createServer(async (req, res) => {
       const chunks: Buffer[] = [];
@@ -34,7 +34,7 @@ for (const [language, component] of [["rust", process.env.WASMPLANE_SERVICE_RUST
     await writeFile(join(data, "input.txt"), "hello 日本語");
     await writeFile(join(dir, "outside.txt"), "outside");
     await symlink(join(dir, "outside.txt"), join(data, "escape.txt"));
-    const celld = process.env.WASMPLANE_CELLD_BIN ? await startCelldDev(process.env.WASMPLANE_CELLD_BIN) : undefined;
+    const celld = process.env.ODEN_CELLD_BIN ? await startCelldDev(process.env.ODEN_CELLD_BIN) : undefined;
     if (celld) t.after(() => celld.stop());
     const config = join(dir, "runtime.json");
     await writeFile(config, JSON.stringify({ timeout_ms: 5000, env: { IO_VALUE: "hello 日本語", IO_AUTHORITY: authority, IO_DENIED_AUTHORITY: deniedAuthority }, directories: [{ host: data, guest: "/data", write: true }, { host: data, guest: "/readonly", write: false }], outbound_origins: [`http://${authority}`], durable: celld ? { counter: { endpoint: celld.endpoint, namespace: "COUNTER", token_env: "SDK_GATEWAY_TOKEN" } } : {} }));

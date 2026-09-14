@@ -95,29 +95,29 @@ export function parseFlyScaleEvaluationArgs(
     runtimeApp: env.FLY_RUNTIME_APP ?? "mz-wasmplane-runtime",
     collectorApp: env.FLY_COLLECTOR_APP ?? "mz-wasmplane-otel-collector",
     region: env.FLY_REGION ?? "nrt",
-    controlUrl: normalizeBaseUrl(env.WASMPLANE_CONTROL_PLANE_URL ?? flyUrl(env.FLY_CONTROL_APP ?? "mz-wasmplane-control")),
-    runtimeUrl: normalizeBaseUrl(env.WASMPLANE_RUNTIME_URL ?? flyUrl(env.FLY_RUNTIME_APP ?? "mz-wasmplane-runtime")),
+    controlUrl: normalizeBaseUrl(env.ODENCTL_CONTROL_PLANE_URL ?? flyUrl(env.FLY_CONTROL_APP ?? "mz-wasmplane-control")),
+    runtimeUrl: normalizeBaseUrl(env.ODEN_RUNTIME_URL ?? flyUrl(env.FLY_RUNTIME_APP ?? "mz-wasmplane-runtime")),
     collectorUrl: normalizeBaseUrl(
-      env.WASMPLANE_COLLECTOR_URL ?? flyUrl(env.FLY_COLLECTOR_APP ?? "mz-wasmplane-otel-collector"),
+      env.ODENCTL_COLLECTOR_URL ?? flyUrl(env.FLY_COLLECTOR_APP ?? "mz-wasmplane-otel-collector"),
     ),
-    controlToken: nonEmpty(env.WASMPLANE_CONTROL_PLANE_TOKEN ?? env.CONTROL_PLANE_TOKEN),
-    runtimeToken: nonEmpty(env.WASMPLANE_RUNTIME_TOKEN),
-    targetRuntimeMachines: positiveInteger(env.WASMPLANE_FLY_EVAL_RUNTIME_MACHINES, 2),
-    workerHost: env.WASMPLANE_SMOKE_WORKER_HOST ?? "hello.example.dev",
-    workerPath: ensurePath(env.WASMPLANE_SMOKE_WORKER_PATH ?? "/"),
-    iterations: positiveInteger(env.WASMPLANE_FLY_EVAL_ITERATIONS, 300),
-    warmup: nonnegativeInteger(env.WASMPLANE_FLY_EVAL_WARMUP, 10),
-    concurrency: parseIntegerList(env.WASMPLANE_FLY_EVAL_CONCURRENCY ?? "1,8,32,64,128"),
-    requireExternalDatabase: env.WASMPLANE_FLY_EVAL_REQUIRE_EXTERNAL_DB !== "0",
-    failureDrill: envFlag(env.WASMPLANE_FLY_EVAL_FAILURE_DRILL),
-    scaleWaitMs: positiveInteger(env.WASMPLANE_FLY_EVAL_SCALE_WAIT_MS, 30_000),
-    maxP95Ms: optionalPositiveNumber(env.WASMPLANE_FLY_EVAL_MAX_P95_MS, "WASMPLANE_FLY_EVAL_MAX_P95_MS"),
-    maxErrorRate: optionalRate(env.WASMPLANE_FLY_EVAL_MAX_ERROR_RATE, "WASMPLANE_FLY_EVAL_MAX_ERROR_RATE"),
+    controlToken: nonEmpty(env.ODENCTL_CONTROL_PLANE_TOKEN ?? env.CONTROL_PLANE_TOKEN),
+    runtimeToken: nonEmpty(env.ODEN_RUNTIME_TOKEN),
+    targetRuntimeMachines: positiveInteger(env.ODENCTL_FLY_EVAL_RUNTIME_MACHINES, 2),
+    workerHost: env.ODENCTL_SMOKE_WORKER_HOST ?? "hello.example.dev",
+    workerPath: ensurePath(env.ODENCTL_SMOKE_WORKER_PATH ?? "/"),
+    iterations: positiveInteger(env.ODENCTL_FLY_EVAL_ITERATIONS, 300),
+    warmup: nonnegativeInteger(env.ODENCTL_FLY_EVAL_WARMUP, 10),
+    concurrency: parseIntegerList(env.ODENCTL_FLY_EVAL_CONCURRENCY ?? "1,8,32,64,128"),
+    requireExternalDatabase: env.ODENCTL_FLY_EVAL_REQUIRE_EXTERNAL_DB !== "0",
+    failureDrill: envFlag(env.ODENCTL_FLY_EVAL_FAILURE_DRILL),
+    scaleWaitMs: positiveInteger(env.ODENCTL_FLY_EVAL_SCALE_WAIT_MS, 30_000),
+    maxP95Ms: optionalPositiveNumber(env.ODENCTL_FLY_EVAL_MAX_P95_MS, "ODENCTL_FLY_EVAL_MAX_P95_MS"),
+    maxErrorRate: optionalRate(env.ODENCTL_FLY_EVAL_MAX_ERROR_RATE, "ODENCTL_FLY_EVAL_MAX_ERROR_RATE"),
     minThroughputRps: optionalPositiveNumber(
-      env.WASMPLANE_FLY_EVAL_MIN_THROUGHPUT_RPS,
-      "WASMPLANE_FLY_EVAL_MIN_THROUGHPUT_RPS",
+      env.ODENCTL_FLY_EVAL_MIN_THROUGHPUT_RPS,
+      "ODENCTL_FLY_EVAL_MIN_THROUGHPUT_RPS",
     ),
-    maxPublishMs: optionalPositiveNumber(env.WASMPLANE_FLY_EVAL_MAX_PUBLISH_MS, "WASMPLANE_FLY_EVAL_MAX_PUBLISH_MS"),
+    maxPublishMs: optionalPositiveNumber(env.ODENCTL_FLY_EVAL_MAX_PUBLISH_MS, "ODENCTL_FLY_EVAL_MAX_PUBLISH_MS"),
     execute: false,
     format: "markdown",
   };
@@ -330,7 +330,7 @@ export function buildFlyScaleEvaluationPlan(options: FlyScaleEvaluationOptions):
   if (options.volumeSqliteDrillId) {
     steps.push({
       name: "volume sqlite backup drill",
-      command: `fly ssh console -a ${options.controlApp} -C "cd /app && pnpm wasmplane volume-sqlite backup --root /data/sqlite --id ${options.volumeSqliteDrillId} --backup-id fly-drill"`,
+      command: `fly ssh console -a ${options.controlApp} -C "cd /app && pnpm odenctl volume-sqlite backup --root /data/sqlite --id ${options.volumeSqliteDrillId} --backup-id fly-drill"`,
       destructive: true,
     });
   }
@@ -398,7 +398,7 @@ export async function runFlyScaleEvaluation(
     await timedStep(steps, plan[3], async () => {
       benchmark = await benchmarkRunner({
         mode: "http",
-        hostBin: "target/debug/wasmplane-wasip3-host",
+        hostBin: "target/debug/oden-host",
         runtimeUrl: options.runtimeUrl,
         hostHeader: options.workerHost,
         path: options.workerPath,
@@ -451,7 +451,7 @@ export async function runFlyScaleEvaluation(
           "-a",
           options.controlApp,
           "-C",
-          `cd /app && pnpm wasmplane volume-sqlite backup --root /data/sqlite --id ${options.volumeSqliteDrillId} --backup-id fly-drill`,
+          `cd /app && pnpm odenctl volume-sqlite backup --root /data/sqlite --id ${options.volumeSqliteDrillId} --backup-id fly-drill`,
         ])
       );
     }
@@ -482,7 +482,7 @@ export async function runFlyScaleEvaluation(
 
 export function formatFlyScaleEvaluationMarkdown(report: FlyScaleEvaluationReport): string {
   const lines = [
-    "# wasmplane Fly scale evaluation",
+    "# odenctl Fly scale evaluation",
     "",
     `generated: ${report.generatedAt}`,
     `executed: ${report.executed}`,

@@ -45,7 +45,7 @@ test("volume sqlite benchmark CLI args parse density settings", () => {
 });
 
 test("volume sqlite benchmark suite reports density, migration, and write contention", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-volume-sqlite-bench-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-volume-sqlite-bench-"));
   const report = await runVolumeSqliteBenchmarkSuite({
     rootDir: dir,
     databaseCount: 4,
@@ -131,7 +131,7 @@ test("volume sqlite benchmark markdown summarizes all sections", () => {
     },
   });
 
-  assert.match(markdown, /# wasmplane volume sqlite benchmark/);
+  assert.match(markdown, /# odenctl volume sqlite benchmark/);
   assert.match(markdown, /database count: 2/);
   assert.match(markdown, /volume-sqlite\.write-contention/);
 });

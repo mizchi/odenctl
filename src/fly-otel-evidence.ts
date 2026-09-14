@@ -87,7 +87,7 @@ export async function runFlyOtelEvidence(options: FlyOtelEvidenceOptions): Promi
     {
       name: "collector logs include OTEL runtime spans",
       ok: hasEvidence,
-      detail: commandError ?? (hasEvidence ? undefined : "no wasmplane runtime span evidence found in collector logs"),
+      detail: commandError ?? (hasEvidence ? undefined : "no oden runtime span evidence found in collector logs"),
     },
   ];
   return {
@@ -102,7 +102,7 @@ export async function runFlyOtelEvidence(options: FlyOtelEvidenceOptions): Promi
 
 export function formatFlyOtelEvidenceMarkdown(report: FlyOtelEvidenceReport): string {
   const lines = [
-    "# wasmplane Fly OTEL evidence",
+    "# odenctl Fly OTEL evidence",
     "",
     `generated: ${report.generatedAt}`,
     `collector app: ${report.collectorApp}`,
@@ -122,7 +122,7 @@ export function formatFlyOtelEvidenceMarkdown(report: FlyOtelEvidenceReport): st
 
 function hasOtelRuntimeSpanEvidence(text: string): boolean {
   return /(ResourceSpans|ScopeSpans|trace[_ ]?id|Trace ID|Span)/i.test(text)
-    && /(wasmplane-runtime|wasmplane\.)/i.test(text);
+    && /(oden-runtime|odenctl\.)/i.test(text);
 }
 
 function excerpt(text: string): string {

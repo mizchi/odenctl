@@ -5,7 +5,7 @@ import { promisify } from "node:util";
 import test from "node:test";
 
 const run = promisify(execFile);
-const binary = process.env.WASMPLANE_MINIMAL_BIN;
+const binary = process.env.ODEN_MINIMAL_BIN;
 
 for (const component of [
   "examples/minimal-command/command.wat",

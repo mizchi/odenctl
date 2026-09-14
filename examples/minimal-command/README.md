@@ -1,6 +1,6 @@
 # Minimal CLI Component
 
-A sample that exits successfully with `wasmplane run`. It exports standard `wasi:cli/run@0.2.0`
+A sample that exits successfully with `oden run`. It exports standard `wasi:cli/run@0.2.0`
 and requires no host imports, environment configuration, or control plane. Standard output is empty and the exit code is `0`.
 Use `run`: this is a CLI component, not an HTTP service.
 
@@ -15,7 +15,7 @@ just run examples/minimal-command/command.wat
 If the runtime is already built, only this command is needed:
 
 ```sh
-target/debug/wasmplane run examples/minimal-command/command.wat
+target/debug/oden run examples/minimal-command/command.wat
 echo $? # 0
 ```
 
@@ -38,7 +38,7 @@ Verified with `moon 0.1.20260904` and wit-bindgen `0.62.0`.
 
 ```sh
 just rust-build minimal-wat-build
-target/debug/wasmplane run examples/minimal-command/target/wat.wasm
+target/debug/oden run examples/minimal-command/target/wat.wasm
 echo $? # 0
 ```
 
@@ -52,7 +52,7 @@ Bindings and MoonBit package configuration are generated in `target/moonbit/` du
 
 ```sh
 just rust-build minimal-moonbit-build
-target/debug/wasmplane run examples/minimal-command/target/moonbit.wasm
+target/debug/oden run examples/minimal-command/target/moonbit.wasm
 echo $? # 0
 ```
 

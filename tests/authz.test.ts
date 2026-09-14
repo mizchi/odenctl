@@ -9,8 +9,8 @@ import { createJsonlAuditSink } from "../src/control-plane/audit.ts";
 test("API token parser supports legacy admin token and scoped token entries", () => {
   assert.deepEqual(
     parseApiTokens({
-      WASMPLANE_API_TOKEN: "admin-token",
-      WASMPLANE_API_TOKENS: "read-token=read;publish-token=publish,read",
+      ODENCTL_API_TOKEN: "admin-token",
+      ODENCTL_API_TOKENS: "read-token=read;publish-token=publish,read",
     }),
     [
       { token: "admin-token", scopes: ["*"], principal: "legacy" },
@@ -25,7 +25,7 @@ test("API token parser supports legacy admin token and scoped token entries", ()
 });
 
 test("JSONL audit sink appends one event per line", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-audit-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-audit-"));
   const path = join(dir, "audit.jsonl");
   const sink = createJsonlAuditSink({ path });
 

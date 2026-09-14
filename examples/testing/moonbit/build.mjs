@@ -15,7 +15,7 @@ const app = dirname(fileURLToPath(import.meta.url));
 const root = resolve(app, "../../..");
 const wit = resolve(app, "../wit");
 const generated = resolve(app, "target/generated");
-const project = "wasmplane/service-sdk";
+const project = "oden/service-sdk";
 function run(program, args, cwd = app) {
   const result = spawnSync(program, args, { cwd, stdio: "inherit" });
   if (result.error) throw result.error;

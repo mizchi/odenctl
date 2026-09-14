@@ -10,6 +10,7 @@ import {
   type RuntimeLimits,
 } from "../control-plane/contracts.ts";
 import { RuntimeError } from "./errors.ts";
+import { decodeWireBody, encodeWireBody } from "./wire-body.ts";
 import type {
   CommandRunner,
   CompileComponentRequest,
@@ -98,9 +99,9 @@ export function wasip3HostDaemonRuntimeArgsFromEnv(
   poolingArgs: string[] = wasip3HostDaemonPoolingRuntimeArgsFromEnv(env),
 ): string[] {
   const args: string[] = [];
-  appendOptionalArg(args, "--max-prepared-components", env.WASMPLANE_WASIP3_HOST_MAX_PREPARED_COMPONENTS);
-  appendOptionalArg(args, "--max-concurrent-invocations", env.WASMPLANE_WASIP3_HOST_MAX_CONCURRENT_INVOCATIONS);
-  if (env.WASMPLANE_WASIP3_EXPERIMENTAL_INSTANCE_REUSE || env.WASMPLANE_WASIP3_INSTANCE_REUSE_CONTRACT) {
+  appendOptionalArg(args, "--max-prepared-components", env.ODEN_WASIP3_HOST_MAX_PREPARED_COMPONENTS);
+  appendOptionalArg(args, "--max-concurrent-invocations", env.ODEN_WASIP3_HOST_MAX_CONCURRENT_INVOCATIONS);
+  if (env.ODEN_WASIP3_EXPERIMENTAL_INSTANCE_REUSE || env.ODEN_WASIP3_INSTANCE_REUSE_CONTRACT) {
     throw new RuntimeError("unsupported", "instance reuse was removed; standard WASI requests use a fresh Store");
   }
   args.push(...poolingArgs);
@@ -112,28 +113,28 @@ export function wasip3HostDaemonPoolingRuntimeArgsFromEnv(env: Record<string, st
   appendOptionalArg(
     args,
     "--pooling-total-component-instances",
-    env.WASMPLANE_WASIP3_POOLING_TOTAL_COMPONENT_INSTANCES,
+    env.ODEN_WASIP3_POOLING_TOTAL_COMPONENT_INSTANCES,
   );
-  appendOptionalArg(args, "--pooling-memory-mb", env.WASMPLANE_WASIP3_POOLING_MEMORY_MB);
+  appendOptionalArg(args, "--pooling-memory-mb", env.ODEN_WASIP3_POOLING_MEMORY_MB);
   appendOptionalArg(
     args,
     "--pooling-total-core-instances",
-    env.WASMPLANE_WASIP3_POOLING_TOTAL_CORE_INSTANCES,
+    env.ODEN_WASIP3_POOLING_TOTAL_CORE_INSTANCES,
   );
-  appendOptionalArg(args, "--pooling-total-memories", env.WASMPLANE_WASIP3_POOLING_TOTAL_MEMORIES);
-  appendOptionalArg(args, "--pooling-total-tables", env.WASMPLANE_WASIP3_POOLING_TOTAL_TABLES);
-  appendOptionalArg(args, "--pooling-table-elements", env.WASMPLANE_WASIP3_POOLING_TABLE_ELEMENTS);
+  appendOptionalArg(args, "--pooling-total-memories", env.ODEN_WASIP3_POOLING_TOTAL_MEMORIES);
+  appendOptionalArg(args, "--pooling-total-tables", env.ODEN_WASIP3_POOLING_TOTAL_TABLES);
+  appendOptionalArg(args, "--pooling-table-elements", env.ODEN_WASIP3_POOLING_TABLE_ELEMENTS);
   appendOptionalArg(
     args,
     "--pooling-component-instance-mb",
-    env.WASMPLANE_WASIP3_POOLING_COMPONENT_INSTANCE_MB,
+    env.ODEN_WASIP3_POOLING_COMPONENT_INSTANCE_MB,
   );
-  appendOptionalArg(args, "--pooling-core-instance-mb", env.WASMPLANE_WASIP3_POOLING_CORE_INSTANCE_MB);
+  appendOptionalArg(args, "--pooling-core-instance-mb", env.ODEN_WASIP3_POOLING_CORE_INSTANCE_MB);
   return args;
 }
 
 export function createWasip3HostBackend(options: Wasip3HostBackendOptions): RuntimeBackend {
-  const hostBin = options.hostBin ?? "wasmplane-wasip3-host";
+  const hostBin = options.hostBin ?? "oden-host";
   const hostArgsPrefix = options.hostArgsPrefix ?? [];
   const compileArgs = options.compileArgs ?? [];
   const cacheVariant = options.cacheVariant ? `-${safePathFragment(options.cacheVariant)}` : "";
@@ -194,13 +195,14 @@ export function createWasip3HostBackend(options: Wasip3HostBackendOptions): Runt
 }
 
 export function createWasip3HostInvoker(options: Wasip3HostInvokerOptions = {}): RuntimeInvoker {
-  const hostBin = options.hostBin ?? "wasmplane-wasip3-host";
+  const hostBin = options.hostBin ?? "oden-host";
   const hostArgsPrefix = options.hostArgsPrefix ?? [];
   const commandRunner = options.commandRunner ?? createSpawnCommandRunner();
 
   return {
     async invoke(request: InvokeComponentRequest): Promise<InvokeComponentResponse> {
       try {
+        const body = encodeWireBody(request.body);
         const result = await commandRunner.run(hostBin, [
           ...hostArgsPrefix,
           "invoke",
@@ -212,8 +214,7 @@ export function createWasip3HostInvoker(options: Wasip3HostInvokerOptions = {}):
           request.uri,
           "--headers",
           JSON.stringify(request.headers),
-          "--body",
-          Buffer.from(request.body).toString("utf8"),
+          ...(body.bodyBase64 !== undefined ? ["--body-base64", body.bodyBase64] : ["--body", body.body]),
           ...invokePolicyArgs(request),
         ], { timeoutMs: request.component.limits?.wallMs });
         return parseInvokeResponse(result.stdout);
@@ -245,7 +246,7 @@ export function createWasip3HostDaemonInvoker(options: Wasip3HostDaemonInvokerOp
             method: request.method,
             uri: request.uri,
             headers: request.headers,
-            body: Buffer.from(request.body).toString("utf8"),
+            ...encodeWireBody(request.body),
             limits: request.component.limits
               ? {
                 wallMs: request.component.limits.wallMs,
@@ -413,7 +414,7 @@ function parseInvokeResponse(stdout: string): InvokeComponentResponse {
   return {
     status: record.status as number,
     headers: parseHeaders(record.headers),
-    body: Buffer.from(typeof record.body === "string" ? record.body : "", "utf8"),
+    body: decodeWireBody(record),
     logs: parseLogs(record.logs),
   };
 }

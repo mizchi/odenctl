@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
+import { assertCurrentEnvironment } from "./environment.ts";
 import {
   applyConfiguredControlPlaneMigrations,
   checkConfiguredControlPlaneMigrations,
@@ -343,7 +344,7 @@ export async function runDevCommand(input: DevCommandInput): Promise<DevCommandR
   });
   const environment = {
     ...(input.environment ?? {}),
-    WASMPLANE_DEV: input.environment?.WASMPLANE_DEV ?? "1",
+    ODEN_DEV: input.environment?.ODEN_DEV ?? "1",
   };
   const preview = await postJson(fetchImpl, input.controlPlaneUrl, "/deploy-previews", input.token, {
     ...(previewId ? { id: previewId } : {}),
@@ -376,8 +377,8 @@ export async function runDevCommand(input: DevCommandInput): Promise<DevCommandR
 
 export function parseDeployArgs(args: string[], env: Record<string, string | undefined> = process.env): DeployComponentInput {
   const input: Partial<DeployComponentInput> = {
-    controlPlaneUrl: env.WASMPLANE_CONTROL_PLANE_URL ?? "http://127.0.0.1:8787",
-    token: env.WASMPLANE_CONTROL_PLANE_TOKEN,
+    controlPlaneUrl: env.ODENCTL_CONTROL_PLANE_URL ?? "http://127.0.0.1:8787",
+    token: env.ODENCTL_CONTROL_PLANE_TOKEN,
     pathPrefix: "/",
     outboundAllow: [],
     kv: [],
@@ -484,10 +485,11 @@ export function parseDevArgs(
   env: Record<string, string | undefined> = process.env,
 ): DevCommandInput {
   const input: Partial<DevCommandInput> = {
-    controlPlaneUrl: env.WASMPLANE_CONTROL_PLANE_URL ?? "http://127.0.0.1:8787",
-    runtimeUrl: env.WASMPLANE_RUNTIME_URL ?? "http://127.0.0.1:8788",
-    token: env.WASMPLANE_CONTROL_PLANE_TOKEN,
-    runtimeToken: env.WASMPLANE_RUNTIME_TOKEN,
+    controlPlaneUrl: env.ODENCTL_CONTROL_PLANE_URL ?? "http://127.0.0.1:8787",
+    runtimeUrl: env.ODEN_RUNTIME_URL ?? "http://127.0.0.1:8788",
+    token: env.ODENCTL_CONTROL_PLANE_TOKEN,
+    runtimeToken: env.ODEN_RUNTIME_TOKEN,
+    hostBin: env.ODEN_WASIP3_HOST_BIN,
     host: "dev.localhost",
     pathPrefix: "/",
     outboundAllow: [],
@@ -612,7 +614,7 @@ export function parseMigrateArgs(
 ): MigrateCommandInput {
   const [action, ...rest] = args;
   if (action !== "apply" && action !== "check") {
-    throw new Error("usage: wasmplane migrate <apply|check> [--sqlite <path> | --database-url <url>]");
+    throw new Error("usage: odenctl migrate <apply|check> [--sqlite <path> | --database-url <url>]");
   }
   const migrateEnv = migrationEnvFromProcess(env);
   for (let index = 0; index < rest.length; index += 1) {
@@ -620,18 +622,18 @@ export function parseMigrateArgs(
     const value = rest[index + 1];
     switch (flag) {
       case "--sqlite":
-        migrateEnv.WASMPLANE_DB = requiredValue(flag, value);
+        migrateEnv.ODENCTL_DB = requiredValue(flag, value);
         delete migrateEnv.DATABASE_URL;
-        delete migrateEnv.WASMPLANE_DATABASE_URL;
+        delete migrateEnv.ODENCTL_DATABASE_URL;
         index += 1;
         break;
       case "--database-url":
         migrateEnv.DATABASE_URL = requiredValue(flag, value);
-        delete migrateEnv.WASMPLANE_DB;
+        delete migrateEnv.ODENCTL_DB;
         index += 1;
         break;
       case "--postgres-ssl":
-        migrateEnv.WASMPLANE_POSTGRES_SSL = requiredValue(flag, value);
+        migrateEnv.ODENCTL_POSTGRES_SSL = requiredValue(flag, value);
         index += 1;
         break;
       default:
@@ -698,12 +700,12 @@ export function parseOnboardArgs(
 ): OnboardCommandInput {
   const [kind, ...rest] = args;
   if (kind !== "beta") {
-    throw new Error("usage: wasmplane onboard beta --organization-name <name> --user-email <email> --project-name <name>");
+    throw new Error("usage: odenctl onboard beta --organization-name <name> --user-email <email> --project-name <name>");
   }
   const input: Partial<OnboardCommandInput> = {
     kind,
-    controlPlaneUrl: env.WASMPLANE_CONTROL_PLANE_URL ?? "http://127.0.0.1:8787",
-    token: env.WASMPLANE_CONTROL_PLANE_TOKEN,
+    controlPlaneUrl: env.ODENCTL_CONTROL_PLANE_URL ?? "http://127.0.0.1:8787",
+    token: env.ODENCTL_CONTROL_PLANE_TOKEN,
   };
   for (let index = 0; index < rest.length; index += 1) {
     const flag = rest[index];
@@ -806,7 +808,7 @@ export async function runOnboardCommand(input: OnboardCommandInput) {
 export function parseVolumeSqliteArgs(args: string[]): VolumeSqliteCommandInput {
   const [action, ...rest] = args;
   if (!isVolumeSqliteAction(action)) {
-    throw new Error("usage: wasmplane volume-sqlite <ensure|backup|restore|gc|list> --root <dir> [--id <database-id>]");
+    throw new Error("usage: odenctl volume-sqlite <ensure|backup|restore|gc|list> --root <dir> [--id <database-id>]");
   }
   const input: Partial<VolumeSqliteCommandInput> = { action };
   for (let index = 0; index < rest.length; index += 1) {
@@ -1236,6 +1238,13 @@ function printVolumeSqliteResult(result: Awaited<ReturnType<typeof runVolumeSqli
 
 async function main() {
   const [command, ...args] = process.argv.slice(2);
+  if (!command || command === "--help" || command === "-h") {
+    console.log("usage: odenctl <deploy|dev|migrate|new|onboard|volume-sqlite> ...");
+    console.log("Manage deployments, routes, and control-plane data.");
+    console.log("Use oden to run, serve, test, or develop Wasm components locally.");
+    return;
+  }
+  assertCurrentEnvironment(process.env);
   if (command === "deploy") {
     printDeployResult(await deployComponent(parseDeployArgs(args)));
     return;
@@ -1266,7 +1275,7 @@ async function main() {
     return;
   }
   throw new Error(
-    "usage: wasmplane <deploy|dev|migrate|new|onboard|volume-sqlite> ...",
+    "usage: odenctl <deploy|dev|migrate|new|onboard|volume-sqlite> ...",
   );
 }
 
@@ -1281,10 +1290,10 @@ function isVolumeSqliteAction(value: string | undefined): value is VolumeSqliteC
 function migrationEnvFromProcess(env: Record<string, string | undefined>): Record<string, string | undefined> {
   const keys = [
     "DATABASE_URL",
-    "WASMPLANE_DATABASE_URL",
-    "WASMPLANE_DB",
-    "WASMPLANE_POSTGRES_SSL",
-    "WASMPLANE_POSTGRES_POOL_SIZE",
+    "ODENCTL_DATABASE_URL",
+    "ODENCTL_DB",
+    "ODENCTL_POSTGRES_SSL",
+    "ODENCTL_POSTGRES_POOL_SIZE",
   ];
   return Object.fromEntries(
     keys.flatMap((key) => env[key] ? [[key, env[key]]] : []),

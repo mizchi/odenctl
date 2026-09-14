@@ -1,8 +1,8 @@
 {
-  "name": "wasmplane-durable-gateway",
+  "name": "odenctl-durable-gateway",
   "main": "index.js",
   "compatibility_date": "2026-09-01",
-  "vars": { "WASMPLANE_BINDINGS": "COUNTER" },
+  "vars": { "ODEN_BINDINGS": "COUNTER" },
   "durable_objects": {
     "bindings": [{ "name": "COUNTER", "class_name": "Counter" }]
   },

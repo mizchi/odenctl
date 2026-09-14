@@ -16,7 +16,7 @@ export interface ServiceBenchOptions {
 }
 export function parseServiceBenchOptions(args: string[]): ServiceBenchOptions {
   const options: ServiceBenchOptions = {
-    hostBin: "target/release/wasmplane", component: "examples/service-rust/target/wasm32-wasip2/release/service_rust.wasm",
+    hostBin: "target/release/oden", component: "examples/service-rust/target/wasm32-wasip2/release/service_rust.wasm",
     modes: ["fresh", "resident"], concurrency: [1, 8], iterations: 1000, warmup: 20, durationMs: 0, cycles: 1, path: "/", timeoutMs: 10_000,
   };
   const number = (value: string | undefined, flag: string, min: number, max: number) => {

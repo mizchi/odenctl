@@ -1,6 +1,6 @@
 # Call celld Durable Objects through WIT
 
-Import [`wasmplane:durable/objects@0.1.0`](../../wit/durable/objects.wit), then call celld's Counter with
+Import [`oden:durable/objects@0.1.0`](../../sdk/rust/wit/durable.wit), then call celld's Counter with
 `open("counter", name)` → `object.fetch(request)`.
 WIT defines the guest–host contract. The [Rust host implementation](../../crates/runtime-core/src/durable.rs)
 converts calls to authenticated HTTP, and the [celld gateway](../celld-gateway/index.js) forwards them to the target actor.
@@ -21,7 +21,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 const dir = 'examples/celld-gateway';
 const config = JSON.parse(await readFile(`${dir}/wrangler.jsonc`, 'utf8'));
-config.vars.WASMPLANE_GATEWAY_TOKEN = randomBytes(32).toString('hex');
+config.vars.ODEN_GATEWAY_TOKEN = randomBytes(32).toString('hex');
 await writeFile(`${dir}/wrangler.local.json`, JSON.stringify(config, null, 2), {
   mode: 0o600, flag: 'wx',
 });
@@ -32,7 +32,7 @@ pnpm exec celld dev examples/celld-gateway/wrangler.local.json --port 9876 --no-
 In another terminal, read the host token from the same configuration. It does not need to be passed to the guest environment.
 
 ```sh
-export WASMPLANE_GATEWAY_TOKEN="$(node -p 'require("./examples/celld-gateway/wrangler.local.json").vars.WASMPLANE_GATEWAY_TOKEN')"
+export ODEN_GATEWAY_TOKEN="$(node -p 'require("./examples/celld-gateway/wrangler.local.json").vars.ODEN_GATEWAY_TOKEN')"
 ```
 
 ## Run WAT directly
@@ -58,10 +58,10 @@ The binding, object name, and request ID can be passed as arguments.
 
 ```sh
 just durable-counter-build
-target/debug/wasmplane run examples/durable-counter/target/wasm32-wasip2/debug/durable_counter_example.wasm --config examples/durable-counter/runtime.example.json -- counter wat-counter
+target/debug/oden run examples/durable-counter/target/wasm32-wasip2/debug/durable_counter_example.wasm --config examples/durable-counter/runtime.example.json -- counter wat-counter
 # {"n":1} — Value updated by WAT. Without a request ID, sends GET /.
 
-target/debug/wasmplane run examples/durable-counter/target/wasm32-wasip2/debug/durable_counter_example.wasm --config examples/durable-counter/runtime.example.json -- counter room-1 increment-1
+target/debug/oden run examples/durable-counter/target/wasm32-wasip2/debug/durable_counter_example.wasm --config examples/durable-counter/runtime.example.json -- counter room-1 increment-1
 # {"n":1} — A new ID applies an update; the same ID returns the stored result.
 ```
 
@@ -71,7 +71,7 @@ deduplication follows the actor's contract. This Counter stores the request ID a
 ## Integration tests
 
 ```sh
-WASMPLANE_CELLD_BIN=/absolute/path/to/celld just celld-test
+ODEN_CELLD_BIN=/absolute/path/to/celld just celld-test
 ```
 
 Starts real celld in a temporary environment and verifies WIT calls from WAT and Rust, concurrent updates,
@@ -81,10 +81,10 @@ Coverage includes `open` / `fetch`. Alarms, WebSockets, fleet migration, and rem
 ## Benchmarks
 
 ```sh
-WASMPLANE_CELLD_BIN=/absolute/path/to/celld just celld-bench \
+ODEN_CELLD_BIN=/absolute/path/to/celld just celld-bench \
   --iterations 1000 --warmup 100 --concurrency 1,8,32 \
   --output perf-results/celld.json
 ```
 
 Builds a dedicated guest in release mode and compares direct HTTP and WIT reads and updates against real celld in a temporary environment.
-See the [benchmark guide](../../docs/celld-benchmark.md) for concurrency, object counts, measurement scope, and interpretation.
+See the [benchmark guide](../../docs/developer/celld-benchmark.md) for concurrency, object counts, measurement scope, and interpretation.

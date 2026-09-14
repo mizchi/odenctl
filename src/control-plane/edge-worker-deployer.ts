@@ -73,7 +73,7 @@ export function renderCloudflareWasmWorkerModule(input: RenderCloudflareWasmWork
     scriptName: input.scriptName,
     artifact: input.artifact,
     createdAt: input.createdAt,
-    note: "wasmplane control-plane POC; WASIp3 execution is delegated to a Wasmtime runtime",
+    note: "odenctl control-plane POC; WASIp3 execution is delegated to a Wasmtime runtime",
   };
   return [
     `const manifest = Object.freeze(${JSON.stringify(manifest, null, 2)});`,
@@ -81,12 +81,12 @@ export function renderCloudflareWasmWorkerModule(input: RenderCloudflareWasmWork
     "export default {",
     "  async fetch(request) {",
     "    const url = new URL(request.url);",
-    '    if (url.pathname === "/__wasmplane/manifest") {',
+    '    if (url.pathname === "/__odenctl/manifest") {',
     "      return Response.json(manifest);",
     "    }",
     "    return Response.json({",
     "      error: {",
-    '        code: "wasmplane_control_plane_poc",',
+    '        code: "odenctl_control_plane_poc",',
     '        message: "This Cloudflare Worker is a generated release record; WASIp3 execution is not embedded here.",',
     "      },",
     "      manifest,",
@@ -192,10 +192,10 @@ function cloudflareScriptUploadMetadata(input: EdgeWorkerDeployInput, compatibil
     main_module: `${input.scriptName}.mjs`,
     compatibility_date: compatibilityDate,
     bindings: [
-      { type: "plain_text", name: "WASMPLANE_RELEASE_ID", text: input.releaseId },
-      { type: "plain_text", name: "WASMPLANE_PROJECT_ID", text: input.projectId },
-      { type: "plain_text", name: "WASMPLANE_DEPLOYMENT_ID", text: input.deploymentId },
-      { type: "plain_text", name: "WASMPLANE_ARTIFACT_DIGEST", text: input.artifact.digest },
+      { type: "plain_text", name: "ODEN_RELEASE_ID", text: input.releaseId },
+      { type: "plain_text", name: "ODEN_PROJECT_ID", text: input.projectId },
+      { type: "plain_text", name: "ODEN_DEPLOYMENT_ID", text: input.deploymentId },
+      { type: "plain_text", name: "ODEN_ARTIFACT_DIGEST", text: input.artifact.digest },
     ],
   };
 }

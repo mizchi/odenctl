@@ -4,7 +4,7 @@ mod bindings {
 #[cfg(feature = "benchmark")]
 mod benchmark;
 #[cfg(not(feature = "benchmark"))]
-use bindings::wasmplane::durable::objects;
+use bindings::oden::durable::objects;
 
 struct CounterCommand;
 bindings::export!(CounterCommand with_types_in bindings);

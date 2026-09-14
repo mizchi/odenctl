@@ -1,4 +1,4 @@
-package wasmplane:durable@0.1.0;
+package oden:durable@0.1.0;
 
 /// Access celld actors through bindings granted by the host.
 /// Gateway endpoints, namespaces and credentials stay on the host.
@@ -8,7 +8,7 @@ interface objects {
     path: string,
     headers: list<tuple<string, string>>,
     body: list<u8>,
-    /// Forwarded as x-wasmplane-request-id. Deduplication is actor-defined;
+    /// Forwarded as x-oden-request-id. Deduplication is actor-defined;
     /// the adapter never retries a request automatically.
     request-id: option<string>,
   }

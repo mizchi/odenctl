@@ -16,7 +16,7 @@ export function createMemorySecretStore(values: Record<string, string>): Runtime
 
 export function createEnvSecretStore(
   env: Record<string, string | undefined> = process.env,
-  prefix = "WASMPLANE_SECRET_",
+  prefix = "ODEN_SECRET_",
 ): RuntimeSecretStore {
   return {
     async getSecret(secretId: string): Promise<string | undefined> {

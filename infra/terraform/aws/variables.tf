@@ -1,7 +1,7 @@
 variable "name" {
-  description = "Name prefix for wasmplane AWS resources."
+  description = "Name prefix for odenctl AWS resources."
   type        = string
-  default     = "wasmplane"
+  default     = "odenctl"
 }
 
 variable "region" {
@@ -57,22 +57,22 @@ variable "database_url_secret_arn" {
 }
 
 variable "api_token_secret_arn" {
-  description = "Secrets Manager secret ARN containing WASMPLANE_API_TOKEN."
+  description = "Secrets Manager secret ARN containing ODENCTL_API_TOKEN."
   type        = string
 }
 
 variable "runtime_token_secret_arn" {
-  description = "Secrets Manager secret ARN containing WASMPLANE_RUNTIME_TOKEN."
+  description = "Secrets Manager secret ARN containing ODEN_RUNTIME_TOKEN."
   type        = string
 }
 
 variable "artifact_access_key_id_secret_arn" {
-  description = "Secrets Manager secret ARN containing WASMPLANE_ARTIFACT_ACCESS_KEY_ID."
+  description = "Secrets Manager secret ARN containing ODENCTL_ARTIFACT_ACCESS_KEY_ID."
   type        = string
 }
 
 variable "artifact_secret_access_key_secret_arn" {
-  description = "Secrets Manager secret ARN containing WASMPLANE_ARTIFACT_SECRET_ACCESS_KEY."
+  description = "Secrets Manager secret ARN containing ODENCTL_ARTIFACT_SECRET_ACCESS_KEY."
   type        = string
 }
 

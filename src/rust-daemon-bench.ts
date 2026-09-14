@@ -111,7 +111,7 @@ const daemonOnlyFlags = new Set([
 
 export function parseRustDaemonBenchArgs(args: string[]): RustDaemonBenchOptions {
   const options: RustDaemonBenchOptions = {
-    hostBin: "target/debug/wasmplane-wasip3-host",
+    hostBin: "target/debug/oden-host",
     port: 8791,
     iterations: 300,
     warmup: 10,
@@ -246,7 +246,7 @@ export async function runRustDaemonBenchmarkSuite(
   options: RustDaemonBenchOptions,
 ): Promise<RustDaemonBenchmarkReport> {
   const componentPath = requireComponent(options);
-  const workDir = await mkdtemp(join(tmpdir(), "wasmplane-rust-daemon-bench-"));
+  const workDir = await mkdtemp(join(tmpdir(), "odenctl-rust-daemon-bench-"));
   const precompiledPath = join(workDir, "worker.component.cwasm");
   await runCommand(
     options.hostBin,
@@ -292,7 +292,7 @@ export async function runRustDaemonBenchmarkSuite(
 
 export function formatRustDaemonBenchmarkMarkdown(report: RustDaemonBenchmarkReport): string {
   const lines = [
-    "# wasmplane Rust daemon benchmark",
+    "# odenctl Rust daemon benchmark",
     "",
     `generated: ${report.generatedAt}`,
     `target: ${report.target}`,

@@ -1,5 +1,5 @@
 use std::path::Path;
-use wasmplane_runtime_core::node::{HostPolicy, HttpRequestInput, InvocationLimits, Wasip3Runtime};
+use oden_runtime_core::node::{HostPolicy, HttpRequestInput, InvocationLimits, Wasip3Runtime};
 
 fn request() -> HttpRequestInput {
     HttpRequestInput {
@@ -13,7 +13,7 @@ fn request() -> HttpRequestInput {
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires real WASIp3 component; just worker-async-test"]
 async fn node_consumes_standard_p3_body_after_handler_return() {
-    let component = std::env::var("WASMPLANE_STANDARD_COMPONENT").unwrap();
+    let component = std::env::var("ODEN_STANDARD_COMPONENT").unwrap();
     let runtime = Wasip3Runtime::new().unwrap();
     let response = runtime
         .invoke_component_handle_with_limits_and_policy_async(
@@ -32,7 +32,7 @@ async fn node_consumes_standard_p3_body_after_handler_return() {
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires real WASIp3 component; just worker-async-test"]
 async fn node_deadline_includes_stream_production() {
-    let component = std::env::var("WASMPLANE_STANDARD_COMPONENT").unwrap();
+    let component = std::env::var("ODEN_STANDARD_COMPONENT").unwrap();
     let runtime = Wasip3Runtime::new().unwrap();
     let error = runtime
         .invoke_component_handle_with_limits_and_policy_async(
@@ -55,8 +55,8 @@ async fn node_deadline_includes_stream_production() {
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires real WASIp3 component; just worker-async-test"]
 async fn node_precompiled_cache_and_body_limits() {
-    use wasmplane_runtime_core::node::precompile_component_with_pooling;
-    let component = std::env::var("WASMPLANE_WORKER_COMPONENT").unwrap();
+    use oden_runtime_core::node::precompile_component_with_pooling;
+    let component = std::env::var("ODEN_WORKER_COMPONENT").unwrap();
     let dir = tempfile::tempdir().unwrap();
     let artifact = dir.path().join("worker.cwasm");
     precompile_component_with_pooling(Path::new(&component), &artifact, None).unwrap();
@@ -71,7 +71,7 @@ async fn node_precompiled_cache_and_body_limits() {
             )
             .await
             .unwrap();
-        assert_eq!(response.body, b"hello from wasmplane: GET http://worker/");
+        assert_eq!(response.body, b"hello from oden: GET http://worker/");
     }
     assert_eq!(runtime.prepared_component_count(), 1);
     let error = runtime
@@ -107,7 +107,7 @@ async fn node_precompiled_cache_and_body_limits() {
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires real WASIp3 component; just worker-async-test"]
 async fn node_caller_cancels_cpu_guest_and_next_store_is_healthy() {
-    let component = std::env::var("WASMPLANE_WORKER_COMPONENT").unwrap();
+    let component = std::env::var("ODEN_WORKER_COMPONENT").unwrap();
     let path = Path::new(&component);
     let runtime = Wasip3Runtime::new().unwrap();
     runtime
@@ -152,7 +152,7 @@ async fn node_caller_cancels_cpu_guest_and_next_store_is_healthy() {
 
 #[test]
 fn node_compiler_rejects_a_component_without_standard_http_exports() {
-    use wasmplane_runtime_core::node::precompile_component_with_pooling;
+    use oden_runtime_core::node::precompile_component_with_pooling;
     let dir = tempfile::tempdir().unwrap();
     let component = dir.path().join("empty.wat");
     let output = dir.path().join("empty.cwasm");

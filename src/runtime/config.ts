@@ -13,12 +13,12 @@ export interface RuntimeConfigEnv {
   RUNTIME_LABELS?: string;
   RUNTIME_SHUTDOWN_DRAIN_TIMEOUT_MS?: string;
   RUNTIME_ROUTE_SNAPSHOT_FILE?: string;
-  WASMPLANE_RUNTIME_IDENTITY_KEY_ID?: string;
-  WASMPLANE_RUNTIME_IDENTITY_KEYS?: string;
-  WASMPLANE_RUNTIME_IDENTITY_CERT_SHA256?: string;
-  WASMPLANE_RUNTIME_CACHE_MAX_BYTES?: string;
-  WASMPLANE_RUNTIME_CACHE_MAX_AGE_MS?: string;
-  WASMPLANE_RUNTIME_CACHE_GC_INTERVAL_MS?: string;
+  ODEN_RUNTIME_IDENTITY_KEY_ID?: string;
+  ODEN_RUNTIME_IDENTITY_KEYS?: string;
+  ODEN_RUNTIME_IDENTITY_CERT_SHA256?: string;
+  ODEN_RUNTIME_CACHE_MAX_BYTES?: string;
+  ODEN_RUNTIME_CACHE_MAX_AGE_MS?: string;
+  ODEN_RUNTIME_CACHE_GC_INTERVAL_MS?: string;
   FLY_APP_NAME?: string;
   FLY_MACHINE_ID?: string;
   FLY_REGION?: string;
@@ -101,7 +101,7 @@ export function parseRuntimeLabels(env: RuntimeConfigEnv): Record<string, string
 }
 
 export function parseRuntimeIdentityKeys(env: RuntimeConfigEnv): Record<string, string> | undefined {
-  const raw = env.WASMPLANE_RUNTIME_IDENTITY_KEYS;
+  const raw = env.ODEN_RUNTIME_IDENTITY_KEYS;
   if (!raw || raw.trim().length === 0) {
     return undefined;
   }
@@ -122,11 +122,11 @@ export function parseRuntimeIdentityKeys(env: RuntimeConfigEnv): Record<string, 
 }
 
 export function resolveRuntimeIdentity(env: RuntimeConfigEnv): RuntimeAdvertisedIdentity | undefined {
-  const keyId = env.WASMPLANE_RUNTIME_IDENTITY_KEY_ID?.trim();
+  const keyId = env.ODEN_RUNTIME_IDENTITY_KEY_ID?.trim();
   if (!keyId || !runtimeIdentityKeyId(keyId)) {
     return undefined;
   }
-  const certificateSha256 = env.WASMPLANE_RUNTIME_IDENTITY_CERT_SHA256?.trim().toLowerCase();
+  const certificateSha256 = env.ODEN_RUNTIME_IDENTITY_CERT_SHA256?.trim().toLowerCase();
   return {
     keyId,
     ...(certificateSha256 && /^[a-f0-9]{64}$/.test(certificateSha256) ? { certificateSha256 } : {}),
@@ -134,8 +134,8 @@ export function resolveRuntimeIdentity(env: RuntimeConfigEnv): RuntimeAdvertised
 }
 
 export function parseRuntimeCacheRetentionPolicy(env: RuntimeConfigEnv): RuntimeCacheRetentionPolicy | undefined {
-  const maxBytes = positiveIntegerOrUndefined(env.WASMPLANE_RUNTIME_CACHE_MAX_BYTES);
-  const maxAgeMs = positiveIntegerOrUndefined(env.WASMPLANE_RUNTIME_CACHE_MAX_AGE_MS);
+  const maxBytes = positiveIntegerOrUndefined(env.ODEN_RUNTIME_CACHE_MAX_BYTES);
+  const maxAgeMs = positiveIntegerOrUndefined(env.ODEN_RUNTIME_CACHE_MAX_AGE_MS);
   if (maxBytes === undefined && maxAgeMs === undefined) {
     return undefined;
   }
@@ -146,7 +146,7 @@ export function parseRuntimeCacheRetentionPolicy(env: RuntimeConfigEnv): Runtime
 }
 
 export function parseRuntimeCacheGcIntervalMs(env: RuntimeConfigEnv): number | undefined {
-  return positiveIntegerOrUndefined(env.WASMPLANE_RUNTIME_CACHE_GC_INTERVAL_MS);
+  return positiveIntegerOrUndefined(env.ODEN_RUNTIME_CACHE_GC_INTERVAL_MS);
 }
 
 export function parseRuntimeShutdownDrainTimeoutMs(env: RuntimeConfigEnv, fallback: number): number {

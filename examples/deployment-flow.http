@@ -1,162 +1,94 @@
-POST http://127.0.0.1:8787/projects
+# Interactive API reference for the setup in docs/user/control-plane.md.
+# Run `just rust-build guest-build` first. Replace componentBase64 with the base64
+# bytes of examples/hello-worker/target/wasm32-wasip2/debug/hello_worker.wasm.
+# The odenctl deploy CLI performs upload/deployment/route/publication automatically.
+# After uploading, set artifactId below to the returned id before creating the
+# deployment. Identical bytes in the same project reuse the existing artifact,
+# whose id can differ from the requested art_hello.
+@control = http://127.0.0.1:8787
+@runtime = http://127.0.0.1:8788
+@controlToken = local-control-token
+@projectId = prj_hello
+@artifactId = art_hello
+@deploymentId = dep_hello
+@componentBase64 = REPLACE_WITH_BASE64_OF_BUILT_COMPONENT
+
+### Create a project (skip if it already exists)
+POST {{control}}/projects
+authorization: Bearer {{controlToken}}
 content-type: application/json
 
-{"name":"hello"}
+{"id":"{{projectId}}","name":"Hello"}
 
-###
-
-POST http://127.0.0.1:8787/artifacts
+### Upload a real WASI HTTP component; the host validates the bytes
+POST {{control}}/artifacts/local
+authorization: Bearer {{controlToken}}
 content-type: application/json
 
 {
-  "projectId": "prj_replace_me",
-  "digest": "sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
-  "location": "oci://registry.example.com/mizchi/hello:v1",
-  "sizeBytes": 42
+  "id": "{{artifactId}}",
+  "projectId": "{{projectId}}",
+  "bytesBase64": "{{componentBase64}}"
 }
 
-###
-
-POST http://127.0.0.1:8787/artifacts/local
+### Create an immutable standard HTTP deployment
+# First update @artifactId above to the id from the upload response.
+POST {{control}}/deployments
+authorization: Bearer {{controlToken}}
 content-type: application/json
 
 {
-  "projectId": "prj_replace_me",
-  "bytesBase64": "AGFzbQEAAAA="
-}
-
-###
-
-POST http://127.0.0.1:8787/secrets
-content-type: application/json
-
-{
-  "id": "sec_api_key",
-  "projectId": "prj_replace_me",
-  "name": "API key",
-  "value": "super-secret"
-}
-
-###
-
-POST http://127.0.0.1:8787/kv-namespaces
-content-type: application/json
-
-{
-  "id": "kv_main",
-  "projectId": "prj_replace_me",
-  "name": "Main KV"
-}
-
-###
-
-POST http://127.0.0.1:8787/deployments
-content-type: application/json
-
-{
-  "projectId": "prj_replace_me",
-  "artifactId": "art_replace_me",
+  "id": "{{deploymentId}}",
+  "projectId": "{{projectId}}",
+  "artifactId": "{{artifactId}}",
   "world": "wasi:http/service@0.3.0",
-  "runtime": {
-    "backend": "wasmtime",
-    "version": "wasmtime-48.0.2",
-    "wasi": "wasip3"
-  },
+  "worldVersion": "0.3.0",
+  "runtime": { "backend": "wasmtime", "version": "wasmtime-48.0.2", "wasi": "wasip3" },
   "limits": {
-    "cpuMs": 50,
+    "cpuMs": 5000,
     "memoryMb": 64,
-    "wallMs": 1000,
+    "wallMs": 10000,
     "requestBytes": 1048576,
     "subrequests": 20,
     "responseBytes": 1048576
   },
   "capabilities": {
-    "outboundHttp": {
-      "enabled": true,
-      "allow": ["https://api.example.com"]
-    }
+    "outboundHttp": { "enabled": false, "allow": [] },
+    "kv": [], "secrets": [], "durableObjects": [], "services": [],
+    "arbitraryFilesystem": false, "arbitrarySockets": false, "processSpawn": false
   }
 }
 
-###
-
-GET http://127.0.0.1:8787/projects/prj_replace_me/secrets
-
-###
-
-GET http://127.0.0.1:8787/projects/prj_replace_me/kv-namespaces
-
-###
-
-PUT http://127.0.0.1:8787/secrets/sec_api_key
+### Point the route at the deployment
+PUT {{control}}/routes
+authorization: Bearer {{controlToken}}
 content-type: application/json
 
 {
-  "value": "rotated-secret"
-}
-
-###
-
-PUT http://127.0.0.1:8787/routes
-content-type: application/json
-
-{
-  "projectId": "prj_replace_me",
+  "projectId": "{{projectId}}",
   "host": "hello.example.dev",
   "pathPrefix": "/",
-  "deploymentId": "dep_replace_me"
+  "deploymentId": "{{deploymentId}}"
 }
 
-###
+### Publish to the static or registered runtime targets; inspect ok and targets
+POST {{control}}/snapshots/routes/publish
+authorization: Bearer {{controlToken}}
 
-PUT http://127.0.0.1:8787/routes
-content-type: application/json
+### Read publication history
+GET {{control}}/snapshots/routes/publishes
+authorization: Bearer {{controlToken}}
 
-{
-  "projectId": "prj_replace_me",
-  "host": "hello.example.dev",
-  "pathPrefix": "/",
-  "targets": [
-    { "deploymentId": "dep_stable_replace_me", "weight": 90 },
-    { "deploymentId": "dep_canary_replace_me", "weight": 10 }
-  ]
-}
+### Request the deployed guest without configuring DNS
+GET {{runtime}}/
+Host: hello.example.dev
 
-###
-
-GET http://127.0.0.1:8787/snapshots/routes
-
-###
-
-POST http://127.0.0.1:8787/runtime-nodes
-content-type: application/json
-
-{
-  "id": "rt_local",
-  "url": "http://127.0.0.1:8788"
-}
-
-###
-
-POST http://127.0.0.1:8787/runtime-nodes/rt_local/heartbeat
-content-type: application/json
-
-{
-  "version": "wasmplane-runtime/0.1.0",
-  "capacity": {
-    "concurrentRequests": 128,
-    "memoryMb": 4096
-  }
-}
-
-###
-
-GET http://127.0.0.1:8787/runtime-nodes
-
-###
-
-POST http://127.0.0.1:8787/snapshots/routes/publish
-
-###
-
-GET http://127.0.0.1:8787/snapshots/routes/publishes
+### Roll back by selecting an earlier deployment ID, then publish again
+# POST {{control}}/routes/rollback
+# authorization: Bearer {{controlToken}}
+# content-type: application/json
+#
+# {"projectId":"{{projectId}}","host":"hello.example.dev","pathPrefix":"/","deploymentId":"dep_previous"}
+#
+# Resource records for KV/secrets/DOs are documented in the control-plane
+# reference. They do not grant the removed custom guest bindings to this runtime.

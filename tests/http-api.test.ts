@@ -70,7 +70,7 @@ test("HTTP API creates deployment and exposes compact route snapshot", async () 
     const signature = { algorithm: "sha256-hmac", keyId: "ci", value: "1".repeat(64) };
     const provenance = {
       builder: "github-actions",
-      source: "github.com/mizchi/wasmplane",
+      source: "github.com/mizchi/odenctl",
       revision: "abc123",
       buildId: "run-1",
     };
@@ -157,7 +157,7 @@ test("HTTP API accepts and serves replicated route snapshots", async () => {
       method: "PUT",
       headers: {
         "content-type": "application/json",
-        "x-wasmplane-source-region": "nrt",
+        "x-oden-source-region": "nrt",
       },
       body: JSON.stringify(snapshot),
     });
@@ -243,7 +243,7 @@ test("HTTP API creates beta onboarding bundles", async () => {
     assert.equal(onboarding.membership.role, "owner");
     assert.deepEqual(onboarding.deployKey.apiKey.scopes, ["read", "write", "publish"]);
     assert.match(onboarding.deployKey.token, /^wmp_[a-z0-9]{32}$/);
-    assert.match(onboarding.next.deployCommand, /pnpm wasmplane deploy/);
+    assert.match(onboarding.next.deployCommand, /pnpm odenctl deploy/);
     assert.match(onboarding.next.usageUrl, /\/projects\/prj_acme\/usage$/);
   } finally {
     await app.close();
@@ -1226,7 +1226,7 @@ test("HTTP API manages custom domain verification and TLS hooks", async () => {
 });
 
 test("HTTP API provisions project volume sqlite database units", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-http-volume-sqlite-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-http-volume-sqlite-"));
   const control = createControlPlane({
     repository: createMemoryRepository(),
     idGenerator: sequenceIds(),
@@ -1303,7 +1303,7 @@ test("HTTP API provisions project volume sqlite database units", async () => {
 });
 
 test("HTTP alarm demo schedules durable object alarms and handles dispatcher webhooks", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-http-alarm-demo-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-http-alarm-demo-"));
   const registry = createVolumeSqliteRegistry({ rootDir: dir });
   const control = createControlPlane({
     repository: createMemoryRepository(),
@@ -1341,10 +1341,10 @@ test("HTTP alarm demo schedules durable object alarms and handles dispatcher web
     const jobs = createConfiguredDurableObjectAlarmDispatcherJobs({
       registry,
       env: {
-        WASMPLANE_DURABLE_OBJECT_ALARM_INTERVAL_MS: "1000",
-        WASMPLANE_DURABLE_OBJECT_ALARM_NAMESPACES: "alarm-demo",
-        WASMPLANE_DURABLE_OBJECT_ALARM_WEBHOOK_URL: `${baseUrl}/alarm-demo/webhook`,
-        WASMPLANE_DURABLE_OBJECT_ALARM_WEBHOOK_TOKEN: "alarm-webhook-token",
+        ODENCTL_DURABLE_OBJECT_ALARM_INTERVAL_MS: "1000",
+        ODENCTL_DURABLE_OBJECT_ALARM_NAMESPACES: "alarm-demo",
+        ODENCTL_DURABLE_OBJECT_ALARM_WEBHOOK_URL: `${baseUrl}/alarm-demo/webhook`,
+        ODENCTL_DURABLE_OBJECT_ALARM_WEBHOOK_TOKEN: "alarm-webhook-token",
       },
       now: () => nowMs,
       fetchFn: fetch,
@@ -1373,7 +1373,7 @@ test("HTTP alarm demo schedules durable object alarms and handles dispatcher web
 });
 
 test("HTTP alarm demo handles duplicate dispatcher webhooks idempotently", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-http-alarm-demo-idempotency-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-http-alarm-demo-idempotency-"));
   const registry = createVolumeSqliteRegistry({ rootDir: dir });
   const control = createControlPlane({
     repository: createMemoryRepository(),
@@ -1467,7 +1467,7 @@ test("HTTP admin UI renders routes, deployments, canaries, runtime nodes, and me
       host: {
         backend: "wasmtime",
         wasi: "wasip3",
-        runtimeVersion: "wasmplane-runtime/0.1.0",
+        runtimeVersion: "oden-runtime/0.1.0",
         hostVersion: "wasmtime-43.0.0",
         engineVariant: "engine-current",
       },
@@ -1477,7 +1477,7 @@ test("HTTP admin UI renders routes, deployments, canaries, runtime nodes, and me
     assert.equal(response.status, 200);
     assert.equal(response.headers.get("content-type"), "text/html; charset=utf-8");
     const html = await response.text();
-    assert.match(html, /wasmplane admin/);
+    assert.match(html, /odenctl admin/);
     assert.match(html, /hello\.example\.dev/);
     assert.match(html, new RegExp(deployment.id));
     assert.match(html, new RegExp(candidate.id));
@@ -1890,7 +1890,7 @@ test("HTTP API exposes non-secret operational config with read scope", async () 
 });
 
 test("HTTP API writes audit events for authenticated mutations", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-audit-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-audit-"));
   const auditPath = join(dir, "audit.jsonl");
   const control = createControlPlane({
     repository: createMemoryRepository(),
@@ -1937,7 +1937,7 @@ test("HTTP API writes audit events for authenticated mutations", async () => {
 });
 
 test("HTTP API gates live edge worker deploys behind publish scope and audits them", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-edge-audit-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-edge-audit-"));
   const auditPath = join(dir, "audit.jsonl");
   const control = createControlPlane({
     repository: createMemoryRepository(),
@@ -1976,7 +1976,7 @@ test("HTTP API gates live edge worker deploys behind publish scope and audits th
   const body = {
     projectId: project.id,
     deploymentId: deployment.id,
-    scriptName: "wasmplane-live-edge",
+    scriptName: "odenctl-live-edge",
     mode: "api",
   };
 
@@ -2636,7 +2636,7 @@ test("HTTP API replicates published route snapshots to regional control planes",
       const snapshot = JSON.parse(init.body) as RouteSnapshot;
       calls.push({ url, authorization: init.headers.authorization, body: snapshot });
       if (url.endsWith("/replication/snapshots/routes")) {
-        assert.equal(init.headers["x-wasmplane-source-region"], "nrt");
+        assert.equal(init.headers["x-oden-source-region"], "nrt");
         return {
           ok: true,
           status: 200,
@@ -2848,7 +2848,7 @@ test("HTTP API signs runtime snapshot publishes with runtime node identity", asy
     const response = await fetch(`${baseUrl}/snapshots/routes/publish`, { method: "POST" });
     assert.equal(response.status, 200, await response.text());
     assert.equal(calls.length, 1);
-    assert.equal(calls[0]?.headers["x-wasmplane-runtime-identity-key-id"], "rt-key");
+    assert.equal(calls[0]?.headers["x-oden-runtime-identity-key-id"], "rt-key");
     assert.equal(
       verifyRuntimeIdentityHeaders({
         method: "PUT",
@@ -3054,7 +3054,7 @@ test("HTTP API updates runtime node lifecycle status and skips draining nodes", 
   try {
     await postJson(baseUrl, "/runtime-nodes", { id: "rt_maint", url: runtime.baseUrl });
     await postJsonOk(baseUrl, "/runtime-nodes/rt_maint/heartbeat", {
-      version: "wasmplane-runtime/0.1.0",
+      version: "oden-runtime/0.1.0",
       capacity: { concurrentRequests: 128, memoryMb: 4096 },
       load: { activeRequests: 2 },
     });
@@ -3069,7 +3069,7 @@ test("HTTP API updates runtime node lifecycle status and skips draining nodes", 
     }
     const draining = await drainingResponse.json();
     assert.equal(draining.status, "draining");
-    assert.equal(draining.version, "wasmplane-runtime/0.1.0");
+    assert.equal(draining.version, "oden-runtime/0.1.0");
     assert.deepEqual(draining.load, { activeRequests: 2 });
 
     await createHelloRoute(baseUrl);
@@ -3585,7 +3585,7 @@ test("HTTP API records runtime node heartbeat and skips inactive nodes when publ
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        version: "wasmplane-runtime/0.1.0",
+        version: "oden-runtime/0.1.0",
         capacity: { concurrentRequests: 128, memoryMb: 4096 },
       }),
     });
@@ -3600,7 +3600,7 @@ test("HTTP API records runtime node heartbeat and skips inactive nodes when publ
 
     assert.equal(heartbeat.status, "active");
     assert.equal(heartbeat.lastSeenAt, fixedNow());
-    assert.equal(heartbeat.version, "wasmplane-runtime/0.1.0");
+    assert.equal(heartbeat.version, "oden-runtime/0.1.0");
 
     await createHelloRoute(baseUrl);
 
@@ -3666,7 +3666,7 @@ test("HTTP API exposes runtime saturation signals for autoscalers", async () => 
 });
 
 test("HTTP API stores local artifact bytes and creates a file artifact", async () => {
-  const artifactDir = await mkdtemp(join(tmpdir(), "wasmplane-artifacts-"));
+  const artifactDir = await mkdtemp(join(tmpdir(), "odenctl-artifacts-"));
   const control = createControlPlane({
     repository: createMemoryRepository(),
     idGenerator: sequenceIds(),
@@ -3698,7 +3698,7 @@ test("HTTP API stores local artifact bytes and creates a file artifact", async (
 });
 
 test("HTTP API local artifact upload is idempotent for the same project and digest", async () => {
-  const artifactDir = await mkdtemp(join(tmpdir(), "wasmplane-artifacts-"));
+  const artifactDir = await mkdtemp(join(tmpdir(), "odenctl-artifacts-"));
   const control = createControlPlane({
     repository: createMemoryRepository(),
     idGenerator: sequenceIds(),
@@ -3741,7 +3741,7 @@ test("HTTP API local artifact upload is idempotent for the same project and dige
 });
 
 test("HTTP API can expose local artifact bytes through an HTTP artifact URL", async () => {
-  const artifactDir = await mkdtemp(join(tmpdir(), "wasmplane-artifacts-"));
+  const artifactDir = await mkdtemp(join(tmpdir(), "odenctl-artifacts-"));
   const control = createControlPlane({
     repository: createMemoryRepository(),
     idGenerator: sequenceIds(),
@@ -3777,7 +3777,7 @@ test("HTTP API can expose local artifact bytes through an HTTP artifact URL", as
 });
 
 test("HTTP API validates local artifact bytes before creating artifacts", async () => {
-  const artifactDir = await mkdtemp(join(tmpdir(), "wasmplane-artifacts-"));
+  const artifactDir = await mkdtemp(join(tmpdir(), "odenctl-artifacts-"));
   const validatorCalls: string[] = [];
   const control = createControlPlane({
     repository: createMemoryRepository(),
@@ -3814,7 +3814,7 @@ test("HTTP API validates local artifact bytes before creating artifacts", async 
 });
 
 test("HTTP API rejects local artifacts that fail validation", async () => {
-  const artifactDir = await mkdtemp(join(tmpdir(), "wasmplane-artifacts-"));
+  const artifactDir = await mkdtemp(join(tmpdir(), "odenctl-artifacts-"));
   const control = createControlPlane({
     repository: createMemoryRepository(),
     idGenerator: sequenceIds(),

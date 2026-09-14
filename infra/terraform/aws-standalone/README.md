@@ -1,4 +1,4 @@
-# Standalone wasmplane on AWS
+# Standalone oden on AWS
 
 Deploy one Wasm application with its standalone Rust runtime on ECS/Fargate.
 The shared [module](../modules/standalone-ecs) provisions ECR, a VPC with two public
@@ -13,7 +13,7 @@ run the Fargate containers or serve application traffic through its virtual ALB.
 flowchart LR
     client[Client] -->|HTTPS| alb[Application Load Balancer]
     alb -->|HTTP 8080| task[ECS/Fargate task]
-    task --> runtime[wasmplane start app.json]
+    task --> runtime[oden start app.json]
     runtime --> guest[Wasm component]
     ecr[ECR image] --> task
     task --> logs[CloudWatch Logs]
@@ -27,7 +27,7 @@ flowchart LR
 | Availability zones | Region suffixes `a` and `c`; override for other regions |
 | Fargate resources | 0.5 vCPU, 1024 MiB |
 | Task replicas | `0` during ECR bootstrap; set `1` to start the app |
-| Container process | `/usr/local/bin/wasmplane start /app/app.json` |
+| Container process | `/usr/local/bin/oden start /app/app.json` |
 | User / filesystem | UID/GID `65532:65532`, read-only root filesystem |
 | Listener | HTTPS 443; HTTP 80 redirects to HTTPS |
 | Guest listener | `0.0.0.0:8080` |
@@ -110,7 +110,7 @@ test and the actual Linux ARM64 container test. The container completed two
 start/SIGTERM cycles at 0.5 CPU and 1 GiB with a read-only root filesystem and
 non-root user. Kumo validation passed again with the `/healthz` default. These
 checks do not include an actual AWS deployment. See the
-[first-service operating procedure](../../../docs/operations.md) for release,
+[first-service operating procedure](../../../docs/user/operations.md) for release,
 observability and recovery steps.
 
 ## Build and test the application image
@@ -132,13 +132,13 @@ with a read-only root filesystem, no added Linux capabilities, 0.5 CPU and 1 GiB
 of memory. It checks HTTP behavior and graceful shutdown across two starts, then
 removes its own container.
 `aws-image-build` requires a running Docker daemon with Buildx and defaults to `linux/arm64`.
-For x86 Fargate, use `just aws-image-build wasmplane-service:local linux/amd64` and
+For x86 Fargate, use `just aws-image-build oden-service:local linux/amd64` and
 set `cpu_architecture = "X86_64"` in Terraform.
 
 Test the actual image separately:
 
 ```sh
-docker run --rm --read-only -p 127.0.0.1:8080:8080 wasmplane-service:local
+docker run --rm --read-only -p 127.0.0.1:8080:8080 oden-service:local
 ```
 
 In another terminal:
@@ -187,15 +187,15 @@ Build the image, authenticate to ECR, and push an immutable tag:
 
 ```sh
 just aws-image-build
-WASMPLANE_ECR=$(tofu -chdir=infra/terraform/aws-standalone output -raw repository_url)
-WASMPLANE_AWS_REGION=ap-northeast-1
-WASMPLANE_IMAGE_TAG=initial
-aws ecr get-login-password --region "$WASMPLANE_AWS_REGION" |
-  docker login --username AWS --password-stdin "${WASMPLANE_ECR%%/*}"
-docker tag wasmplane-service:local "$WASMPLANE_ECR:$WASMPLANE_IMAGE_TAG"
-docker push "$WASMPLANE_ECR:$WASMPLANE_IMAGE_TAG"
-aws ecr describe-images --region "$WASMPLANE_AWS_REGION" \
-  --repository-name "${WASMPLANE_ECR#*/}" --image-ids imageTag="$WASMPLANE_IMAGE_TAG" \
+ODENCTL_ECR=$(tofu -chdir=infra/terraform/aws-standalone output -raw repository_url)
+ODENCTL_AWS_REGION=ap-northeast-1
+ODENCTL_IMAGE_TAG=initial
+aws ecr get-login-password --region "$ODENCTL_AWS_REGION" |
+  docker login --username AWS --password-stdin "${ODENCTL_ECR%%/*}"
+docker tag oden-service:local "$ODENCTL_ECR:$ODENCTL_IMAGE_TAG"
+docker push "$ODENCTL_ECR:$ODENCTL_IMAGE_TAG"
+aws ecr describe-images --region "$ODENCTL_AWS_REGION" \
+  --repository-name "${ODENCTL_ECR#*/}" --image-ids imageTag="$ODENCTL_IMAGE_TAG" \
   --query 'imageDetails[0].imageDigest' --output text
 ```
 
@@ -208,8 +208,8 @@ with `alb_dns_name` and `alb_zone_id`. DNS records and certificate issuance are 
 outside this module. After the ECS service stabilizes, request your HTTPS application URL.
 
 ```sh
-aws ecs wait services-stable --region ap-northeast-1 --cluster wasmplane --services wasmplane
-aws logs tail /ecs/wasmplane --region ap-northeast-1 --follow
+aws ecs wait services-stable --region ap-northeast-1 --cluster oden --services oden
+aws logs tail /ecs/oden --region ap-northeast-1 --follow
 ```
 
 Use your configured region/name if you changed the defaults. ALB health checks and

@@ -6,12 +6,12 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 
-const binary = process.env.WASMPLANE_SERVICE_BIN;
-const rust = process.env.WASMPLANE_SERVICE_RUST;
-const moonbit = process.env.WASMPLANE_SERVICE_MOONBIT;
+const binary = process.env.ODEN_SERVICE_BIN;
+const rust = process.env.ODEN_SERVICE_RUST;
+const moonbit = process.env.ODEN_SERVICE_MOONBIT;
 
 async function start(component: string, overrides: Record<string, unknown> = {}, service?: Record<string, unknown>) {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-service-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-service-"));
   const config = join(dir, "runtime.json");
   await writeFile(config, JSON.stringify({ timeout_ms: 2000, directories: [{ host: dir, guest: "/data", write: true }], ...overrides }));
   const manifest = join(dir, "app.json");
@@ -111,7 +111,7 @@ for (const [language, component] of [["rust", rust], ["moonbit", moonbit]] as co
 }
 
 test("startup errors, startup CPU loops and shutdown CPU loops terminate within their deadlines", { skip: !(binary && rust), timeout: 30_000 }, async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-startup-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-startup-"));
   t.after(() => rm(dir, { recursive: true, force: true }));
   for (const mode of ["error", "loop"]) {
     const path = join(dir, "app.json");

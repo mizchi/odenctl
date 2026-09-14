@@ -1,6 +1,6 @@
 # Rust + MoonBit release sample
 
-This sample builds one deployable wasmplane worker from two Component Model projects:
+This sample builds one deployable odenctl worker from two Component Model projects:
 
 - `rust-worker`: HTTP worker adapter for `wasi:http/service@0.3.0`
 - `moonbit-ping`: MoonBit provider that exports `ping(value) -> value + 7`
@@ -28,7 +28,7 @@ examples/rust-moonbit-release/target/rust-moonbit-release.component.wasm
 just sample-rust-moonbit-smoke
 ```
 
-This compiles the composed component through `wasmplane-wasip3-host` and invokes the worker handler.
+This compiles the composed component through `oden-host` and invokes the worker handler.
 
 `just sample-rust-moonbit-compose-build` is kept as a rollback fallback for comparing the previous
 deprecated `wasm-tools compose` output.
@@ -46,12 +46,12 @@ canary before running the full WASIp3 async HTTP worker composition.
 ## Real release smoke
 
 ```sh
-WASMPLANE_CONTROL_PLANE_URL=https://mz-wasmplane-control.fly.dev \
-WASMPLANE_RUNTIME_URL=https://mz-wasmplane-runtime.fly.dev \
-WASMPLANE_CONTROL_PLANE_TOKEN=... \
+ODENCTL_CONTROL_PLANE_URL=https://mz-wasmplane-control.fly.dev \
+ODEN_RUNTIME_URL=https://mz-wasmplane-runtime.fly.dev \
+ODENCTL_CONTROL_PLANE_TOKEN=... \
 just sample-rust-moonbit-release
 ```
 
 The release recipe first runs `sample-rust-moonbit-release-preflight`, then uploads the composed component, creates a deployment, points a route at
-`rust-moonbit.sample.wasmplane.local`, publishes the route snapshot, and checks the deployed runtime
+`rust-moonbit.sample.oden.local`, publishes the route snapshot, and checks the deployed runtime
 with a `Host` header.

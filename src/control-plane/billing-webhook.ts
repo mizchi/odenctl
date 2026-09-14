@@ -140,8 +140,8 @@ function billingWebhookHeaders(delivery: BillingWebhookDelivery): Record<string,
   return {
     "content-type": "application/json",
     "idempotency-key": delivery.idempotencyKey,
-    "x-wasmplane-delivery-id": delivery.id,
-    "x-wasmplane-event-type": delivery.eventType,
+    "x-oden-delivery-id": delivery.id,
+    "x-oden-event-type": delivery.eventType,
   };
 }
 

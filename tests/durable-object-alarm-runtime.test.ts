@@ -11,7 +11,7 @@ import { createDurableObjectStorageNamespace } from "../src/control-plane/durabl
 import { createVolumeSqliteRegistry } from "../src/control-plane/volume-sqlite.ts";
 
 test("configured durable object alarm dispatcher posts due alarms to webhook", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-do-alarm-runtime-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-do-alarm-runtime-"));
   const registry = createVolumeSqliteRegistry({ rootDir: dir });
   const rooms = createDurableObjectStorageNamespace({ namespace: "rooms", registry });
   const lobby = rooms.get(rooms.idFromName("lobby"));
@@ -23,10 +23,10 @@ test("configured durable object alarm dispatcher posts due alarms to webhook", a
     const jobs = createConfiguredDurableObjectAlarmDispatcherJobs({
       registry,
       env: {
-        WASMPLANE_DURABLE_OBJECT_ALARM_INTERVAL_MS: "1000",
-        WASMPLANE_DURABLE_OBJECT_ALARM_NAMESPACES: "rooms",
-        WASMPLANE_DURABLE_OBJECT_ALARM_WEBHOOK_URL: "https://worker.example.com/__alarm",
-        WASMPLANE_DURABLE_OBJECT_ALARM_WEBHOOK_TOKEN: "alarm-token",
+        ODENCTL_DURABLE_OBJECT_ALARM_INTERVAL_MS: "1000",
+        ODENCTL_DURABLE_OBJECT_ALARM_NAMESPACES: "rooms",
+        ODENCTL_DURABLE_OBJECT_ALARM_WEBHOOK_URL: "https://worker.example.com/__alarm",
+        ODENCTL_DURABLE_OBJECT_ALARM_WEBHOOK_TOKEN: "alarm-token",
       },
       now: () => 1783000900000,
       fetchFn: async (url, init) => {
@@ -58,9 +58,9 @@ test("configured durable object alarm dispatcher is disabled without interval an
   assert.throws(
     () =>
       createConfiguredDurableObjectAlarmDispatcherJobs({
-        env: { WASMPLANE_DURABLE_OBJECT_ALARM_INTERVAL_MS: "1000" },
+        env: { ODENCTL_DURABLE_OBJECT_ALARM_INTERVAL_MS: "1000" },
       }),
-    /WASMPLANE_VOLUME_SQLITE_ROOT/,
+    /ODENCTL_VOLUME_SQLITE_ROOT/,
   );
 });
 

@@ -2,7 +2,7 @@ run "deployment_contract" {
   command = plan
 
   assert {
-    condition     = jsondecode(module.runtime.container_definitions)[0].entryPoint == ["/usr/local/bin/wasmplane"]
+    condition     = jsondecode(module.runtime.container_definitions)[0].entryPoint == ["/usr/local/bin/oden"]
     error_message = "The task must run the standalone runtime directly so ECS signals reach it."
   }
   assert {

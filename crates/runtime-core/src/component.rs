@@ -90,7 +90,7 @@ impl CheckedComponent {
             .collect();
         let capability_interfaces = imports
             .iter()
-            .filter(|i| i.name.starts_with("wasi:") || i.name.starts_with("wasmplane:durable/"))
+            .filter(|i| i.name.starts_with("wasi:") || i.name.starts_with("oden:durable/"))
             .map(|i| i.name.clone())
             .collect();
         let mut report = ComponentReport {

@@ -1,4 +1,4 @@
-export interface WasmplaneCostInput {
+export interface OdenctlCostInput {
   region: "nrt";
   controlMachines: number;
   runtimeMachines: number;
@@ -121,7 +121,7 @@ const pricing = {
   },
 };
 
-export function defaultProductionCostInput(): WasmplaneCostInput {
+export function defaultProductionCostInput(): OdenctlCostInput {
   return {
     region: "nrt",
     controlMachines: 1,
@@ -154,7 +154,7 @@ export function defaultCloudflareContainersPocCostInput(): CloudflareContainersC
   };
 }
 
-export function estimateWasmplaneMonthlyCost(input: WasmplaneCostInput): CostEstimate {
+export function estimateOdenctlMonthlyCost(input: OdenctlCostInput): CostEstimate {
   const items: CostLineItem[] = [
     {
       name: "fly.control.machine",
@@ -358,7 +358,7 @@ function cpuPercent(value: number): string {
   return `${Math.round(value * 100)}%`;
 }
 
-function r2MonthlyUsd(input: WasmplaneCostInput): number {
+function r2MonthlyUsd(input: OdenctlCostInput): number {
   const billableStorageGb = Math.max(
     0,
     input.r2StorageGb - pricing.cloudflareR2.freeStorageGb,
@@ -378,7 +378,7 @@ function r2MonthlyUsd(input: WasmplaneCostInput): number {
   );
 }
 
-function r2Units(input: WasmplaneCostInput): string {
+function r2Units(input: OdenctlCostInput): string {
   if (
     input.r2StorageGb <= pricing.cloudflareR2.freeStorageGb &&
     input.r2ClassAOperations <= pricing.cloudflareR2.freeClassAOperations &&
@@ -403,6 +403,6 @@ function roundUsd(value: number): number {
 if (import.meta.url === `file://${process.argv[1]}`) {
   const estimate = process.argv[2] === "cloudflare-containers"
     ? estimateCloudflareContainersMonthlyCost(defaultCloudflareContainersPocCostInput())
-    : estimateWasmplaneMonthlyCost(defaultProductionCostInput());
+    : estimateOdenctlMonthlyCost(defaultProductionCostInput());
   process.stdout.write(formatCostEstimateMarkdown(estimate));
 }

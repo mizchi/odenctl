@@ -7,7 +7,7 @@ import {
 
 test("project billing budgets parse monthly USD limits from environment", () => {
   assert.deepEqual(projectBillingBudgetsFromEnv({
-    WASMPLANE_BILLING_MONTHLY_USD_LIMITS: "prj_a=10.50,prj_b=0",
+    ODENCTL_BILLING_MONTHLY_USD_LIMITS: "prj_a=10.50,prj_b=0",
   }), {
     prj_a: { period: "calendar_month", maxUsd: 10.5 },
     prj_b: { period: "calendar_month", maxUsd: 0 },

@@ -50,8 +50,8 @@ export interface CelldBenchReport {
 
 export function parseCelldBenchArgs(args: string[]): CelldBenchOptions {
   const options: CelldBenchOptions = {
-    celldBin: process.env.WASMPLANE_CELLD_BIN ?? "celld",
-    hostBin: "target/release/wasmplane",
+    celldBin: process.env.ODEN_CELLD_BIN ?? "celld",
+    hostBin: "target/release/oden",
     component: "examples/durable-counter/target/benchmark/wasm32-wasip2/release/durable_counter_example.wasm",
     iterations: 100, warmup: 10, concurrency: [1, 8], objects: 1, timeoutMs: 60_000, format: "markdown",
   };

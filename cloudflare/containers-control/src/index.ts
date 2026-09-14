@@ -2,11 +2,11 @@ import { Container, getContainer } from "@cloudflare/containers";
 
 export interface Env {
   CONTROL_CONTAINER: DurableObjectNamespace<WasmplaneControlContainer>;
-  WASMPLANE_EDGE_WORKER_DEPLOYER?: string;
-  WASMPLANE_EDGE_WORKER_MODE?: string;
-  WASMPLANE_CLOUDFLARE_ACCOUNT_ID?: string;
-  WASMPLANE_CLOUDFLARE_API_TOKEN?: string;
-  WASMPLANE_CLOUDFLARE_WORKERS_DEV_SUBDOMAIN?: string;
+  ODENCTL_EDGE_WORKER_DEPLOYER?: string;
+  ODENCTL_EDGE_WORKER_MODE?: string;
+  ODENCTL_CLOUDFLARE_ACCOUNT_ID?: string;
+  ODENCTL_CLOUDFLARE_API_TOKEN?: string;
+  ODENCTL_CLOUDFLARE_WORKERS_DEV_SUBDOMAIN?: string;
   CLOUDFLARE_ACCOUNT_ID?: string;
   CLOUDFLARE_API_TOKEN?: string;
   CLOUDFLARE_WORKERS_DEV_SUBDOMAIN?: string;
@@ -28,15 +28,15 @@ export class WasmplaneControlContainer extends Container<Env> {
   }
 
   override onStart(): void {
-    console.log("wasmplane control-plane container started");
+    console.log("odenctl control-plane container started");
   }
 
   override onStop(params: { exitCode?: number; reason?: string }): void {
-    console.log("wasmplane control-plane container stopped", params);
+    console.log("odenctl control-plane container stopped", params);
   }
 
   override onError(error: unknown): void {
-    console.error("wasmplane control-plane container error", error);
+    console.error("odenctl control-plane container error", error);
     throw error;
   }
 }
@@ -54,16 +54,16 @@ function controlContainerEnvVars(env: Partial<Env> = {}): Record<string, string>
   return removeEmpty({
     HOST: "0.0.0.0",
     PORT: "8080",
-    WASMPLANE_DB: "/tmp/wasmplane.sqlite",
-    WASMPLANE_ARTIFACT_DIR: "/tmp/artifacts",
-    WASMPLANE_ARTIFACT_PUBLIC_BASE_URL: "auto",
-    WASMPLANE_WASIP3_HOST_BIN: "/usr/local/bin/wasmplane-wasip3-host",
-    WASMPLANE_EDGE_WORKER_DEPLOYER:
-      env.WASMPLANE_EDGE_WORKER_DEPLOYER ?? env.WASMPLANE_EDGE_WORKER_MODE ?? "mock",
-    WASMPLANE_CLOUDFLARE_ACCOUNT_ID: env.WASMPLANE_CLOUDFLARE_ACCOUNT_ID ?? env.CLOUDFLARE_ACCOUNT_ID,
-    WASMPLANE_CLOUDFLARE_API_TOKEN: env.WASMPLANE_CLOUDFLARE_API_TOKEN ?? env.CLOUDFLARE_API_TOKEN,
-    WASMPLANE_CLOUDFLARE_WORKERS_DEV_SUBDOMAIN:
-      env.WASMPLANE_CLOUDFLARE_WORKERS_DEV_SUBDOMAIN ?? env.CLOUDFLARE_WORKERS_DEV_SUBDOMAIN,
+    ODENCTL_DB: "/tmp/odenctl.sqlite",
+    ODENCTL_ARTIFACT_DIR: "/tmp/artifacts",
+    ODENCTL_ARTIFACT_PUBLIC_BASE_URL: "auto",
+    ODEN_WASIP3_HOST_BIN: "/usr/local/bin/oden-host",
+    ODENCTL_EDGE_WORKER_DEPLOYER:
+      env.ODENCTL_EDGE_WORKER_DEPLOYER ?? env.ODENCTL_EDGE_WORKER_MODE ?? "mock",
+    ODENCTL_CLOUDFLARE_ACCOUNT_ID: env.ODENCTL_CLOUDFLARE_ACCOUNT_ID ?? env.CLOUDFLARE_ACCOUNT_ID,
+    ODENCTL_CLOUDFLARE_API_TOKEN: env.ODENCTL_CLOUDFLARE_API_TOKEN ?? env.CLOUDFLARE_API_TOKEN,
+    ODENCTL_CLOUDFLARE_WORKERS_DEV_SUBDOMAIN:
+      env.ODENCTL_CLOUDFLARE_WORKERS_DEV_SUBDOMAIN ?? env.CLOUDFLARE_WORKERS_DEV_SUBDOMAIN,
   });
 }
 

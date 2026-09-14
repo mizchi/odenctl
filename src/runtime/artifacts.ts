@@ -152,24 +152,24 @@ export function runtimeOciArtifactOptionsFromEnv(
   env: Record<string, string | undefined> = process.env,
 ): RuntimeOciArtifactOptions | undefined {
   const registries: Record<string, RuntimeOciRegistryOptions> = {};
-  const json = firstNonEmpty(env.WASMPLANE_OCI_REGISTRIES_JSON);
+  const json = firstNonEmpty(env.ODENCTL_OCI_REGISTRIES_JSON);
   if (json) {
     for (const [registry, config] of Object.entries(parseOciRegistriesJson(json))) {
       registries[registry] = config;
     }
   }
 
-  const registry = firstNonEmpty(env.WASMPLANE_OCI_REGISTRY);
+  const registry = firstNonEmpty(env.ODENCTL_OCI_REGISTRY);
   if (registry) {
     registries[registry] = compactOciRegistryOptions({
-      scheme: normalizeOciScheme(firstNonEmpty(env.WASMPLANE_OCI_REGISTRY_SCHEME)),
-      username: firstNonEmpty(env.WASMPLANE_OCI_REGISTRY_USERNAME),
-      password: firstNonEmpty(env.WASMPLANE_OCI_REGISTRY_PASSWORD),
-      bearerToken: firstNonEmpty(env.WASMPLANE_OCI_REGISTRY_TOKEN),
+      scheme: normalizeOciScheme(firstNonEmpty(env.ODENCTL_OCI_REGISTRY_SCHEME)),
+      username: firstNonEmpty(env.ODENCTL_OCI_REGISTRY_USERNAME),
+      password: firstNonEmpty(env.ODENCTL_OCI_REGISTRY_PASSWORD),
+      bearerToken: firstNonEmpty(env.ODENCTL_OCI_REGISTRY_TOKEN),
     });
   }
 
-  const defaultScheme = normalizeOciScheme(firstNonEmpty(env.WASMPLANE_OCI_DEFAULT_SCHEME));
+  const defaultScheme = normalizeOciScheme(firstNonEmpty(env.ODENCTL_OCI_DEFAULT_SCHEME));
   const result: RuntimeOciArtifactOptions = {};
   if (Object.keys(registries).length > 0) {
     result.registries = registries;
@@ -183,14 +183,14 @@ export function runtimeOciArtifactOptionsFromEnv(
 export function runtimeS3ArtifactOptionsFromEnv(
   env: Record<string, string | undefined> = process.env,
 ): RuntimeS3ArtifactOptions | undefined {
-  const endpoint = firstNonEmpty(env.WASMPLANE_ARTIFACT_ENDPOINT);
-  const bucket = firstNonEmpty(env.WASMPLANE_ARTIFACT_BUCKET);
+  const endpoint = firstNonEmpty(env.ODENCTL_ARTIFACT_ENDPOINT);
+  const bucket = firstNonEmpty(env.ODENCTL_ARTIFACT_BUCKET);
   const accessKeyId = firstNonEmpty(
-    env.WASMPLANE_ARTIFACT_ACCESS_KEY_ID,
+    env.ODENCTL_ARTIFACT_ACCESS_KEY_ID,
     env.AWS_ACCESS_KEY_ID,
   );
   const secretAccessKey = firstNonEmpty(
-    env.WASMPLANE_ARTIFACT_SECRET_ACCESS_KEY,
+    env.ODENCTL_ARTIFACT_SECRET_ACCESS_KEY,
     env.AWS_SECRET_ACCESS_KEY,
   );
   if (!accessKeyId && !secretAccessKey && !endpoint && !bucket) {
@@ -205,10 +205,10 @@ export function runtimeS3ArtifactOptionsFromEnv(
   return {
     bucket,
     endpoint,
-    region: firstNonEmpty(env.WASMPLANE_ARTIFACT_REGION, env.AWS_REGION),
+    region: firstNonEmpty(env.ODENCTL_ARTIFACT_REGION, env.AWS_REGION),
     accessKeyId,
     secretAccessKey,
-    sessionToken: firstNonEmpty(env.WASMPLANE_ARTIFACT_SESSION_TOKEN, env.AWS_SESSION_TOKEN),
+    sessionToken: firstNonEmpty(env.ODENCTL_ARTIFACT_SESSION_TOKEN, env.AWS_SESSION_TOKEN),
   };
 }
 
@@ -588,10 +588,10 @@ function parseOciRegistriesJson(value: string): Record<string, RuntimeOciRegistr
   try {
     parsed = JSON.parse(value);
   } catch {
-    throw new RuntimeError("artifact", "WASMPLANE_OCI_REGISTRIES_JSON must be valid JSON");
+    throw new RuntimeError("artifact", "ODENCTL_OCI_REGISTRIES_JSON must be valid JSON");
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new RuntimeError("artifact", "WASMPLANE_OCI_REGISTRIES_JSON must be an object");
+    throw new RuntimeError("artifact", "ODENCTL_OCI_REGISTRIES_JSON must be an object");
   }
   const registries: Record<string, RuntimeOciRegistryOptions> = {};
   for (const [registry, config] of Object.entries(parsed)) {

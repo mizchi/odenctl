@@ -1,3 +1,3 @@
-package wasmplane:sample@0.1.0;
+package oden:sample@0.1.0;
 interface bridge { ping: func(value: u32) -> u32; }
 world worker { import bridge; }

@@ -330,7 +330,7 @@ function replicaHeaders(
   return {
     "content-type": "application/json",
     ...(target.token ? { authorization: `Bearer ${target.token}` } : {}),
-    ...(sourceRegion ? { "x-wasmplane-source-region": sourceRegion } : {}),
+    ...(sourceRegion ? { "x-oden-source-region": sourceRegion } : {}),
   };
 }
 

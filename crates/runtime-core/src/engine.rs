@@ -7,8 +7,8 @@ use std::time::Duration;
 use wasmtime::{Config, Engine, ModuleVersionStrategy};
 
 pub const VERSION: &str = "48.0.2";
-pub const BUILD: &str = env!("WASMPLANE_ENGINE_BUILD");
-pub const TARGET: &str = env!("WASMPLANE_ENGINE_TARGET");
+pub const BUILD: &str = env!("ODEN_ENGINE_BUILD");
+pub const TARGET: &str = env!("ODEN_ENGINE_TARGET");
 pub const EPOCH_MS: u64 = 5;
 
 pub(crate) fn configure(config: &mut Config) {

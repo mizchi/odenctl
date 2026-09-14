@@ -5,7 +5,7 @@ COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 COPY sdk ./sdk
 COPY wit ./wit
-RUN cargo build --release -p wasmplane-wasip3-host
+RUN cargo build --release -p oden
 
 FROM node:24-bookworm-slim AS runtime
 
@@ -20,14 +20,14 @@ RUN corepack enable \
 COPY src ./src
 COPY db ./db
 COPY wit ./wit
-COPY --from=rust-build /src/target/release/wasmplane-wasip3-host /usr/local/bin/wasmplane-wasip3-host
-COPY --from=rust-build /src/target/release/wasmplane /usr/local/bin/wasmplane
+COPY --from=rust-build /src/target/release/oden-host /usr/local/bin/oden-host
+COPY --from=rust-build /src/target/release/oden /usr/local/bin/oden
 
 ENV HOST=0.0.0.0 \
   PORT=8080 \
   RUNTIME_HOST=0.0.0.0 \
   RUNTIME_PORT=8080 \
-  WASMPLANE_WASIP3_HOST_BIN=/usr/local/bin/wasmplane-wasip3-host
+  ODEN_WASIP3_HOST_BIN=/usr/local/bin/oden-host
 
 EXPOSE 8080
 CMD ["node", "--experimental-strip-types", "src/main.ts"]

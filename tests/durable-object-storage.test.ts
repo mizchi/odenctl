@@ -9,7 +9,7 @@ import {
 import { createVolumeSqliteRegistry } from "../src/control-plane/volume-sqlite.ts";
 
 test("durable object storage stores private KV data per namespace object", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-do-storage-kv-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-do-storage-kv-"));
   const registry = createVolumeSqliteRegistry({ rootDir: dir, now: fixedNow });
   const rooms = createDurableObjectStorageNamespace({
     namespace: "rooms",
@@ -54,7 +54,7 @@ test("durable object storage stores private KV data per namespace object", async
 });
 
 test("durable object storage serializes transactions for the same object", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-do-storage-transaction-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-do-storage-transaction-"));
   const registry = createVolumeSqliteRegistry({
     rootDir: dir,
     maxPendingWritesPerDatabase: 16,
@@ -79,7 +79,7 @@ test("durable object storage serializes transactions for the same object", async
 });
 
 test("durable object storage exposes object-local SQL without exposing KV internals", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-do-storage-sql-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-do-storage-sql-"));
   const registry = createVolumeSqliteRegistry({ rootDir: dir });
   const bookings = createDurableObjectStorageNamespace({ namespace: "bookings", registry });
   const eventA = bookings.storageForName("event-a");
@@ -116,7 +116,7 @@ test("durable object storage exposes object-local SQL without exposing KV intern
 });
 
 test("durable object storage stores one object-local alarm time", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-do-storage-alarm-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-do-storage-alarm-"));
   const registry = createVolumeSqliteRegistry({ rootDir: dir });
   const rooms = createDurableObjectStorageNamespace({ namespace: "rooms", registry });
   const lobby = rooms.storageForName("lobby");
@@ -144,7 +144,7 @@ test("durable object storage stores one object-local alarm time", async () => {
 });
 
 test("durable object namespace lists due alarms for scheduler dispatch", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-do-storage-due-alarms-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-do-storage-due-alarms-"));
   const registry = createVolumeSqliteRegistry({ rootDir: dir });
   const rooms = createDurableObjectStorageNamespace({ namespace: "rooms", registry });
   const sessions = createDurableObjectStorageNamespace({ namespace: "sessions", registry });

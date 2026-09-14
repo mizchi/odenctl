@@ -61,7 +61,7 @@ test("perf regression markdown summarizes pass and fail results", () => {
 
   const markdown = formatPerfRegressionMarkdown(report);
 
-  assert.match(markdown, /# wasmplane perf regression/);
+  assert.match(markdown, /# odenctl perf regression/);
   assert.match(markdown, /status: fail/);
   assert.match(markdown, /host\.invoke\.cwasm p95Ms/);
 });

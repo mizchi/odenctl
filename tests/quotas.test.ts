@@ -4,12 +4,12 @@ import { projectQuotasFromEnv } from "../src/control-plane/quotas.ts";
 
 test("project quotas parse control-plane environment limits", () => {
   assert.deepEqual(projectQuotasFromEnv({
-    WASMPLANE_QUOTA_MAX_ARTIFACTS: "10",
-    WASMPLANE_QUOTA_MAX_DEPLOYMENTS: "20",
-    WASMPLANE_QUOTA_MAX_ROUTES: "30",
-    WASMPLANE_QUOTA_MAX_SECRETS: "40",
-    WASMPLANE_QUOTA_MAX_KV_NAMESPACES: "50",
-    WASMPLANE_QUOTA_MAX_DURABLE_OBJECT_NAMESPACES: "60",
+    ODENCTL_QUOTA_MAX_ARTIFACTS: "10",
+    ODENCTL_QUOTA_MAX_DEPLOYMENTS: "20",
+    ODENCTL_QUOTA_MAX_ROUTES: "30",
+    ODENCTL_QUOTA_MAX_SECRETS: "40",
+    ODENCTL_QUOTA_MAX_KV_NAMESPACES: "50",
+    ODENCTL_QUOTA_MAX_DURABLE_OBJECT_NAMESPACES: "60",
   }), {
     maxArtifacts: 10,
     maxDeployments: 20,

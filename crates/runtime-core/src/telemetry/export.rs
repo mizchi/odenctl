@@ -36,14 +36,14 @@ pub(super) fn start(
     }
     let (tx, rx) = mpsc::sync_channel(config.queue_capacity);
     let config = config.clone();
-    std::thread::Builder::new().name("wasmplane-telemetry".into()).spawn(move || {
+    std::thread::Builder::new().name("oden-telemetry".into()).spawn(move || {
         let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
         let client = reqwest::Client::builder().no_proxy().redirect(reqwest::redirect::Policy::none())
             .timeout(Duration::from_millis(config.export_timeout_ms)).default_headers(headers).build().unwrap();
         let resource = json!({"attributes": [
             {"key":"service.name", "value":{"stringValue":config.service_name}},
             {"key":"service.instance.id", "value":{"stringValue":id(8)}},
-            {"key":"telemetry.sdk.name", "value":{"stringValue":"wasmplane"}},
+            {"key":"telemetry.sdk.name", "value":{"stringValue":"oden"}},
             {"key":"telemetry.sdk.version", "value":{"stringValue":env!("CARGO_PKG_VERSION")}}
         ]});
         let mut spans = Vec::new(); let mut logs = Vec::new();
@@ -62,7 +62,7 @@ pub(super) fn start(
             let periodic = Instant::now() >= next || flush.is_some() || disconnected;
             if periodic || spans.len() + logs.len() >= config.batch_size {
                 runtime.block_on(async {
-                    let scope = json!({"name":"wasmplane.runtime", "version":env!("CARGO_PKG_VERSION")});
+                    let scope = json!({"name":"oden.runtime", "version":env!("CARGO_PKG_VERSION")});
                     if !spans.is_empty() {
                         send(&client, &config, &state, "traces", json!({"resourceSpans":[{"resource":resource,"scopeSpans":[{"scope":scope,"spans":std::mem::take(&mut spans)}]}]})).await;
                     }
@@ -102,19 +102,19 @@ fn metrics(state: &State) -> Vec<Value> {
     let time = now().to_string();
     let mut metrics = Vec::new();
     for (name, count, gauge) in [
-        ("wasmplane.operations", snapshot.completed, false),
-        ("wasmplane.errors", snapshot.errors, false),
-        ("wasmplane.cancelled", snapshot.cancelled, false),
-        ("wasmplane.telemetry.dropped", snapshot.dropped, false),
+        ("oden.operations", snapshot.completed, false),
+        ("oden.errors", snapshot.errors, false),
+        ("oden.cancelled", snapshot.cancelled, false),
+        ("oden.telemetry.dropped", snapshot.dropped, false),
         (
-            "wasmplane.telemetry.export_errors",
+            "oden.telemetry.export_errors",
             snapshot.export_errors,
             false,
         ),
-        ("wasmplane.active_operations", snapshot.active, true),
-        ("wasmplane.stores", snapshot.stores, true),
-        ("wasmplane.queue.depth", snapshot.queued, true),
-        ("wasmplane.requests.rejected", snapshot.rejected, false),
+        ("oden.active_operations", snapshot.active, true),
+        ("oden.stores", snapshot.stores, true),
+        ("oden.queue.depth", snapshot.queued, true),
+        ("oden.requests.rejected", snapshot.rejected, false),
     ] {
         let point = json!({"startTimeUnixNano":state.started.to_string(),"timeUnixNano":time,"asInt":count.to_string()});
         metrics.push(if gauge { json!({"name":name,"unit":"{operation}","gauge":{"dataPoints":[point]}}) }
@@ -125,10 +125,10 @@ fn metrics(state: &State) -> Vec<Value> {
         let name = match *group {
             "http.server" => "http.server.request.duration",
             "http.client" => "http.client.request.duration",
-            "queue" => "wasmplane.queue.wait.duration",
-            _ => "wasmplane.operation.duration",
+            "queue" => "oden.queue.wait.duration",
+            _ => "oden.operation.duration",
         };
-        let mut attrs = vec![("wasmplane.operation".into(), json!(group))];
+        let mut attrs = vec![("oden.operation".into(), json!(group))];
         if !method.is_empty() {
             attrs.push(("http.request.method".into(), json!(method)));
         }

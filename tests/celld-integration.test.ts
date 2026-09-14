@@ -10,19 +10,19 @@ import { join, resolve, delimiter } from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
 
-const binary = process.env.WASMPLANE_STANDALONE_BIN;
-const component = process.env.WASMPLANE_DURABLE_COMPONENT;
-const celld = process.env.WASMPLANE_CELLD_BIN;
+const binary = process.env.ODEN_STANDALONE_BIN;
+const component = process.env.ODEN_DURABLE_COMPONENT;
+const celld = process.env.ODEN_CELLD_BIN;
 
 test("WIT calls reach real celld objects with persistence, namespace isolation and retry deduplication", {
   skip: !(binary && component && celld), timeout: 120_000,
 }, async (t) => {
-  const directory = await mkdtemp(join(tmpdir(), "wasmplane-celld-"));
+  const directory = await mkdtemp(join(tmpdir(), "odenctl-celld-"));
   await copyFile("examples/celld-gateway/index.js", join(directory, "index.js"));
   const token = randomBytes(32).toString("hex");
   const config = JSON.parse(await readFile("examples/celld-gateway/wrangler.jsonc", "utf8"));
-  config.vars.WASMPLANE_GATEWAY_TOKEN = token;
-  config.vars.WASMPLANE_BINDINGS = "COUNTER,OTHER";
+  config.vars.ODEN_GATEWAY_TOKEN = token;
+  config.vars.ODEN_BINDINGS = "COUNTER,OTHER";
   config.durable_objects.bindings.push({ name: "OTHER", class_name: "OtherCounter" });
   config.migrations[0].new_sqlite_classes.push("OtherCounter");
   const source = await readFile(join(directory, "index.js"), "utf8");

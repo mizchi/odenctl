@@ -1,11 +1,11 @@
-// Application gateway for wasmplane: the fleet's internal listener is not used.
+// Application gateway for oden: the fleet's internal listener is not used.
 const BODY_LIMIT = 1024 * 1024;
 const ENVELOPE_LIMIT = 2 * BODY_LIMIT;
 const METHODS = new Set(["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]);
 const RESERVED_HEADERS = new Set([
   "host", "content-length", "connection", "transfer-encoding", "upgrade",
   "proxy-authorization", "proxy-authenticate", "keep-alive", "te", "trailer",
-  "x-wasmplane-request-id",
+  "x-oden-request-id",
 ]);
 
 class InvalidRequest extends Error {}
@@ -74,7 +74,7 @@ function objectRequest(input) {
   }
   if (input.requestId !== undefined) {
     if (typeof input.requestId !== "string" || !/^[A-Za-z0-9._:-]{1,128}$/.test(input.requestId)) throw new InvalidRequest();
-    headers.set("x-wasmplane-request-id", input.requestId);
+    headers.set("x-oden-request-id", input.requestId);
   }
   const bytes = decode(input.body);
   if ((input.method === "GET" || input.method === "HEAD") && bytes.length) throw new InvalidRequest();
@@ -86,13 +86,13 @@ function objectRequest(input) {
 
 export default {
   async fetch(request, env) {
-    if (!env.WASMPLANE_GATEWAY_TOKEN) return new Response("gateway not configured", { status: 503 });
-    if (!await authorized(request.headers.get("authorization") ?? "", `Bearer ${env.WASMPLANE_GATEWAY_TOKEN}`)) {
+    if (!env.ODEN_GATEWAY_TOKEN) return new Response("gateway not configured", { status: 503 });
+    if (!await authorized(request.headers.get("authorization") ?? "", `Bearer ${env.ODEN_GATEWAY_TOKEN}`)) {
       return new Response("unauthorized", { status: 401 });
     }
     const match = /^\/v1\/objects\/([A-Z][A-Z0-9_]{0,63})\/([^/]+)\/fetch$/.exec(new URL(request.url).pathname);
     if (request.method !== "POST" || !match) return new Response("not found", { status: 404 });
-    const allowed = new Set((env.WASMPLANE_BINDINGS ?? "").split(","));
+    const allowed = new Set((env.ODEN_BINDINGS ?? "").split(","));
     if (!allowed.has(match[1])) return new Response("binding denied", { status: 404 });
     try {
       let name;
@@ -134,7 +134,7 @@ export class Counter {
       return Response.json({ n: (await this.storage.get("n")) ?? 0 });
     }
     if (request.method !== "POST" || path !== "/increment") return new Response("not found", { status: 404 });
-    const id = request.headers.get("x-wasmplane-request-id");
+    const id = request.headers.get("x-oden-request-id");
     const result = await this.storage.transaction(async (tx) => {
       if (id) {
         const previous = await tx.get(`request:${id}`);

@@ -1,6 +1,6 @@
 variable "name" {
   type    = string
-  default = "wasmplane"
+  default = "oden"
   validation {
     condition     = can(regex("^[a-z][a-z0-9-]{0,23}$", var.name)) && !endswith(var.name, "-")
     error_message = "Use 1–24 lowercase letters, digits, or hyphens, starting with a letter and not ending with a hyphen."

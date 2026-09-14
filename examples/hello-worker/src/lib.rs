@@ -32,7 +32,7 @@ impl wasip3::exports::http::handler::Guest for App {
         };
         let authority = request.get_authority().unwrap_or_default();
         let scheme = match request.get_scheme() { Some(Scheme::Https) => "https", _ => "http" };
-        Ok(text_response(format!("hello from wasmplane: {method} {scheme}://{authority}{path}")))
+        Ok(text_response(format!("hello from oden: {method} {scheme}://{authority}{path}")))
     }
 }
 

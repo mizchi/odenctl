@@ -1,4 +1,4 @@
-use wasmplane_runtime_core::telemetry::{Telemetry, TelemetryConfig, TraceContext};
+use oden_runtime_core::telemetry::{Telemetry, TelemetryConfig, TraceContext};
 
 #[test]
 fn contexts_are_explicit_and_spans_end_once() {
@@ -53,7 +53,7 @@ fn dropped_spans_are_accounted_without_guest_cleanup() {
 
 #[tokio::test]
 async fn commands_record_compile_instantiate_and_run_and_release_the_store() {
-    use wasmplane_runtime_core::{config::RuntimeConfig, runtime::Runtime};
+    use oden_runtime_core::{config::RuntimeConfig, runtime::Runtime};
     let runtime = Runtime::new(RuntimeConfig::default()).unwrap();
     let command = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../examples/minimal-command/command.wat");
@@ -71,7 +71,7 @@ async fn body_completion_and_cancellation_have_distinct_lifetimes() {
     use futures::StreamExt;
     use http_body::Frame;
     use http_body_util::{BodyExt, Full, StreamBody};
-    use wasmplane_runtime_core::telemetry::body::TrackedBody;
+    use oden_runtime_core::telemetry::body::TrackedBody;
     let telemetry = Telemetry::new(TelemetryConfig::default()).unwrap();
     let body = TrackedBody::new(
         Full::new(Bytes::from_static(b"hello")),

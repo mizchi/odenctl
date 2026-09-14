@@ -4,12 +4,12 @@ import {
   defaultCloudflareContainersPocCostInput,
   defaultProductionCostInput,
   estimateCloudflareContainersMonthlyCost,
-  estimateWasmplaneMonthlyCost,
+  estimateOdenctlMonthlyCost,
   formatCostEstimateMarkdown,
 } from "../src/cost-estimator.ts";
 
 test("cost estimator prices the default single-region production shape", () => {
-  const estimate = estimateWasmplaneMonthlyCost(defaultProductionCostInput());
+  const estimate = estimateOdenctlMonthlyCost(defaultProductionCostInput());
 
   assert.equal(estimate.totalMonthlyUsd, 95.27);
   assert.deepEqual(
@@ -27,7 +27,7 @@ test("cost estimator prices the default single-region production shape", () => {
 });
 
 test("cost estimator accounts for runtime scale-out and R2 usage beyond free tier", () => {
-  const estimate = estimateWasmplaneMonthlyCost({
+  const estimate = estimateOdenctlMonthlyCost({
     ...defaultProductionCostInput(),
     runtimeMachines: 4,
     r2StorageGb: 100,
@@ -41,7 +41,7 @@ test("cost estimator accounts for runtime scale-out and R2 usage beyond free tie
 
 test("cost estimate markdown includes assumptions and line items", () => {
   const markdown = formatCostEstimateMarkdown(
-    estimateWasmplaneMonthlyCost(defaultProductionCostInput()),
+    estimateOdenctlMonthlyCost(defaultProductionCostInput()),
   );
 
   assert.match(markdown, /total monthly USD/);

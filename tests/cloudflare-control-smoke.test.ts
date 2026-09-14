@@ -23,11 +23,11 @@ test("Cloudflare control smoke args default to the container POC URL and local S
     "--logs-url",
     "https://logs.example.test/cf",
   ], {
-    WASMPLANE_CLOUDFLARE_CONTROL_URL: "https://wasmplane-control.example.workers.dev",
-    WASMPLANE_CONTROL_PLANE_TOKEN: "control-token",
+    ODENCTL_CLOUDFLARE_CONTROL_URL: "https://odenctl-control.example.workers.dev",
+    ODENCTL_CONTROL_PLANE_TOKEN: "control-token",
   });
 
-  assert.equal(parsed.controlUrl, "https://wasmplane-control.example.workers.dev");
+  assert.equal(parsed.controlUrl, "https://odenctl-control.example.workers.dev");
   assert.equal(parsed.token, "control-token");
   assert.equal(parsed.requireLocalSqlite, true);
   assert.equal(parsed.wakeDelayMs, 1000);
@@ -37,7 +37,7 @@ test("Cloudflare control smoke args default to the container POC URL and local S
   assert.equal(parsed.markdownOutput, "reports/cf-smoke.md");
   assert.equal(parsed.logsUrl, "https://logs.example.test/cf");
   assert.match(parsed.projectId, /^prj_cf_smoke_/);
-  assert.match(parsed.scriptName, /^wasmplane-cf-smoke-/);
+  assert.match(parsed.scriptName, /^odenctl-cf-smoke-/);
 });
 
 test("Cloudflare control smoke verifies health, local SQLite, release creation, and wakeup persistence", async () => {
@@ -47,12 +47,12 @@ test("Cloudflare control smoke verifies health, local SQLite, release creation, 
   let release: any;
 
   const result = await runCloudflareControlSmoke({
-    controlUrl: "https://wasmplane-control.example.workers.dev",
+    controlUrl: "https://odenctl-control.example.workers.dev",
     token: "control-token",
     projectId: "prj_cf_smoke_test",
     artifactId: "art_cf_smoke_test",
     deploymentId: "dep_cf_smoke_test",
-    scriptName: "wasmplane-cf-smoke-test",
+    scriptName: "odenctl-cf-smoke-test",
     requireLocalSqlite: true,
     deleteRelease: true,
     wakeDelayMs: 10,
@@ -102,7 +102,7 @@ test("Cloudflare control smoke verifies health, local SQLite, release creation, 
           ...body,
           mode: "mock",
           provider: "cloudflare-workers",
-          scriptModule: "export default { async fetch() { return Response.json({ path: '/__wasmplane/manifest' }) } }",
+          scriptModule: "export default { async fetch() { return Response.json({ path: '/__odenctl/manifest' }) } }",
         };
         return jsonResponse(201, release);
       }
@@ -147,12 +147,12 @@ test("Cloudflare control smoke verifies health, local SQLite, release creation, 
 test("Cloudflare control smoke reports slow container cold start", async () => {
   let now = 0;
   const result = await runCloudflareControlSmoke({
-    controlUrl: "https://wasmplane-control.example.workers.dev",
+    controlUrl: "https://odenctl-control.example.workers.dev",
     token: "control-token",
     projectId: "prj_cf_slow",
     artifactId: "art_cf_slow",
     deploymentId: "dep_cf_slow",
-    scriptName: "wasmplane-cf-slow",
+    scriptName: "odenctl-cf-slow",
     requireLocalSqlite: false,
     deleteRelease: false,
     maxContainerHealthMs: 100,
@@ -180,7 +180,7 @@ test("Cloudflare control smoke reports slow container cold start", async () => {
         return jsonResponse(201, await requestJson(init));
       }
       if (method === "GET" && parsed.pathname === "/projects/prj_cf_slow/edge-worker-releases") {
-        return jsonResponse(200, [{ id: "ewr_slow", scriptModule: "/__wasmplane/manifest" }]);
+        return jsonResponse(200, [{ id: "ewr_slow", scriptModule: "/__odenctl/manifest" }]);
       }
       return jsonResponse(404, { error: { code: "not_found" } });
     },
@@ -193,15 +193,15 @@ test("Cloudflare control smoke reports slow container cold start", async () => {
 });
 
 test("Cloudflare control smoke formats and writes JSON and Markdown reports", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-cf-smoke-report-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-cf-smoke-report-"));
   const result = {
     ok: true,
     summary: {
-      controlUrl: "https://wasmplane-control.example.workers.dev",
+      controlUrl: "https://odenctl-control.example.workers.dev",
       projectId: "prj_report",
       artifactId: "art_report",
       deploymentId: "dep_report",
-      scriptName: "wasmplane-report",
+      scriptName: "odenctl-report",
       releaseId: "ewr_report",
       startedAt: "2026-07-03T00:00:00.000Z",
       finishedAt: "2026-07-03T00:00:01.000Z",
@@ -214,7 +214,7 @@ test("Cloudflare control smoke formats and writes JSON and Markdown reports", as
   };
 
   const markdown = formatCloudflareControlSmokeMarkdown(result);
-  assert.match(markdown, /# wasmplane Cloudflare Containers smoke/);
+  assert.match(markdown, /# odenctl Cloudflare Containers smoke/);
   assert.match(markdown, /\| container health \| ok \| 200 \| 125 \|/);
   assert.match(markdown, /release id: `ewr_report`/);
 

@@ -701,12 +701,12 @@ export function createAesGcmVolumeSqliteBackupCipher(
 export function createConfiguredVolumeSqliteBackupCipher(
   env: Record<string, string | undefined> = process.env,
 ): VolumeSqliteBackupCipher | undefined {
-  const primaryKeyBase64 = firstNonEmpty(env.WASMPLANE_VOLUME_SQLITE_BACKUP_KEY_BASE64);
-  const extraKeys = parseBackupKeyringEnv(firstNonEmpty(env.WASMPLANE_VOLUME_SQLITE_BACKUP_KEYS_BASE64));
+  const primaryKeyBase64 = firstNonEmpty(env.ODENCTL_VOLUME_SQLITE_BACKUP_KEY_BASE64);
+  const extraKeys = parseBackupKeyringEnv(firstNonEmpty(env.ODENCTL_VOLUME_SQLITE_BACKUP_KEYS_BASE64));
   if (!primaryKeyBase64 && extraKeys.length === 0) {
     return undefined;
   }
-  const configuredKeyId = firstNonEmpty(env.WASMPLANE_VOLUME_SQLITE_BACKUP_KEY_ID);
+  const configuredKeyId = firstNonEmpty(env.ODENCTL_VOLUME_SQLITE_BACKUP_KEY_ID);
   const keys: VolumeSqliteBackupDataKey[] = [];
   if (primaryKeyBase64) {
     keys.push({
@@ -1116,7 +1116,7 @@ function parseBackupKeyringEnv(value: string | undefined): VolumeSqliteBackupDat
     const keyId = separator >= 0 ? item.slice(0, separator) : "";
     const keyBase64 = separator >= 0 ? item.slice(separator + 1) : "";
     if (!keyId || !keyBase64) {
-      throw new ControlPlaneError("validation", "WASMPLANE_VOLUME_SQLITE_BACKUP_KEYS_BASE64 entries must be keyId=base64");
+      throw new ControlPlaneError("validation", "ODENCTL_VOLUME_SQLITE_BACKUP_KEYS_BASE64 entries must be keyId=base64");
     }
     return { keyId, key: Buffer.from(keyBase64, "base64") };
   });

@@ -21,10 +21,10 @@ export interface Wasip3HostArtifactValidatorOptions {
 export function createWasip3HostArtifactValidator(
   options: Wasip3HostArtifactValidatorOptions = {},
 ): LocalArtifactValidator {
-  const hostBin = options.hostBin ?? "target/debug/wasmplane-wasip3-host";
+  const hostBin = options.hostBin ?? "target/debug/oden-host";
   return {
     async validate(input) {
-      const dir = await mkdtemp(join(tmpdir(), "wasmplane-artifact-validation-"));
+      const dir = await mkdtemp(join(tmpdir(), "odenctl-artifact-validation-"));
       const out = join(dir, "component.cwasm");
       try {
         await run(hostBin, ["compile", "--component", input.path, "--out", out]);

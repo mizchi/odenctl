@@ -258,7 +258,7 @@ dependencies = [
 name = "telemetry-provider"
 version = "0.1.0"
 dependencies = [
- "wasmplane-service-sdk",
+ "oden-service-sdk",
  "wit-bindgen",
 ]
 
@@ -312,7 +312,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "wasmplane-service-sdk"
+name = "oden-service-sdk"
 version = "0.1.0"
 dependencies = [
  "wasip3",

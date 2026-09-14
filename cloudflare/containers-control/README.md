@@ -1,6 +1,6 @@
 # Cloudflare Containers control-plane POC
 
-This POC checks whether the existing wasmplane Docker image can run the control-plane process inside
+This POC checks whether the existing odenctl Docker image can run the control-plane process inside
 Cloudflare Containers, with a Worker acting as the public front door.
 
 Cloudflare Containers are configured from Wrangler. The official model binds a `Container` subclass
@@ -27,8 +27,8 @@ curl https://wasmplane-control-container-poc.<workers-subdomain>.workers.dev/hea
 From the repository root, run the smoke harness against the deployed Worker/container pair:
 
 ```sh
-WASMPLANE_CLOUDFLARE_CONTROL_URL=https://wasmplane-control-container-poc.<workers-subdomain>.workers.dev \
-  WASMPLANE_CONTROL_PLANE_TOKEN=... \
+ODENCTL_CLOUDFLARE_CONTROL_URL=https://wasmplane-control-container-poc.<workers-subdomain>.workers.dev \
+  ODENCTL_CONTROL_PLANE_TOKEN=... \
   pnpm cloudflare-control-smoke -- \
     --json-output reports/cloudflare-control-smoke.json \
     --markdown-output reports/cloudflare-control-smoke.md
@@ -75,7 +75,7 @@ curl -sS -X POST "$BASE/deployments" \
 
 curl -sS -X POST "$BASE/edge-workers/releases" \
   -H "content-type: application/json" \
-  -d '{"projectId":"prj_edge","deploymentId":"dep_edge","scriptName":"wasmplane-edge-demo"}'
+  -d '{"projectId":"prj_edge","deploymentId":"dep_edge","scriptName":"odenctl-edge-demo"}'
 
 curl -sS "$BASE/projects/prj_edge/edge-worker-releases"
 curl -sS "$BASE/edge-workers/releases/ewr_..."
@@ -85,16 +85,16 @@ curl -sS -X DELETE "$BASE/edge-workers/releases/ewr_...?provider=1&force=1"
 To upload the generated script for real, set these as Worker/container secrets before deploy:
 
 ```sh
-WASMPLANE_EDGE_WORKER_DEPLOYER=cloudflare-api
-WASMPLANE_CLOUDFLARE_ACCOUNT_ID=...
-WASMPLANE_CLOUDFLARE_API_TOKEN=...
-WASMPLANE_CLOUDFLARE_WORKERS_DEV_SUBDOMAIN=...
+ODENCTL_EDGE_WORKER_DEPLOYER=cloudflare-api
+ODENCTL_CLOUDFLARE_ACCOUNT_ID=...
+ODENCTL_CLOUDFLARE_API_TOKEN=...
+ODENCTL_CLOUDFLARE_WORKERS_DEV_SUBDOMAIN=...
 ```
 
 Use an account-scoped token limited to Workers script editing for the target account. The generated
-Worker currently exposes only `GET /__wasmplane/manifest` and a `501` response for other requests;
+Worker currently exposes only `GET /__odenctl/manifest` and a `501` response for other requests;
 WASIp3 execution remains on Wasmtime runtime nodes. Live `mode: "api"` release creation requires a
-`publish`-scoped wasmplane API token and is written to the configured audit sink.
+`publish`-scoped odenctl API token and is written to the configured audit sink.
 
 ## Expected POC results
 
@@ -109,7 +109,7 @@ WASIp3 execution remains on Wasmtime runtime nodes. Live `mode: "api"` release c
 ## Known gaps
 
 - Container disk should be treated as ephemeral.
-- `WASMPLANE_API_TOKEN`, `DATABASE_URL`, and artifact credentials must be configured as Worker
+- `ODENCTL_API_TOKEN`, `DATABASE_URL`, and artifact credentials must be configured as Worker
   secrets before this is exposed.
 - Live Cloudflare Workers uploads still need a production token-rotation process and provider-side
   rollback policy before they are suitable for production.

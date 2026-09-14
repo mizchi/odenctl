@@ -1,5 +1,5 @@
 {
-  "name": "@wasmplane/moonbit-service-sdk",
+  "name": "@oden/moonbit-service-sdk",
   "version": "0.1.0",
   "type": "module",
   "license": "MIT",

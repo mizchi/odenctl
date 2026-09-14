@@ -6,4 +6,4 @@ edition = "2024"
 crate-type = ["cdylib"]
 [dependencies]
 wit-bindgen = { version = "=0.62.0", features = ["async"] }
-wasmplane-service-sdk = { path = "../../../sdk/rust" }
+oden-service-sdk = { path = "../../../sdk/rust" }

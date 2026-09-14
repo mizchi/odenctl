@@ -172,8 +172,8 @@ test("WAC migration probe runs canary and runtime worker probe", async () => {
 test("WAC source follows git URL and ref env overrides", () => {
   assert.deepEqual(
     resolveWacSource({
-      WASMPLANE_WAC_GIT_URL: "https://github.com/mizchi/wac",
-      WASMPLANE_WAC_GIT_REF_ARG: "--rev 8d38844",
+      ODEN_WAC_GIT_URL: "https://github.com/mizchi/wac",
+      ODEN_WAC_GIT_REF_ARG: "--rev 8d38844",
     }),
     {
       label: "mizchi/wac@8d38844",
@@ -182,8 +182,8 @@ test("WAC source follows git URL and ref env overrides", () => {
   );
   assert.deepEqual(
     resolveWacSource({
-      WASMPLANE_WAC_GIT_URL: "https://github.com/example/fork",
-      WASMPLANE_WAC_GIT_REF_ARG: "--branch experiment",
+      ODEN_WAC_GIT_URL: "https://github.com/example/fork",
+      ODEN_WAC_GIT_REF_ARG: "--branch experiment",
     }),
     {
       label: "example/fork@experiment",

@@ -7,9 +7,9 @@ import { promisify } from "node:util";
 import test from "node:test";
 import { startServiceProcess } from "../src/service-process.ts";
 
-const host = process.env.WASMPLANE_AWS_IMAGE_HOST;
-const component = process.env.WASMPLANE_AWS_IMAGE_COMPONENT;
-const image = process.env.WASMPLANE_AWS_IMAGE;
+const host = process.env.ODENCTL_AWS_IMAGE_HOST;
+const component = process.env.ODENCTL_AWS_IMAGE_COMPONENT;
+const image = process.env.ODENCTL_AWS_IMAGE;
 const execute = promisify(execFile);
 
 async function checkApplication(url: string) {
@@ -20,7 +20,7 @@ async function checkApplication(url: string) {
   }
   const first = await fetch(url);
   assert.equal(first.status, 200);
-  assert.deepEqual(await first.json(), { service: "wasmplane", status: "ok" });
+  assert.deepEqual(await first.json(), { service: "oden", status: "ok" });
   for (const path of ["/trap", "/loop", "/slow", "/missing"]) {
     const response = await fetch(url + path, {
       signal: AbortSignal.timeout(2000),
@@ -44,7 +44,7 @@ test(
     timeout: 30_000,
   },
   async () => {
-    const directory = await mkdtemp(join(tmpdir(), "wasmplane-aws-image-"));
+    const directory = await mkdtemp(join(tmpdir(), "odenctl-aws-image-"));
     try {
       const manifest = JSON.parse(
         await readFile("infra/aws-image/app.json", "utf8"),

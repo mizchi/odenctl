@@ -15,7 +15,7 @@ const input = { method: "POST", path: "/increment", headers: [], body: "", reque
 test("celld gateway authenticates before resolving a binding", async () => {
   let opened = false;
   const env = {
-    WASMPLANE_GATEWAY_TOKEN: "test-secret", WASMPLANE_BINDINGS: "COUNTER",
+    ODEN_GATEWAY_TOKEN: "test-secret", ODEN_BINDINGS: "COUNTER",
     get COUNTER() { opened = true; throw new Error("must not resolve"); },
   };
   assert.equal((await gateway.fetch(request(input, "wrong"), env)).status, 401);
@@ -27,7 +27,7 @@ test("celld gateway scopes object names and keeps gateway credentials out of the
   let resolved: unknown;
   let forwarded: Request | undefined;
   const env = {
-    WASMPLANE_GATEWAY_TOKEN: "test-secret", WASMPLANE_BINDINGS: "COUNTER",
+    ODEN_GATEWAY_TOKEN: "test-secret", ODEN_BINDINGS: "COUNTER",
     COUNTER: {
       idFromName(name: string) { resolved = name; return `object:${name}`; },
       get(id: string) {
@@ -43,7 +43,7 @@ test("celld gateway scopes object names and keeps gateway credentials out of the
   assert.equal(response.status, 200);
   assert.equal(resolved, "日本語/one");
   assert.equal(forwarded!.headers.get("authorization"), null);
-  assert.equal(forwarded!.headers.get("x-wasmplane-request-id"), "retry-1");
+  assert.equal(forwarded!.headers.get("x-oden-request-id"), "retry-1");
   const output = await response.json();
   assert.equal(output.status, 401);
   assert.equal(Buffer.from(output.body, "base64").toString(), "denied by object");
@@ -51,12 +51,12 @@ test("celld gateway scopes object names and keeps gateway credentials out of the
 });
 
 test("celld gateway rejects malformed envelopes before dispatch", async () => {
-  const env = { WASMPLANE_GATEWAY_TOKEN: "test-secret", WASMPLANE_BINDINGS: "COUNTER" };
+  const env = { ODEN_GATEWAY_TOKEN: "test-secret", ODEN_BINDINGS: "COUNTER" };
   for (const bad of [
     { ...input, path: "https://attacker.invalid" },
     { ...input, method: "CONNECT" },
     { ...input, body: "%%%" },
-    { ...input, headers: [["x-wasmplane-request-id", "forged"]] },
+    { ...input, headers: [["x-oden-request-id", "forged"]] },
     { ...input, requestId: "bad\nvalue" },
   ]) {
     assert.equal((await gateway.fetch(request(bad), env)).status, 400);
@@ -76,7 +76,7 @@ test("counter persists deduplication with the update across object activations",
     },
   };
   const increment = (actor: Counter, id: string) => actor.fetch(new Request("https://object/increment", {
-    method: "POST", headers: { "x-wasmplane-request-id": id },
+    method: "POST", headers: { "x-oden-request-id": id },
   })).then((response: Response) => response.json());
   const actor = new Counter({ storage });
   const first = await Promise.all(Array.from({ length: 12 }, (_, i) => increment(actor, `id-${i}`)));

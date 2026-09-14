@@ -359,7 +359,7 @@ test("runtime supervisor selects weighted rollout targets deterministically", as
 });
 
 test("runtime cache retention prunes stale and over-budget files while keeping active paths", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-cache-retention-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-cache-retention-"));
   const artifactDir = join(dir, "artifacts");
   const cwasmDir = join(dir, "cwasm");
   await writeCacheFile(join(artifactDir, "active.wasm"), "active artifact", "2026-06-26T11:55:00.000Z");
@@ -398,7 +398,7 @@ test("runtime cache retention prunes stale and over-budget files while keeping a
 });
 
 test("runtime cache invalidation removes cwasm files from older engine variants", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-cwasm-invalidation-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-cwasm-invalidation-"));
   const cwasmDir = join(dir, "cwasm");
   const artifactDigest = createHash("sha256").update("api").digest("hex");
   const current = join(cwasmDir, `dep_api-${artifactDigest}-engine-current.cwasm`);
@@ -430,7 +430,7 @@ test("runtime cache invalidation removes cwasm files from older engine variants"
 });
 
 test("file artifact store verifies sha256 digests", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-artifact-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-artifact-"));
   const artifactPath = join(dir, "component.wasm");
   await writeFile(artifactPath, Buffer.from("component bytes"));
   const body = await readFile(artifactPath);
@@ -458,7 +458,7 @@ test("file artifact store verifies sha256 digests", async () => {
 });
 
 test("runtime artifact store materializes remote HTTP artifacts into a verified cache", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-remote-artifact-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-remote-artifact-"));
   const bytes = Buffer.from("remote component bytes");
   const artifactDigest = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
   const fetches: string[] = [];
@@ -498,7 +498,7 @@ test("runtime artifact store materializes remote HTTP artifacts into a verified 
 });
 
 test("runtime artifact store rejects remote artifacts with digest mismatches", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-remote-artifact-bad-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-remote-artifact-bad-"));
   const store = createRuntimeArtifactStore({
     cacheDir: join(dir, "cache"),
     fetch: async () => ({
@@ -525,7 +525,7 @@ test("runtime artifact store rejects remote artifacts with digest mismatches", a
 });
 
 test("runtime artifact store materializes private S3 artifacts with SigV4 GET", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-s3-artifact-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-s3-artifact-"));
   const bytes = Buffer.from("private s3 component bytes");
   const artifactDigest = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
   const calls: Array<{ url: string; init: RequestInit }> = [];
@@ -556,20 +556,20 @@ test("runtime artifact store materializes private S3 artifacts with SigV4 GET", 
   const first = await store.materialize({
     id: "art_s3",
     digest: artifactDigest,
-    location: "s3://wasmplane-artifacts/workers/hello.component.wasm",
+    location: "s3://odenctl-artifacts/workers/hello.component.wasm",
   });
   const second = await store.materialize({
     id: "art_s3",
     digest: artifactDigest,
-    location: "s3://wasmplane-artifacts/workers/hello.component.wasm",
+    location: "s3://odenctl-artifacts/workers/hello.component.wasm",
   });
 
   assert.equal(first.path, second.path);
   assert.equal(first.verified, true);
-  assert.equal(first.location, "s3://wasmplane-artifacts/workers/hello.component.wasm");
+  assert.equal(first.location, "s3://odenctl-artifacts/workers/hello.component.wasm");
   assert.equal((await readFile(first.path)).toString("utf8"), "private s3 component bytes");
   assert.equal(calls.length, 1);
-  assert.equal(calls[0].url, "https://r2.example.com/wasmplane-artifacts/workers/hello.component.wasm");
+  assert.equal(calls[0].url, "https://r2.example.com/odenctl-artifacts/workers/hello.component.wasm");
   assert.equal(calls[0].init.method, "GET");
   const headers = new Headers(calls[0].init.headers);
   assert.equal(headers.get("host"), "r2.example.com");
@@ -582,7 +582,7 @@ test("runtime artifact store materializes private S3 artifacts with SigV4 GET", 
 });
 
 test("runtime artifact store materializes OCI registry artifacts from manifest layers", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-oci-artifact-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-oci-artifact-"));
   const bytes = Buffer.from("oci component bytes");
   const artifactDigest = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
   const calls: Array<{ url: string; init: RequestInit }> = [];
@@ -640,7 +640,7 @@ test("runtime artifact store materializes OCI registry artifacts from manifest l
 });
 
 test("runtime artifact store materializes digest-addressed OCI blobs with registry auth", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-oci-artifact-auth-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-oci-artifact-auth-"));
   const bytes = Buffer.from("private oci component bytes");
   const artifactDigest = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
   const calls: Array<{ url: string; init: RequestInit }> = [];
@@ -673,7 +673,7 @@ test("runtime artifact store materializes digest-addressed OCI blobs with regist
 });
 
 test("runtime artifact store rejects OCI manifests without the expected artifact digest", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-oci-artifact-bad-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-oci-artifact-bad-"));
   const store = createRuntimeArtifactStore({
     cacheDir: join(dir, "cache"),
     oci: {
@@ -703,7 +703,7 @@ test("runtime artifact store rejects OCI manifests without the expected artifact
 });
 
 test("runtime artifact store rejects S3 artifacts without matching runtime config", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-s3-artifact-unconfigured-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-s3-artifact-unconfigured-"));
   const store = createRuntimeArtifactStore({
     cacheDir: join(dir, "cache"),
   });
@@ -713,14 +713,14 @@ test("runtime artifact store rejects S3 artifacts without matching runtime confi
       store.materialize({
         id: "art_s3",
         digest: digest("expected"),
-        location: "s3://wasmplane-artifacts/workers/hello.component.wasm",
+        location: "s3://odenctl-artifacts/workers/hello.component.wasm",
       }),
     /S3 artifact materialization is not configured/,
   );
 });
 
 test("runtime artifact store enforces configured S3 bucket", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-s3-artifact-bucket-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-s3-artifact-bucket-"));
   const store = createRuntimeArtifactStore({
     cacheDir: join(dir, "cache"),
     s3: {
@@ -743,16 +743,16 @@ test("runtime artifact store enforces configured S3 bucket", async () => {
 
 test("runtime S3 artifact config reads artifact and AWS environment variables", () => {
   const config = runtimeS3ArtifactOptionsFromEnv({
-    WASMPLANE_ARTIFACT_BUCKET: "wasmplane-artifacts",
-    WASMPLANE_ARTIFACT_ENDPOINT: "https://r2.example.com",
-    WASMPLANE_ARTIFACT_REGION: "auto",
+    ODENCTL_ARTIFACT_BUCKET: "odenctl-artifacts",
+    ODENCTL_ARTIFACT_ENDPOINT: "https://r2.example.com",
+    ODENCTL_ARTIFACT_REGION: "auto",
     AWS_ACCESS_KEY_ID: "aws-access-key",
     AWS_SECRET_ACCESS_KEY: "aws-secret-key",
     AWS_SESSION_TOKEN: "aws-session-token",
   });
 
   assert.deepEqual(config, {
-    bucket: "wasmplane-artifacts",
+    bucket: "odenctl-artifacts",
     endpoint: "https://r2.example.com",
     region: "auto",
     accessKeyId: "aws-access-key",
@@ -763,15 +763,15 @@ test("runtime S3 artifact config reads artifact and AWS environment variables", 
 
 test("runtime OCI artifact config reads registry auth environment variables", () => {
   const config = runtimeOciArtifactOptionsFromEnv({
-    WASMPLANE_OCI_REGISTRIES_JSON: JSON.stringify({
+    ODENCTL_OCI_REGISTRIES_JSON: JSON.stringify({
       "registry.local:5000": {
         scheme: "http",
         username: "local-user",
         password: "local-pass",
       },
     }),
-    WASMPLANE_OCI_REGISTRY: "registry.example.com",
-    WASMPLANE_OCI_REGISTRY_TOKEN: "registry-token",
+    ODENCTL_OCI_REGISTRY: "registry.example.com",
+    ODENCTL_OCI_REGISTRY_TOKEN: "registry-token",
   });
 
   assert.deepEqual(config, {
@@ -789,7 +789,7 @@ test("runtime OCI artifact config reads registry auth environment variables", ()
 });
 
 test("wasmtime CLI backend precompiles async component artifacts and reuses cache", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-wasmtime-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-wasmtime-"));
   const componentPath = await buildAsyncWorkerComponent(dir);
   const componentBytes = await readFile(componentPath);
   const componentDigest = `sha256:${createHash("sha256").update(componentBytes).digest("hex")}`;
@@ -865,7 +865,7 @@ test("wasmtime CLI backend precompiles async component artifacts and reuses cach
 
 test("wasmtime CLI backend validates components against the wasip3 worker world before compiling", async () => {
   const calls: Array<{ command: string; args: string[] }> = [];
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-wasip3-validation-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-wasip3-validation-"));
   const componentPath = join(dir, "worker.component.wasm");
   const cacheDir = join(dir, "cache");
   await writeFile(componentPath, Buffer.from([0, 97, 115, 109, 1, 0, 0, 0]));
@@ -929,18 +929,18 @@ test("wasmtime CLI backend validates components against the wasip3 worker world 
 
 test("wasip3 host backend delegates precompile to the Rust host by default", async () => {
   const calls: Array<{ command: string; args: string[] }> = [];
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-rust-host-backend-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-rust-host-backend-"));
   const componentPath = join(dir, "worker.component.wasm");
   const cacheDir = join(dir, "cache");
   await writeFile(componentPath, Buffer.from([0, 97, 115, 109, 1, 0, 0, 0]));
 
   const backend = createWasip3HostBackend({
     cacheDir,
-    hostBin: "wasmplane-wasip3-host",
+    hostBin: "oden-host",
     commandRunner: {
       async run(command, args) {
         calls.push({ command, args });
-        if (command === "wasmplane-wasip3-host") {
+        if (command === "oden-host") {
           const outputIndex = args.indexOf("--out") + 1;
           await writeFile(args[outputIndex], Buffer.from("compiled by rust host"));
         }
@@ -954,26 +954,26 @@ test("wasip3 host backend delegates precompile to the Rust host by default", asy
   assert.equal(compiled.deploymentId, "dep_worker");
   assert.equal(compiled.cached, false);
   assert.equal(calls.length, 1);
-  assert.equal(calls[0]?.command, "wasmplane-wasip3-host");
+  assert.equal(calls[0]?.command, "oden-host");
   assert.deepEqual(calls[0]?.args.slice(0, 4), ["compile", "--component", componentPath, "--out"]);
   assert.ok(calls[0]?.args[4].startsWith(`${compiled.precompiledPath}.tmp-${process.pid}-`));
 });
 
 test("wasip3 host backend can run strict WIT target validation when requested", async () => {
   const calls: Array<{ command: string; args: string[] }> = [];
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-rust-host-validation-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-rust-host-validation-"));
   const componentPath = join(dir, "worker.component.wasm");
   const cacheDir = join(dir, "cache");
   await writeFile(componentPath, Buffer.from([0, 97, 115, 109, 1, 0, 0, 0]));
 
   const backend = createWasip3HostBackend({
     cacheDir,
-    hostBin: "wasmplane-wasip3-host",
+    hostBin: "oden-host",
     validateWorld: true,
     commandRunner: {
       async run(command, args) {
         calls.push({ command, args });
-        if (command === "wasmplane-wasip3-host") {
+        if (command === "oden-host") {
           const outputIndex = args.indexOf("--out") + 1;
           await writeFile(args[outputIndex], Buffer.from("compiled by rust host"));
         }
@@ -992,17 +992,17 @@ test("wasip3 host backend can run strict WIT target validation when requested", 
     "--world",
     "service",
   ]);
-  assert.equal(calls[1]?.command, "wasmplane-wasip3-host");
+  assert.equal(calls[1]?.command, "oden-host");
 });
 
 test("wasip3 host backend includes engine variant in cache path and compile args", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-wasip3-variant-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-wasip3-variant-"));
   const componentPath = join(dir, "worker.component.wasm");
   await writeFile(componentPath, Buffer.from([0, 97, 115, 109, 1, 0, 0, 0]));
   const calls: Array<{ command: string; args: string[] }> = [];
   const backend = createWasip3HostBackend({
     cacheDir: dir,
-    hostBin: "wasmplane-wasip3-host",
+    hostBin: "oden-host",
     cacheVariant: "pooling-64x64mb",
     compileArgs: ["--pooling-total-component-instances", "64", "--pooling-memory-mb", "64"],
     commandRunner: {
@@ -1028,8 +1028,8 @@ test("wasip3 host backend includes engine variant in cache path and compile args
 
 test("wasip3 host daemon args include explicit instance reuse contract", () => {
   const args = wasip3HostDaemonRuntimeArgsFromEnv({
-    WASMPLANE_WASIP3_HOST_MAX_PREPARED_COMPONENTS: "512",
-    WASMPLANE_WASIP3_HOST_MAX_CONCURRENT_INVOCATIONS: "64",
+    ODEN_WASIP3_HOST_MAX_PREPARED_COMPONENTS: "512",
+    ODEN_WASIP3_HOST_MAX_CONCURRENT_INVOCATIONS: "64",
   }, ["--pooling-total-component-instances", "64"]);
 
   assert.deepEqual(args, [
@@ -1096,7 +1096,7 @@ test("wasip3 host daemon route table includes prepared weighted targets", () => 
 test("wasip3 host invoker delegates HTTP requests to the Rust host invoke command", async () => {
   const calls: Array<{ command: string; args: string[] }> = [];
   const invoker = createWasip3HostInvoker({
-    hostBin: "wasmplane-wasip3-host",
+    hostBin: "oden-host",
     commandRunner: {
       async run(command, args) {
         calls.push({ command, args });
@@ -1146,7 +1146,7 @@ test("wasip3 host invoker delegates HTTP requests to the Rust host invoke comman
 
   assert.equal(response.status, 201);
   assert.equal(Buffer.from(response.body).toString("utf8"), "created");
-  assert.equal(calls[0]?.command, "wasmplane-wasip3-host");
+  assert.equal(calls[0]?.command, "oden-host");
   assert.deepEqual(calls[0]?.args, [
     "invoke",
     "--precompiled",

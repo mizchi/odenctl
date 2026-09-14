@@ -27,7 +27,7 @@ import {
 import { createVolumeSqliteRegistry } from "../src/control-plane/volume-sqlite.ts";
 
 test("CLI deploy flow uploads component, creates deployment, points route, and publishes snapshot", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-cli-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-cli-"));
   const componentPath = join(dir, "worker.component.wasm");
   const componentBytes = Buffer.from("component bytes");
   await writeFile(componentPath, componentBytes);
@@ -123,7 +123,7 @@ test("CLI deploy flow uploads component, creates deployment, points route, and p
 });
 
 test("CLI deploy treats deterministic deployment conflicts as idempotent", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-cli-deploy-conflict-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-cli-deploy-conflict-"));
   const componentPath = join(dir, "worker.component.wasm");
   const componentBytes = Buffer.from("component bytes");
   await writeFile(componentPath, componentBytes);
@@ -203,7 +203,7 @@ test("CLI deploy args parse capability bindings and limit overrides", () => {
       "--diff",
       "--no-publish",
     ],
-    { WASMPLANE_CONTROL_PLANE_URL: "http://127.0.0.1:9999" },
+    { ODENCTL_CONTROL_PLANE_URL: "http://127.0.0.1:9999" },
   );
 
   assert.equal(input.controlPlaneUrl, "http://127.0.0.1:9999");
@@ -228,8 +228,8 @@ test("CLI deploy args read token from environment", () => {
       "hello.example.dev",
     ],
     {
-      WASMPLANE_CONTROL_PLANE_URL: "http://127.0.0.1:9999",
-      WASMPLANE_CONTROL_PLANE_TOKEN: "env-secret",
+      ODENCTL_CONTROL_PLANE_URL: "http://127.0.0.1:9999",
+      ODENCTL_CONTROL_PLANE_TOKEN: "env-secret",
     },
   );
 
@@ -253,7 +253,7 @@ test("CLI onboard beta creates a tenant bootstrap bundle", async () => {
     "api.acme.example",
     "--token",
     "admin-token",
-  ], { WASMPLANE_CONTROL_PLANE_URL: "https://control.example" });
+  ], { ODENCTL_CONTROL_PLANE_URL: "https://control.example" });
   const calls: Array<{ path: string; method: string; headers: Record<string, string>; body: any }> = [];
 
   const result = await runOnboardCommand({
@@ -294,9 +294,9 @@ test("CLI onboard beta creates a tenant bootstrap bundle", async () => {
         },
         checklist: [],
         next: {
-          tokenEnv: "WASMPLANE_CONTROL_PLANE_TOKEN",
+          tokenEnv: "ODENCTL_CONTROL_PLANE_TOKEN",
           deployCommand:
-            "WASMPLANE_CONTROL_PLANE_TOKEN=<deploy-token> pnpm wasmplane deploy --project-id prj_acme --component ./worker.component.wasm --host api.acme.example",
+            "ODENCTL_CONTROL_PLANE_TOKEN=<deploy-token> pnpm odenctl deploy --project-id prj_acme --component ./worker.component.wasm --host api.acme.example",
           usageUrl: "/projects/prj_acme/usage",
           billingUrl: "/projects/prj_acme/billing-statement",
         },
@@ -319,7 +319,7 @@ test("CLI onboard beta creates a tenant bootstrap bundle", async () => {
 });
 
 test("CLI deploy diff compares current route snapshot with the new deployment", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-cli-deploy-diff-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-cli-deploy-diff-"));
   const componentPath = join(dir, "worker.component.wasm");
   const componentBytes = Buffer.from("component bytes");
   await writeFile(componentPath, componentBytes);
@@ -415,8 +415,8 @@ test("CLI dev args default to local control plane and runtime with WIT validatio
       "AUTH=prj_auth@https://auth.internal/",
     ],
     {
-      WASMPLANE_CONTROL_PLANE_TOKEN: "control-secret",
-      WASMPLANE_RUNTIME_TOKEN: "runtime-secret",
+      ODENCTL_CONTROL_PLANE_TOKEN: "control-secret",
+      ODEN_RUNTIME_TOKEN: "runtime-secret",
     },
   );
 
@@ -431,7 +431,7 @@ test("CLI dev args default to local control plane and runtime with WIT validatio
 });
 
 test("CLI dev validates, creates a deploy preview, publishes to local runtime, and tails logs", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-cli-dev-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-cli-dev-"));
   const componentPath = join(dir, "worker.component.wasm");
   const componentBytes = Buffer.from("component bytes");
   await writeFile(componentPath, componentBytes);
@@ -526,7 +526,7 @@ test("CLI dev validates, creates a deploy preview, publishes to local runtime, a
     deploymentId: "dep_dev",
     host: "dev.localhost",
     pathPrefix: "/",
-    environment: { FEATURE_FLAG: "on", WASMPLANE_DEV: "1" },
+    environment: { FEATURE_FLAG: "on", ODEN_DEV: "1" },
   });
   assert.equal(calls[4]?.headers.authorization, "Bearer runtime-secret");
   assert.equal(result.preview.url, "https://dev.localhost/");
@@ -551,7 +551,7 @@ test("CLI new worker args parse language, name, output, and force", () => {
 });
 
 test("CLI new worker command materializes a template", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-cli-new-worker-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-cli-new-worker-"));
   const outDir = join(dir, "workers", "hello");
 
   const result = await runNewWorkerCommand({
@@ -573,17 +573,17 @@ test("CLI migrate args parse explicit SQLite path", () => {
 
   assert.deepEqual(input, {
     action: "check",
-    env: { WASMPLANE_DB: "/tmp/control.sqlite" },
+    env: { ODENCTL_DB: "/tmp/control.sqlite" },
   });
 });
 
 test("CLI migrate apply returns current schema status", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-cli-migrate-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-cli-migrate-"));
   const dbPath = join(dir, "control.sqlite");
 
   const result = await runMigrateCommand({
     action: "apply",
-    env: { WASMPLANE_DB: dbPath },
+    env: { ODENCTL_DB: dbPath },
   });
 
   assert.equal(result.ok, true);
@@ -647,7 +647,7 @@ test("CLI volume-sqlite args parse backup and restore commands", () => {
 });
 
 test("CLI volume-sqlite command backs up and restores a database", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-cli-volume-sqlite-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-cli-volume-sqlite-"));
   await runVolumeSqliteCommand({
     action: "ensure",
     rootDir: dir,
@@ -702,7 +702,7 @@ test("CLI volume-sqlite command backs up and restores a database", async () => {
 });
 
 test("CLI volume-sqlite command prunes old backups", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-cli-volume-sqlite-gc-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-cli-volume-sqlite-gc-"));
   await runVolumeSqliteCommand({
     action: "ensure",
     rootDir: dir,

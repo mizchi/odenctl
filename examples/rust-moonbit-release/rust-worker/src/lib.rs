@@ -7,7 +7,7 @@ struct App;
 wasip3::http::service::export!(App);
 impl wasip3::exports::http::handler::Guest for App {
     async fn handle(request: Request) -> Result<Response, ErrorCode> {
-        let moonbit = bindings::wasmplane::sample::bridge::ping(35);
+        let moonbit = bindings::oden::sample::bridge::ping(35);
         Ok(text_response(format!("rust-moonbit sample: {} moonbit={moonbit}", request.get_path_with_query().unwrap_or_default())))
     }
 }

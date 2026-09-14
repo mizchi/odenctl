@@ -31,7 +31,7 @@ mod bindings {
 
 pub(crate) fn validate_pre(pre: wasmtime::component::InstancePre<Host>) -> Result<()> {
     bindings::LifecycleHooksPre::new(pre)
-        .context("resident service must export wasmplane:app/lifecycle@0.1.0")?;
+        .context("resident service must export oden:app/lifecycle@0.1.0")?;
     Ok(())
 }
 
@@ -117,7 +117,7 @@ impl ResidentService {
             })
             .await?;
         let hooks = bindings::LifecycleHooks::new(&mut store, &instance)
-            .context("resident service must export wasmplane:app/lifecycle@0.1.0")?;
+            .context("resident service must export oden:app/lifecycle@0.1.0")?;
         let proxy = match wasmtime_wasi_http::p3::bindings::Service::new(&mut store, &instance) {
             Ok(service) => Proxy::P3(service),
             Err(_) => Proxy::P2(
@@ -148,7 +148,7 @@ impl ResidentService {
                     .observe("lifecycle.start", "start", None, async {
                         tokio::time::timeout_at(
                             startup_deadline,
-                            hooks.wasmplane_app_lifecycle().call_start(accessor),
+                            hooks.oden_app_lifecycle().call_start(accessor),
                         )
                         .await
                         .context("service start deadline exceeded")??
@@ -239,7 +239,7 @@ impl ResidentService {
                     .observe("lifecycle.stop", "stop", None, async {
                         tokio::time::timeout(
                             Duration::from_millis(worker_options.shutdown_timeout_ms),
-                            hooks.wasmplane_app_lifecycle().call_stop(accessor),
+                            hooks.oden_app_lifecycle().call_stop(accessor),
                         )
                         .await
                         .context("service stop deadline exceeded")??

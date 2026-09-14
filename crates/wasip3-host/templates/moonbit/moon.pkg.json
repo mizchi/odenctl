@@ -1,8 +1,0 @@
-{
-  "import": [
-    { "path": "wasmplane/service-sdk/async-core", "alias": "async-core" },
-    { "path": "wasmplane/service-sdk/interface/wasi/http/types", "alias": "types" },
-    { "path": "wasmplane/service-sdk/sdk", "alias": "service" }
-  ],
-  "supported-targets": "+wasm"
-}

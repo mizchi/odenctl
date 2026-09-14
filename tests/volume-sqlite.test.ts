@@ -12,7 +12,7 @@ import {
 } from "../src/control-plane/volume-sqlite.ts";
 
 test("volume sqlite registry creates a cataloged database file with WAL settings", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-volume-sqlite-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-volume-sqlite-"));
   const registry = createVolumeSqliteRegistry({
     rootDir: dir,
     now: fixedNow,
@@ -51,7 +51,7 @@ test("volume sqlite registry creates a cataloged database file with WAL settings
 });
 
 test("volume sqlite registry encrypts backups and restores through authenticated decryption", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-volume-sqlite-encrypted-backup-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-volume-sqlite-encrypted-backup-"));
   const registry = createVolumeSqliteRegistry({
     rootDir: dir,
     backupCipher: createAesGcmVolumeSqliteBackupCipher({
@@ -92,7 +92,7 @@ test("volume sqlite registry encrypts backups and restores through authenticated
 });
 
 test("volume sqlite registry restores encrypted backups into a new database id", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-volume-sqlite-encrypted-clone-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-volume-sqlite-encrypted-clone-"));
   const registry = createVolumeSqliteRegistry({
     rootDir: dir,
     backupCipher: createAesGcmVolumeSqliteBackupCipher({
@@ -127,7 +127,7 @@ test("volume sqlite registry restores encrypted backups into a new database id",
 });
 
 test("volume sqlite registry rejects tampered encrypted backups", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-volume-sqlite-tampered-backup-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-volume-sqlite-tampered-backup-"));
   const registry = createVolumeSqliteRegistry({
     rootDir: dir,
     backupCipher: createAesGcmVolumeSqliteBackupCipher({
@@ -157,16 +157,16 @@ test("volume sqlite registry rejects tampered encrypted backups", async () => {
 
 test("configured volume sqlite backup cipher reads keyring environment", () => {
   const cipher = createConfiguredVolumeSqliteBackupCipher({
-    WASMPLANE_VOLUME_SQLITE_BACKUP_KEY_ID: "new",
-    WASMPLANE_VOLUME_SQLITE_BACKUP_KEY_BASE64: Buffer.alloc(32, 3).toString("base64"),
-    WASMPLANE_VOLUME_SQLITE_BACKUP_KEYS_BASE64: `old=${Buffer.alloc(32, 1).toString("base64")}`,
+    ODENCTL_VOLUME_SQLITE_BACKUP_KEY_ID: "new",
+    ODENCTL_VOLUME_SQLITE_BACKUP_KEY_BASE64: Buffer.alloc(32, 3).toString("base64"),
+    ODENCTL_VOLUME_SQLITE_BACKUP_KEYS_BASE64: `old=${Buffer.alloc(32, 1).toString("base64")}`,
   });
 
   assert.ok(cipher);
 });
 
 test("volume sqlite registry exports and restores individual database files", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-volume-sqlite-backup-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-volume-sqlite-backup-"));
   const registry = createVolumeSqliteRegistry({
     rootDir: dir,
     now: fixedNow,
@@ -208,7 +208,7 @@ test("volume sqlite registry exports and restores individual database files", as
 });
 
 test("volume sqlite registry serializes queued writes per database and rejects excess pending writes", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-volume-sqlite-writer-queue-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-volume-sqlite-writer-queue-"));
   const registry = createVolumeSqliteRegistry({
     rootDir: dir,
     maxPendingWritesPerDatabase: 2,
@@ -266,7 +266,7 @@ test("volume sqlite registry serializes queued writes per database and rejects e
 });
 
 test("volume sqlite registry keeps writer queues independent per database", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-volume-sqlite-independent-writers-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-volume-sqlite-independent-writers-"));
   const registry = createVolumeSqliteRegistry({
     rootDir: dir,
     maxPendingWritesPerDatabase: 1,
@@ -300,7 +300,7 @@ test("volume sqlite registry keeps writer queues independent per database", asyn
 });
 
 test("volume sqlite registry prunes old backups by per-database retention count", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-volume-sqlite-backup-gc-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-volume-sqlite-backup-gc-"));
   const clock = incrementingClock("2026-07-01T00:00:00.000Z");
   const registry = createVolumeSqliteRegistry({
     rootDir: dir,
@@ -328,7 +328,7 @@ test("volume sqlite registry prunes old backups by per-database retention count"
 });
 
 test("volume sqlite registry prunes backups explicitly by age while keeping newest entries", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-volume-sqlite-backup-age-gc-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-volume-sqlite-backup-age-gc-"));
   const clock = sequenceClock([
     "2026-07-01T00:00:00.000Z",
     "2026-07-01T00:00:01.000Z",
@@ -363,7 +363,7 @@ test("volume sqlite registry prunes backups explicitly by age while keeping newe
 });
 
 test("volume sqlite registry rejects unsafe backup and restore paths", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-volume-sqlite-unsafe-backup-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-volume-sqlite-unsafe-backup-"));
   const registry = createVolumeSqliteRegistry({ rootDir: dir });
   try {
     registry.ensureDatabase({ id: "prj_api" });
@@ -381,7 +381,7 @@ test("volume sqlite registry rejects unsafe backup and restore paths", async () 
 });
 
 test("volume sqlite registry persists catalog records across restarts", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-volume-sqlite-restart-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-volume-sqlite-restart-"));
   const first = createVolumeSqliteRegistry({ rootDir: dir, now: fixedNow });
   first.ensureDatabase({ id: "tenant_a", kind: "tenant", ownerId: "org_main" });
   first.close();
@@ -403,7 +403,7 @@ test("volume sqlite registry persists catalog records across restarts", async ()
 });
 
 test("volume sqlite registry rejects path-like database ids", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-volume-sqlite-invalid-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-volume-sqlite-invalid-"));
   const registry = createVolumeSqliteRegistry({ rootDir: dir });
   try {
     assert.throws(
@@ -420,7 +420,7 @@ test("volume sqlite registry rejects path-like database ids", async () => {
 });
 
 test("sqlite database pool evicts least recently used handles", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-volume-sqlite-pool-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-volume-sqlite-pool-"));
   const pool = new SqliteDatabasePool({ maxOpen: 1 });
   const pathA = join(dir, "a.sqlite");
   const pathB = join(dir, "b.sqlite");

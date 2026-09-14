@@ -7,8 +7,8 @@ import {
 
 test("ops smoke args default to the deployed Fly app names and env tokens", () => {
   const parsed = parseOpsSmokeArgs([], {
-    WASMPLANE_CONTROL_PLANE_TOKEN: "control-token",
-    WASMPLANE_RUNTIME_TOKEN: "runtime-token",
+    ODENCTL_CONTROL_PLANE_TOKEN: "control-token",
+    ODEN_RUNTIME_TOKEN: "runtime-token",
   });
 
   assert.equal(parsed.controlUrl, "https://mz-wasmplane-control.fly.dev");
@@ -30,8 +30,8 @@ test("ops smoke args accept production posture requirements", () => {
     "2",
     "--require-rust-forward",
   ], {
-    WASMPLANE_CONTROL_PLANE_TOKEN: "control-token",
-    WASMPLANE_RUNTIME_TOKEN: "runtime-token",
+    ODENCTL_CONTROL_PLANE_TOKEN: "control-token",
+    ODEN_RUNTIME_TOKEN: "runtime-token",
   });
 
   assert.equal(parsed.requireExternalDatabase, true);
@@ -229,7 +229,7 @@ test("ops smoke can require rust-forward daemon routes", async () => {
       if (parsed.hostname === "runtime.example" && parsed.pathname === "/") {
         return new Response("ok", {
           status: 200,
-          headers: { "x-wasmplane-host-daemon-route": "1" },
+          headers: { "x-oden-host-daemon-route": "1" },
         });
       }
       return jsonResponse(404, { error: { code: "not_found" } });

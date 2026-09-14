@@ -18,7 +18,7 @@ impl wasip2::exports::http::incoming_handler::Guest for App {
         // Outbound failures happen before sending the response headers.
         let text = match path.as_str() {
             "/fetch" => fetch_upstream(),
-            "/env" => std::env::var("WASMPLANE_TEST_PRIVATE")
+            "/env" => std::env::var("ODEN_TEST_PRIVATE")
                 .unwrap_or_else(|_| "env denied".into())
                 .into_bytes(),
             "/file" => std::fs::read("/data/message").unwrap_or_else(|_| b"file denied".to_vec()),

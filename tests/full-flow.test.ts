@@ -15,15 +15,15 @@ import { createMemorySecretStore } from "../src/runtime/secrets.ts";
 import { createRuntimeSupervisor } from "../src/runtime/supervisor.ts";
 import { createWasip3HostBackend, createWasip3HostInvoker } from "../src/runtime/wasip3-host.ts";
 
-const componentPath = process.env.WASMPLANE_E2E_COMPONENT;
+const componentPath = process.env.ODENCTL_E2E_COMPONENT;
 
 test(
   "control plane publishes a real component route and runtime invokes it through wasmtime",
-  { skip: componentPath ? false : "set WASMPLANE_E2E_COMPONENT to run the real Wasm E2E" },
+  { skip: componentPath ? false : "set ODENCTL_E2E_COMPONENT to run the real Wasm E2E" },
   async () => {
-    const absoluteComponentPath = resolve(requiredEnv("WASMPLANE_E2E_COMPONENT"));
-    const hostBin = process.env.WASMPLANE_E2E_HOST_BIN ?? "target/debug/wasmplane-wasip3-host";
-    const cacheDir = await mkdtemp(join(tmpdir(), "wasmplane-e2e-cache-"));
+    const absoluteComponentPath = resolve(requiredEnv("ODENCTL_E2E_COMPONENT"));
+    const hostBin = process.env.ODENCTL_E2E_HOST_BIN ?? "target/debug/oden-host";
+    const cacheDir = await mkdtemp(join(tmpdir(), "odenctl-e2e-cache-"));
     const digest = await sha256File(absoluteComponentPath);
     const upstream = await listenUpstream();
 
@@ -109,8 +109,8 @@ test(
       if (response.status !== 200) {
         assert.fail(await response.text());
       }
-      assert.equal(response.headers.get("x-wasmplane-deployment"), deployment.id);
-      assert.equal(await response.text(), "hello from wasmplane: GET http://hello.example.dev/");
+      assert.equal(response.headers.get("x-oden-deployment"), deployment.id);
+      assert.equal(await response.text(), "hello from oden: GET http://hello.example.dev/");
 
       const capabilityResponse = await fetch(`${runtimeBaseUrl}/fetch`, {
         headers: {

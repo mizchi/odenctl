@@ -1,0 +1,8 @@
+{
+  "import": [
+    { "path": "oden/service-sdk/async-core", "alias": "async-core" },
+    { "path": "oden/service-sdk/interface/wasi/http/types", "alias": "types" },
+    { "path": "oden/service-sdk/sdk", "alias": "service" }
+  ],
+  "supported-targets": "+wasm"
+}

@@ -1,4 +1,4 @@
-use crate::bindings::wasmplane::durable::objects;
+use crate::bindings::oden::durable::objects;
 use futures::{StreamExt, TryStreamExt, stream};
 use std::time::Instant;
 

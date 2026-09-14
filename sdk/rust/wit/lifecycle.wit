@@ -1,4 +1,4 @@
-package wasmplane:app@0.1.0;
+package oden:app@0.1.0;
 
 /// One instance owns a service generation. HTTP handlers execute serially;
 /// async background tasks may interleave with a handler at await points.

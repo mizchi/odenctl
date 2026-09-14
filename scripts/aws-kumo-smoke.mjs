@@ -11,7 +11,7 @@ import { promisify } from 'node:util';
 
 const tool = process.env.TF_BIN || 'tofu';
 const kumo = resolve(process.env.KUMO_BIN || 'target/kumo/v0.29.0/kumo');
-const scratch = await mkdtemp(join(tmpdir(), 'wasmplane-kumo-'));
+const scratch = await mkdtemp(join(tmpdir(), 'oden-kumo-'));
 const reportDir = resolve('reports/aws-kumo');
 await mkdir(reportDir, { recursive: true });
 await cp('infra/terraform/aws-standalone-kumo', join(scratch, 'aws-standalone-kumo'), {
@@ -81,7 +81,7 @@ try {
   for (const action of ['DescribeTaskDefinition', 'DescribeServices']) {
     const response = await fetch(endpoint, {
       method: 'POST', headers: {'content-type': 'application/x-amz-json-1.1', 'x-amz-target': `AmazonEC2ContainerServiceV20141113.${action}`},
-      body: JSON.stringify({taskDefinition: 'wasmplane-kumo', cluster: 'wasmplane-kumo', services: ['wasmplane-kumo']}),
+      body: JSON.stringify({taskDefinition: 'oden-kumo', cluster: 'oden-kumo', services: ['oden-kumo']}),
     });
     const body = await response.text();
     if (!response.ok && body.includes('UnknownOperationException')) unsupported.push(action);

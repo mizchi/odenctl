@@ -5,10 +5,10 @@ pub mod bindings {
     wasip3::wit_bindgen::generate!({
         path: "wit/lifecycle.wit", world: "lifecycle-hooks",
         generate_all, pub_export_macro: true,
-        default_bindings_module: "::wasmplane_service_sdk::bindings",
+        default_bindings_module: "::oden_service_sdk::bindings",
     });
 }
-pub use bindings::exports::wasmplane::app::lifecycle::Guest as Lifecycle;
+pub use bindings::exports::oden::app::lifecycle::Guest as Lifecycle;
 pub use wasip3::exports::http::handler::Guest as HttpHandler;
 #[macro_export]
 macro_rules! export {

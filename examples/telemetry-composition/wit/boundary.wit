@@ -1,6 +1,6 @@
 package example:boundary@0.1.0;
 interface operations {
-  use wasmplane:telemetry/tracing@0.1.0.{context};
+  use oden:telemetry/tracing@0.1.0.{context};
   enum mode { steady, burst }
   variant detail { empty, text(string), numbers(list<u32>) }
   record payload {

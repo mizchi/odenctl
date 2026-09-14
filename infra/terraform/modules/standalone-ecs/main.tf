@@ -196,7 +196,7 @@ resource "aws_ecs_task_definition" "app" {
     name                   = "app"
     image                  = var.image == null ? "${aws_ecr_repository.app.repository_url}:initial" : var.image
     essential              = true
-    entryPoint             = ["/usr/local/bin/wasmplane"]
+    entryPoint             = ["/usr/local/bin/oden"]
     command                = ["start", "/app/app.json"]
     user                   = "65532:65532"
     readonlyRootFilesystem = true

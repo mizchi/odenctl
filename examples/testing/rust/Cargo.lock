@@ -25,7 +25,7 @@ name = "exported-tests"
 version = "0.1.0"
 dependencies = [
  "futures-channel",
- "wasmplane-service-sdk",
+ "oden-service-sdk",
  "wit-bindgen",
 ]
 
@@ -313,7 +313,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "wasmplane-service-sdk"
+name = "oden-service-sdk"
 version = "0.1.0"
 dependencies = [
  "wasip3",

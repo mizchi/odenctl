@@ -10,11 +10,11 @@ mod bindings {
     wasmtime::component::bindgen!({
         path: "../../wit/durable", world: "client",
         imports: { default: async | trappable },
-        with: { "wasmplane:durable/objects.object": super::ObjectHandle },
+        with: { "oden:durable/objects.object": super::ObjectHandle },
     });
 }
-use bindings::wasmplane::durable::objects;
-pub use bindings::wasmplane::durable::objects::{
+use bindings::oden::durable::objects;
+pub use bindings::oden::durable::objects::{
     Error as FetchError, Request as FetchRequest, Response as FetchResponse,
 };
 
@@ -282,7 +282,7 @@ fn validate_request(request: &FetchRequest, limit: usize) -> Result<(), FetchErr
                 | "keep-alive"
                 | "te"
                 | "trailer"
-                | "x-wasmplane-request-id"
+                | "x-oden-request-id"
         ) {
             return Err(invalid());
         }
@@ -348,7 +348,7 @@ impl<T: Send> objects::HostObjectWithStore<T> for Host {
         let parent = crate::telemetry::TraceContext::from_headers(&headers);
         let span = telemetry.start("durable.fetch", parent.as_ref(), 3, "durable");
         span.attribute(
-            "wasmplane.durable.binding",
+            "oden.durable.binding",
             serde_json::json!(object.binding),
         );
         span.context().inject(&mut headers);

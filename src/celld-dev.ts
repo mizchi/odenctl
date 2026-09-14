@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 
 /** A disposable local celld instance. Never connects to an existing deployment. */
 export async function startCelldDev(binary: string, signal?: AbortSignal) {
-  const directory = await mkdtemp(join(tmpdir(), "wasmplane-celld-bench-"));
+  const directory = await mkdtemp(join(tmpdir(), "odenctl-celld-bench-"));
   const token = randomBytes(32).toString("hex");
   let child: ChildProcess | undefined;
   const stop = async () => {
@@ -28,7 +28,7 @@ export async function startCelldDev(binary: string, signal?: AbortSignal) {
     signal?.throwIfAborted();
     await copyFile(new URL("../examples/celld-gateway/index.js", import.meta.url), join(directory, "index.js"));
     const config = JSON.parse(await readFile(new URL("../examples/celld-gateway/wrangler.jsonc", import.meta.url), "utf8"));
-    config.vars.WASMPLANE_GATEWAY_TOKEN = token;
+    config.vars.ODEN_GATEWAY_TOKEN = token;
     await writeFile(join(directory, "wrangler.jsonc"), JSON.stringify(config), { mode: 0o600 });
     const probe = createServer();
     probe.listen(0, "127.0.0.1");

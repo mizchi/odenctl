@@ -107,8 +107,8 @@ test("runtime node accepts route snapshots and invokes matched deployments", asy
       headers: { "x-forwarded-host": "hello.example.dev" },
     });
     assert.equal(hit.status, 200);
-    assert.equal(hit.headers.get("x-wasmplane-deployment"), "dep_api");
-    assert.equal(hit.headers.get("x-wasmplane-precompiled"), "/cache/dep_api.cwasm");
+    assert.equal(hit.headers.get("x-oden-deployment"), "dep_api");
+    assert.equal(hit.headers.get("x-oden-precompiled"), "/cache/dep_api.cwasm");
     assert.equal(hit.headers.get("content-type"), "text/plain");
     assert.equal(await hit.text(), "hello from wasm");
     assert.deepEqual(preparedDeployments, ["dep_api"]);
@@ -505,9 +505,9 @@ test("runtime node can proxy matched worker requests through host daemon routes"
       status: 202,
       headers: {
         "x-daemon": "yes",
-        "x-wasmplane-deployment": "dep_api",
-        "x-wasmplane-precompiled": "/cache/dep_api.cwasm",
-        "x-wasmplane-host-daemon-route": "1",
+        "x-oden-deployment": "dep_api",
+        "x-oden-precompiled": "/cache/dep_api.cwasm",
+        "x-oden-host-daemon-route": "1",
       },
     });
   };
@@ -572,10 +572,10 @@ test("runtime node can proxy matched worker requests through host daemon routes"
 
     assert.equal(hit.status, 202);
     assert.equal(hit.headers.get("x-daemon"), "yes");
-    assert.equal(hit.headers.get("x-wasmplane-request-id"), "req_proxy");
-    assert.equal(hit.headers.get("x-wasmplane-deployment"), "dep_api");
-    assert.equal(hit.headers.get("x-wasmplane-precompiled"), "/cache/dep_api.cwasm");
-    assert.equal(hit.headers.get("x-wasmplane-host-daemon-route"), "1");
+    assert.equal(hit.headers.get("x-oden-request-id"), "req_proxy");
+    assert.equal(hit.headers.get("x-oden-deployment"), "dep_api");
+    assert.equal(hit.headers.get("x-oden-precompiled"), "/cache/dep_api.cwasm");
+    assert.equal(hit.headers.get("x-oden-host-daemon-route"), "1");
     assert.equal(await hit.text(), "from daemon");
     assert.equal(invokerCalled, false);
     assert.deepEqual(preparedDeployments, ["dep_api"]);
@@ -601,12 +601,12 @@ test("host daemon worker proxy forwards host as x-forwarded-host", async () => {
   }, {
     method: "GET",
     path: "/sample",
-    headers: [{ name: "host", value: "rust-moonbit.sample.wasmplane.local" }],
+    headers: [{ name: "host", value: "rust-moonbit.sample.oden.local" }],
     body: new Uint8Array(),
   });
 
   assert.equal(response.status, 200);
-  assert.equal(proxiedHeaders.get("x-forwarded-host"), "rust-moonbit.sample.wasmplane.local");
+  assert.equal(proxiedHeaders.get("x-forwarded-host"), "rust-moonbit.sample.oden.local");
 });
 
 test("runtime node does not proxy worker paths that collide with host daemon management endpoints", async () => {
@@ -782,7 +782,7 @@ test("runtime node verifies signed snapshot publishes with identity keys", async
 });
 
 test("runtime node cache GC endpoint keeps prepared component files", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-runtime-cache-gc-"));
+  const dir = await mkdtemp(join(tmpdir(), "oden-runtime-cache-gc-"));
   const artifactDir = join(dir, "artifacts");
   const cwasmDir = join(dir, "cwasm");
   const activeArtifact = join(artifactDir, "active.wasm");
@@ -856,7 +856,7 @@ test("runtime node cache GC endpoint keeps prepared component files", async () =
 });
 
 test("runtime node invalidates precompiled cache variants while keeping active components", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-runtime-cwasm-invalidate-"));
+  const dir = await mkdtemp(join(tmpdir(), "oden-runtime-cwasm-invalidate-"));
   const cwasmDir = join(dir, "cwasm");
   const artifactDigest = createHash("sha256").update("api").digest("hex");
   const currentCwasm = join(cwasmDir, `dep_api-${artifactDigest}-engine-current.cwasm`);
@@ -909,7 +909,7 @@ test("runtime node invalidates precompiled cache variants while keeping active c
 });
 
 test("runtime node runs cache GC on a configured interval and stops it on close", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-runtime-cache-gc-interval-"));
+  const dir = await mkdtemp(join(tmpdir(), "oden-runtime-cache-gc-interval-"));
   const artifactDir = join(dir, "artifacts");
   const staleArtifact = join(artifactDir, "stale.wasm");
   await writeRuntimeCacheFile(staleArtifact, "stale artifact", "2026-06-26T08:00:00.000Z");
@@ -1576,7 +1576,7 @@ test("runtime node exposes structured worker request events", async () => {
       headers: { "x-forwarded-host": "hello.example.dev" },
     });
     assert.equal(hit.status, 202);
-    assert.equal(hit.headers.get("x-wasmplane-request-id"), "req_structured_1");
+    assert.equal(hit.headers.get("x-oden-request-id"), "req_structured_1");
 
     const eventsResponse = await fetch(`${baseUrl}/__runtime/events`);
     assert.equal(eventsResponse.status, 200);
@@ -1983,7 +1983,7 @@ test("runtime heartbeat client registers node and reports capacity", async () =>
       host: {
         backend: "wasmtime",
         wasi: "wasip3",
-        runtimeVersion: "wasmplane-runtime/0.1.0",
+        runtimeVersion: "oden-runtime/0.1.0",
         hostVersion: "wasmtime-43.0.0",
         engineVariant: "engine-current",
       },
@@ -1991,14 +1991,14 @@ test("runtime heartbeat client registers node and reports capacity", async () =>
     await sendRuntimeHeartbeat({
       controlPlaneUrl: control.baseUrl,
       runtimeNodeId: "rt_local",
-      version: "wasmplane-runtime/0.1.0",
+      version: "oden-runtime/0.1.0",
       capacity: { concurrentRequests: 128, memoryMb: 4096 },
       load: { activeRequests: 12 },
       identity: { keyId: "rt-key", certificateSha256: "a".repeat(64) },
       host: {
         backend: "wasmtime",
         wasi: "wasip3",
-        runtimeVersion: "wasmplane-runtime/0.1.0",
+        runtimeVersion: "oden-runtime/0.1.0",
         hostVersion: "wasmtime-43.0.0",
         engineVariant: "engine-current",
       },
@@ -2017,7 +2017,7 @@ test("runtime heartbeat client registers node and reports capacity", async () =>
           host: {
             backend: "wasmtime",
             wasi: "wasip3",
-            runtimeVersion: "wasmplane-runtime/0.1.0",
+            runtimeVersion: "oden-runtime/0.1.0",
             hostVersion: "wasmtime-43.0.0",
             engineVariant: "engine-current",
           },
@@ -2028,14 +2028,14 @@ test("runtime heartbeat client registers node and reports capacity", async () =>
         path: "/runtime-nodes/rt_local/heartbeat",
         body: {
           status: "active",
-          version: "wasmplane-runtime/0.1.0",
+          version: "oden-runtime/0.1.0",
           capacity: { concurrentRequests: 128, memoryMb: 4096 },
           load: { activeRequests: 12 },
           identity: { keyId: "rt-key", certificateSha256: "a".repeat(64) },
           host: {
             backend: "wasmtime",
             wasi: "wasip3",
-            runtimeVersion: "wasmplane-runtime/0.1.0",
+            runtimeVersion: "oden-runtime/0.1.0",
             hostVersion: "wasmtime-43.0.0",
             engineVariant: "engine-current",
           },
@@ -2082,7 +2082,7 @@ test("runtime heartbeat client sends bearer token when configured", async () => 
     await sendRuntimeHeartbeat({
       controlPlaneUrl: baseUrl,
       runtimeNodeId: "rt_local",
-      version: "wasmplane-runtime/0.1.0",
+      version: "oden-runtime/0.1.0",
       capacity: { concurrentRequests: 128, memoryMb: 4096 },
       token: "control-secret",
     });
@@ -2106,7 +2106,7 @@ test("runtime heartbeat client can report non-active lifecycle status", async ()
     await sendRuntimeHeartbeat({
       controlPlaneUrl: control.baseUrl,
       runtimeNodeId: "rt_draining",
-      version: "wasmplane-runtime/0.1.0",
+      version: "oden-runtime/0.1.0",
       status: "draining",
       capacity: { concurrentRequests: 128, memoryMb: 4096 },
       load: { activeRequests: 1 },
@@ -2118,7 +2118,7 @@ test("runtime heartbeat client can report non-active lifecycle status", async ()
         path: "/runtime-nodes/rt_draining/heartbeat",
         body: {
           status: "draining",
-          version: "wasmplane-runtime/0.1.0",
+          version: "oden-runtime/0.1.0",
           capacity: { concurrentRequests: 128, memoryMb: 4096 },
           load: { activeRequests: 1 },
         },
@@ -2131,8 +2131,8 @@ test("runtime heartbeat client can report non-active lifecycle status", async ()
 
 test("runtime env secret store resolves exact and normalized secret ids", async () => {
   const store = createEnvSecretStore({
-    WASMPLANE_SECRET_sec_api_key: "exact",
-    WASMPLANE_SECRET_SEC_OTHER: "normalized",
+    ODEN_SECRET_sec_api_key: "exact",
+    ODEN_SECRET_SEC_OTHER: "normalized",
   });
 
   assert.equal(await store.getSecret("sec_api_key"), "exact");

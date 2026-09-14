@@ -1,6 +1,6 @@
-# wasmplane Design
+# oden and odenctl Design
 
-This document describes wasmplane's current design. It assumes WASIp3 and the Wasmtime Component Model,
+This document describes odenctl's current design. It assumes WASIp3 and the Wasmtime Component Model,
 with WIT defining the platform API contract.
 
 ## Direction (2026-09-11)
@@ -9,15 +9,18 @@ Build around a standalone Wasm application runtime, with the control plane using
 Use the latest upstream stable Wasmtime or `mizchi/wasmtime-threads`.
 Wasmtime 48.0.2 is adopted, and a gateway adapter connects to `denoland/celld` Durable Objects.
 
-[Standalone Wasm runtime direction](docs/runtime-direction.md) covers responsibility boundaries,
+[Standalone Wasm runtime direction](docs/developer/runtime-direction.md) covers responsibility boundaries,
 engine selection, celld contracts, and the validation sequence.
-See the [runtime guide](docs/standalone-runtime.md) for the standalone CLI, permissions, and local celld validation.
+See the [runtime guide](docs/developer/standalone-runtime.md) for the standalone CLI, permissions, and local celld validation.
 The old custom worker WIT was removed; the node adapter also calls standard WASI HTTP.
-The following sections describe the control plane.
+The following sections describe the control plane. For current runnable workflows,
+start with the [runtime quickstart](docs/user/getting-started.md) or
+[deployment walkthrough](docs/user/control-plane.md). Historical measurements below
+are retained for design context, not as current performance guarantees.
 
 ## Current Implementation Goals
 
-wasmplane is a Wasm hosting control plane for building a Cloudflare Workers-like operational model on Wasmtime.
+odenctl is a Wasm hosting control plane for building a Cloudflare Workers-like operational model on Wasmtime.
 Its main goals are:
 
 - Register worker artifacts as immutable deployments.
@@ -82,7 +85,7 @@ A deployment holds the following immutable information:
 - Runtime backend/version/WASI profile
 - Resource limits
 - Capability policy
-- Secret/KV bindings
+- Legacy resource-binding metadata (not supported as guest imports by the current standard WASI adapter)
 
 A route is a mutable pointer to a single deployment or weighted targets.
 Canary releases and rollbacks are represented as route target changes.
@@ -108,15 +111,15 @@ Primary data:
 - route_snapshot_publications
 - audit events
 
-API authentication uses scoped bearer tokens. Legacy `WASMPLANE_API_TOKEN` retains full access;
-production uses `WASMPLANE_API_TOKENS` to separate `read`, `write`, `publish`, and `*` scopes.
+API authentication uses scoped bearer tokens. Legacy `ODENCTL_API_TOKEN` retains full access;
+production uses `ODENCTL_API_TOKENS` to separate `read`, `write`, `publish`, and `*` scopes.
 Mutations can be recorded in a JSONL audit sink.
 
 Schema migrations are tracked in `schema_migrations`. At startup, repository initialization applies known migrations,
 then compares the current/latest versions against the compiled migration catalog.
 Startup/check detects pending database migrations and future migrations unknown to the binary.
 
-Operational commands are `pnpm wasmplane migrate check|apply` and `just db-migrate-check|db-migrate-apply`.
+Operational commands are `pnpm odenctl migrate check|apply` and `just db-migrate-check|db-migrate-apply`.
 Before a production rollout, use `just pg-backup` to create a custom-format `pg_dump`.
 To roll back, stop writers, restore the backup with `just pg-restore`, then redeploy the previous application image.
 Down migrations are not automated.
@@ -134,7 +137,7 @@ and is exposed in artifact responses and route snapshots.
 
 Runtime nodes support materializing `file://`, `http://`, `https://`, private `s3://`, and `oci://` artifacts.
 Private S3/R2 artifacts are fetched with SigV4 GET and cached after digest verification.
-When `WASMPLANE_ARTIFACT_BUCKET` is set, `s3://` artifacts from other buckets are rejected.
+When `ODENCTL_ARTIFACT_BUCKET` is set, `s3://` artifacts from other buckets are rejected.
 For OCI artifacts, the node fetches the manifest through the registry v2 API and downloads only the layer
 matching the control plane artifact digest. `oci://registry/repo@sha256:<digest>` is treated as a digest-addressed
 blob pull. Private registries use a static bearer token or basic authentication.
@@ -192,7 +195,7 @@ active `keyId`, wait for the heartbeat update, then remove the old key. Actual m
 on the Fly private network or an edge proxy. This contract provides application-level proof of possession and
 certificate fingerprint pinning.
 
-Cache retention applies to `WASMPLANE_ARTIFACT_CACHE_DIR` and `WASMPLANE_CACHE_DIR`.
+Cache retention applies to `ODEN_ARTIFACT_CACHE_DIR` and `ODEN_CACHE_DIR`.
 Garbage collection first removes files older than the maximum age, then removes the oldest files if a directory
 still exceeds its byte limit. Materialized artifacts and `.cwasm` files referenced by prepared deployments are protected
 as keep paths, preserving the hot path during snapshot changes and warmup. Garbage collection can be triggered through
@@ -232,16 +235,16 @@ Daemon endpoints:
 
 Main settings:
 
-- `WASMPLANE_WASIP3_HOST_DAEMON=1`
-- `WASMPLANE_WASIP3_HOST_DAEMON_PORT`
-- `WASMPLANE_WASIP3_HOST_DAEMON_URL`
-- `WASMPLANE_WASIP3_HOST_MAX_PREPARED_COMPONENTS`
-- `WASMPLANE_WASIP3_HOST_MAX_CONCURRENT_INVOCATIONS`
-- `WASMPLANE_WASIP3_POOLING_TOTAL_COMPONENT_INSTANCES`
-- `WASMPLANE_WASIP3_POOLING_MEMORY_MB`
-- `WASMPLANE_WASIP3_POOLING_TOTAL_CORE_INSTANCES`
-- `WASMPLANE_WASIP3_POOLING_TOTAL_MEMORIES`
-- `WASMPLANE_WASIP3_POOLING_TOTAL_TABLES`
+- `ODEN_WASIP3_HOST_DAEMON=1`
+- `ODEN_WASIP3_HOST_DAEMON_PORT`
+- `ODEN_WASIP3_HOST_DAEMON_URL`
+- `ODEN_WASIP3_HOST_MAX_PREPARED_COMPONENTS`
+- `ODEN_WASIP3_HOST_MAX_CONCURRENT_INVOCATIONS`
+- `ODEN_WASIP3_POOLING_TOTAL_COMPONENT_INSTANCES`
+- `ODEN_WASIP3_POOLING_MEMORY_MB`
+- `ODEN_WASIP3_POOLING_TOTAL_CORE_INSTANCES`
+- `ODEN_WASIP3_POOLING_TOTAL_MEMORIES`
+- `ODEN_WASIP3_POOLING_TOTAL_TABLES`
 
 A `.cwasm` passed to a daemon using the pooling allocator must have been precompiled with an Engine using
 the same pooling configuration. The runtime backend aligns daemon-mode compile arguments and cache variants.
@@ -257,8 +260,8 @@ were removed, and configurations enabling them are rejected. Control plane resou
 and the Node-side storage facade remain independent APIs.
 
 Standalone execution can explicitly configure environment variables and preopened directories.
-celld actor calls use `wasmplane:durable/objects@0.1.0`.
-See the [runtime guide](docs/standalone-runtime.md).
+celld actor calls use `oden:durable/objects@0.1.0`.
+See the [runtime guide](docs/developer/standalone-runtime.md).
 
 ## Limits
 
@@ -373,7 +376,7 @@ Node-local state:
 
 - Materialized artifact cache
 - `.cwasm` cache
-- Host KV store
+- Optional bounded HTTP response cache, separate from executable caches
 - Daemon prepared component cache
 
 Scale-out adds runtime nodes and publishes route snapshots from the control plane to each node.
@@ -395,9 +398,15 @@ Approaching the density of Cloudflare Workers' 128 MB processes requires combini
 - Node-local `.cwasm` cache
 
 The isolate/process unit is currently represented by a Wasmtime Store/Instance rather than an OS process.
-Stores are not reused, favoring isolation while leaving some latency overhead.
+Deployment requests use fresh Stores; a cache hit skips execution. Standalone
+resident mode keeps one Store per service generation and is a separate execution mode.
 
-## Measured Local Performance
+## Historical Local Performance
+
+These measurements predate the current standard-WASI/rebranding work and do not
+establish current throughput. Rerun the [benchmark commands](docs/developer/control-plane-reference.md#benchmarks)
+for deployment nodes or the [service benchmark](docs/developer/service-benchmark.md) for
+standalone fresh/resident execution, recording the source revision and conditions.
 
 Local measurement conditions:
 
@@ -431,7 +440,7 @@ A minimal production-like deployment contains:
 - OTEL collector
 - Postgres
 - S3/R2 artifact store
-- Runtime persistent volume for cache/KV
+- Runtime persistent volume for artifact/compiled caches and accepted route snapshots
 
 The Fly.io trial uses:
 
@@ -455,7 +464,7 @@ Rationale:
 
 - Wasmtime, WASIp3, `.cwasm`, and the pooling allocator have clearer performance and isolation boundaries
   when built around long-lived runtime processes and node-local caches.
-- Cloudflare Workers isolates offer high density, but the current wasmplane Wasmtime host daemon cannot
+- Cloudflare Workers isolates offer high density, but the current odenctl Wasmtime host daemon cannot
   be assumed to run unchanged inside a Worker isolate.
 - Cloudflare Containers can run the existing Docker image, making them suitable for control plane smoke tests
   and API lifecycle validation. Container disks are not treated as production-persistent storage.

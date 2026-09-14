@@ -17,7 +17,7 @@ just telemetry-compose \
   example:boundary/operations@0.1.0 \
   target/telemetry-moonbit-composed.wasm \
   --app examples/telemetry-composition/moonbit/app/target/service.wasm
-target/debug/wasmplane serve target/telemetry-moonbit-composed.wasm --resident
+target/debug/oden serve target/telemetry-moonbit-composed.wasm --resident
 ```
 
 Run `just rust-build` first if the host executable has not been built. Set

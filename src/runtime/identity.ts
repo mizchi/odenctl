@@ -1,9 +1,9 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 
-export const RUNTIME_IDENTITY_KEY_ID_HEADER = "x-wasmplane-runtime-identity-key-id";
-export const RUNTIME_IDENTITY_SIGNATURE_HEADER = "x-wasmplane-runtime-signature";
-export const RUNTIME_IDENTITY_TIMESTAMP_HEADER = "x-wasmplane-runtime-signature-timestamp";
-export const RUNTIME_IDENTITY_ALGORITHM_HEADER = "x-wasmplane-runtime-signature-algorithm";
+export const RUNTIME_IDENTITY_KEY_ID_HEADER = "x-oden-runtime-identity-key-id";
+export const RUNTIME_IDENTITY_SIGNATURE_HEADER = "x-oden-runtime-signature";
+export const RUNTIME_IDENTITY_TIMESTAMP_HEADER = "x-oden-runtime-signature-timestamp";
+export const RUNTIME_IDENTITY_ALGORITHM_HEADER = "x-oden-runtime-signature-algorithm";
 
 export interface RuntimeIdentitySignInput {
   method: string;

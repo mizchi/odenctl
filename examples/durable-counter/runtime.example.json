@@ -4,7 +4,7 @@
     "counter": {
       "endpoint": "http://127.0.0.1:9876",
       "namespace": "COUNTER",
-      "token_env": "WASMPLANE_GATEWAY_TOKEN"
+      "token_env": "ODEN_GATEWAY_TOKEN"
     }
   }
 }

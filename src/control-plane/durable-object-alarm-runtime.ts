@@ -71,37 +71,37 @@ export function createConfiguredDurableObjectAlarmDispatcherJobs(
   options: ConfiguredDurableObjectAlarmDispatcherOptions,
 ) {
   const env = options.env ?? process.env;
-  const intervalMs = optionalPositiveInteger(env.WASMPLANE_DURABLE_OBJECT_ALARM_INTERVAL_MS);
+  const intervalMs = optionalPositiveInteger(env.ODENCTL_DURABLE_OBJECT_ALARM_INTERVAL_MS);
   if (!intervalMs) {
     return [];
   }
   if (!options.registry) {
-    throw new Error("WASMPLANE_DURABLE_OBJECT_ALARM_INTERVAL_MS requires WASMPLANE_VOLUME_SQLITE_ROOT");
+    throw new Error("ODENCTL_DURABLE_OBJECT_ALARM_INTERVAL_MS requires ODENCTL_VOLUME_SQLITE_ROOT");
   }
   const namespaces = csv(firstNonEmpty(
-    env.WASMPLANE_DURABLE_OBJECT_ALARM_NAMESPACES,
-    env.WASMPLANE_DURABLE_OBJECT_ALARM_NAMESPACE,
+    env.ODENCTL_DURABLE_OBJECT_ALARM_NAMESPACES,
+    env.ODENCTL_DURABLE_OBJECT_ALARM_NAMESPACE,
   ));
   if (namespaces.length === 0) {
     throw new Error(
-      "WASMPLANE_DURABLE_OBJECT_ALARM_INTERVAL_MS requires WASMPLANE_DURABLE_OBJECT_ALARM_NAMESPACES",
+      "ODENCTL_DURABLE_OBJECT_ALARM_INTERVAL_MS requires ODENCTL_DURABLE_OBJECT_ALARM_NAMESPACES",
     );
   }
-  const webhookUrl = firstNonEmpty(env.WASMPLANE_DURABLE_OBJECT_ALARM_WEBHOOK_URL);
+  const webhookUrl = firstNonEmpty(env.ODENCTL_DURABLE_OBJECT_ALARM_WEBHOOK_URL);
   if (!webhookUrl) {
     throw new Error(
-      "WASMPLANE_DURABLE_OBJECT_ALARM_INTERVAL_MS requires WASMPLANE_DURABLE_OBJECT_ALARM_WEBHOOK_URL",
+      "ODENCTL_DURABLE_OBJECT_ALARM_INTERVAL_MS requires ODENCTL_DURABLE_OBJECT_ALARM_WEBHOOK_URL",
     );
   }
   const handler = createDurableObjectAlarmWebhookHandler({
     url: webhookUrl,
-    token: firstNonEmpty(env.WASMPLANE_DURABLE_OBJECT_ALARM_WEBHOOK_TOKEN),
-    timeoutMs: positiveInteger(envInteger(env.WASMPLANE_DURABLE_OBJECT_ALARM_WEBHOOK_TIMEOUT_MS), 10_000),
+    token: firstNonEmpty(env.ODENCTL_DURABLE_OBJECT_ALARM_WEBHOOK_TOKEN),
+    timeoutMs: positiveInteger(envInteger(env.ODENCTL_DURABLE_OBJECT_ALARM_WEBHOOK_TIMEOUT_MS), 10_000),
     fetchFn: options.fetchFn,
   });
-  const limit = optionalPositiveInteger(env.WASMPLANE_DURABLE_OBJECT_ALARM_LIMIT);
+  const limit = optionalPositiveInteger(env.ODENCTL_DURABLE_OBJECT_ALARM_LIMIT);
   const reportIdleTicks = options.reportIdleTicks
-    ?? env.WASMPLANE_DURABLE_OBJECT_ALARM_LOG_IDLE_TICKS === "1";
+    ?? env.ODENCTL_DURABLE_OBJECT_ALARM_LOG_IDLE_TICKS === "1";
 
   return namespaces.map((namespaceName) => {
     const namespace = createDurableObjectStorageNamespace({

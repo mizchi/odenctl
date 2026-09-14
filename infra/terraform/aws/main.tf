@@ -6,13 +6,13 @@ locals {
   control_env = [
     { name = "HOST", value = "0.0.0.0" },
     { name = "PORT", value = "8080" },
-    { name = "WASMPLANE_ARTIFACT_STORE", value = "s3" },
-    { name = "WASMPLANE_ARTIFACT_BUCKET", value = aws_s3_bucket.artifacts.bucket },
-    { name = "WASMPLANE_ARTIFACT_REGION", value = var.region },
-    { name = "WASMPLANE_RUNTIME_NODES", value = "https://${var.runtime_host}" },
-    { name = "WASMPLANE_REQUIRE_EXTERNAL_DATABASE", value = "1" },
-    { name = "WASMPLANE_REQUIRE_EXTERNAL_ARTIFACT_STORE", value = "1" },
-    { name = "WASMPLANE_WASIP3_HOST_BIN", value = "/usr/local/bin/wasmplane-wasip3-host" }
+    { name = "ODENCTL_ARTIFACT_STORE", value = "s3" },
+    { name = "ODENCTL_ARTIFACT_BUCKET", value = aws_s3_bucket.artifacts.bucket },
+    { name = "ODENCTL_ARTIFACT_REGION", value = var.region },
+    { name = "ODENCTL_RUNTIME_NODES", value = "https://${var.runtime_host}" },
+    { name = "ODENCTL_REQUIRE_EXTERNAL_DATABASE", value = "1" },
+    { name = "ODENCTL_REQUIRE_EXTERNAL_ARTIFACT_STORE", value = "1" },
+    { name = "ODEN_WASIP3_HOST_BIN", value = "/usr/local/bin/oden-host" }
   ]
 
   runtime_env = [
@@ -20,15 +20,15 @@ locals {
     { name = "RUNTIME_PORT", value = "8080" },
     { name = "RUNTIME_PUBLIC_URL", value = "https://${var.runtime_host}" },
     { name = "CONTROL_PLANE_URL", value = "https://${var.control_host}" },
-    { name = "WASMPLANE_CACHE_DIR", value = "/tmp/wasmplane/cache" },
-    { name = "WASMPLANE_ARTIFACT_CACHE_DIR", value = "/tmp/wasmplane/artifacts" },
-    { name = "WASMPLANE_WASIP3_HOST_BIN", value = "/usr/local/bin/wasmplane-wasip3-host" },
-    { name = "WASMPLANE_WASIP3_HOST_DAEMON", value = "1" },
-    { name = "WASMPLANE_WASIP3_HOST_DAEMON_ROUTES", value = "1" },
-    { name = "WASMPLANE_WASIP3_HOST_DAEMON_WORKER_PROXY", value = "1" },
-    { name = "WASMPLANE_WASIP3_HOST_DAEMON_PORT", value = "8790" },
-    { name = "WASMPLANE_WASIP3_HOST_MAX_PREPARED_COMPONENTS", value = "512" },
-    { name = "WASMPLANE_WASIP3_HOST_MAX_CONCURRENT_INVOCATIONS", value = "64" }
+    { name = "ODEN_CACHE_DIR", value = "/tmp/odenctl/cache" },
+    { name = "ODEN_ARTIFACT_CACHE_DIR", value = "/tmp/odenctl/artifacts" },
+    { name = "ODEN_WASIP3_HOST_BIN", value = "/usr/local/bin/oden-host" },
+    { name = "ODEN_WASIP3_HOST_DAEMON", value = "1" },
+    { name = "ODEN_WASIP3_HOST_DAEMON_ROUTES", value = "1" },
+    { name = "ODEN_WASIP3_HOST_DAEMON_WORKER_PROXY", value = "1" },
+    { name = "ODEN_WASIP3_HOST_DAEMON_PORT", value = "8790" },
+    { name = "ODEN_WASIP3_HOST_MAX_PREPARED_COMPONENTS", value = "512" },
+    { name = "ODEN_WASIP3_HOST_MAX_CONCURRENT_INVOCATIONS", value = "64" }
   ]
 }
 
@@ -98,7 +98,7 @@ resource "aws_cloudwatch_log_group" "runtime" {
 
 resource "aws_security_group" "alb" {
   name        = "${var.name}-alb"
-  description = "wasmplane public ALB"
+  description = "odenctl public ALB"
   vpc_id      = var.vpc_id
   tags        = local.tags
 
@@ -119,7 +119,7 @@ resource "aws_security_group" "alb" {
 
 resource "aws_security_group" "tasks" {
   name        = "${var.name}-tasks"
-  description = "wasmplane ECS tasks"
+  description = "odenctl ECS tasks"
   vpc_id      = var.vpc_id
   tags        = local.tags
 
@@ -234,10 +234,10 @@ resource "aws_ecs_task_definition" "control" {
       environment  = local.control_env
       secrets = [
         { name = "DATABASE_URL", valueFrom = var.database_url_secret_arn },
-        { name = "WASMPLANE_API_TOKEN", valueFrom = var.api_token_secret_arn },
-        { name = "WASMPLANE_RUNTIME_TOKEN", valueFrom = var.runtime_token_secret_arn },
-        { name = "WASMPLANE_ARTIFACT_ACCESS_KEY_ID", valueFrom = var.artifact_access_key_id_secret_arn },
-        { name = "WASMPLANE_ARTIFACT_SECRET_ACCESS_KEY", valueFrom = var.artifact_secret_access_key_secret_arn }
+        { name = "ODENCTL_API_TOKEN", valueFrom = var.api_token_secret_arn },
+        { name = "ODEN_RUNTIME_TOKEN", valueFrom = var.runtime_token_secret_arn },
+        { name = "ODENCTL_ARTIFACT_ACCESS_KEY_ID", valueFrom = var.artifact_access_key_id_secret_arn },
+        { name = "ODENCTL_ARTIFACT_SECRET_ACCESS_KEY", valueFrom = var.artifact_secret_access_key_secret_arn }
       ]
       logConfiguration = {
         logDriver = "awslogs"
@@ -271,10 +271,10 @@ resource "aws_ecs_task_definition" "runtime" {
       portMappings = [{ containerPort = 8080, protocol = "tcp" }]
       environment  = local.runtime_env
       secrets = [
-        { name = "WASMPLANE_CONTROL_PLANE_TOKEN", valueFrom = var.api_token_secret_arn },
-        { name = "WASMPLANE_RUNTIME_TOKEN", valueFrom = var.runtime_token_secret_arn },
-        { name = "WASMPLANE_ARTIFACT_ACCESS_KEY_ID", valueFrom = var.artifact_access_key_id_secret_arn },
-        { name = "WASMPLANE_ARTIFACT_SECRET_ACCESS_KEY", valueFrom = var.artifact_secret_access_key_secret_arn }
+        { name = "ODENCTL_CONTROL_PLANE_TOKEN", valueFrom = var.api_token_secret_arn },
+        { name = "ODEN_RUNTIME_TOKEN", valueFrom = var.runtime_token_secret_arn },
+        { name = "ODENCTL_ARTIFACT_ACCESS_KEY_ID", valueFrom = var.artifact_access_key_id_secret_arn },
+        { name = "ODENCTL_ARTIFACT_SECRET_ACCESS_KEY", valueFrom = var.artifact_secret_access_key_secret_arn }
       ]
       logConfiguration = {
         logDriver = "awslogs"

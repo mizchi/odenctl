@@ -28,11 +28,11 @@ export interface OperationalConfig {
 export function operationalConfigFromEnv(
   env: Record<string, string | undefined> = process.env,
 ): OperationalConfig {
-  const databaseKind: OperationalDatabaseKind = firstNonEmpty(env.DATABASE_URL, env.WASMPLANE_DATABASE_URL)
+  const databaseKind: OperationalDatabaseKind = firstNonEmpty(env.DATABASE_URL, env.ODENCTL_DATABASE_URL)
     ? "postgres"
     : "sqlite";
-  const artifactStoreKind = (firstNonEmpty(env.WASMPLANE_ARTIFACT_STORE) ?? "local").toLowerCase();
-  const durableObjectAlarmNamespaces = csv(env.WASMPLANE_DURABLE_OBJECT_ALARM_NAMESPACES);
+  const artifactStoreKind = (firstNonEmpty(env.ODENCTL_ARTIFACT_STORE) ?? "local").toLowerCase();
+  const durableObjectAlarmNamespaces = csv(env.ODENCTL_DURABLE_OBJECT_ALARM_NAMESPACES);
   return {
     schemaVersion: 1,
     database: {
@@ -44,16 +44,16 @@ export function operationalConfigFromEnv(
       external: artifactStoreKind !== "local" && artifactStoreKind !== "file",
     },
     volumeSqlite: {
-      enabled: Boolean(firstNonEmpty(env.WASMPLANE_VOLUME_SQLITE_ROOT)),
+      enabled: Boolean(firstNonEmpty(env.ODENCTL_VOLUME_SQLITE_ROOT)),
     },
     runtimeNodes: {
-      staticTargets: csv(env.WASMPLANE_RUNTIME_NODES).length,
+      staticTargets: csv(env.ODENCTL_RUNTIME_NODES).length,
     },
     routeSnapshotReplicas: {
-      configured: csv(env.WASMPLANE_ROUTE_SNAPSHOT_REPLICAS).length,
+      configured: csv(env.ODENCTL_ROUTE_SNAPSHOT_REPLICAS).length,
     },
     durableObjectAlarms: {
-      enabled: Boolean(firstNonEmpty(env.WASMPLANE_DURABLE_OBJECT_ALARM_INTERVAL_MS))
+      enabled: Boolean(firstNonEmpty(env.ODENCTL_DURABLE_OBJECT_ALARM_INTERVAL_MS))
         && durableObjectAlarmNamespaces.length > 0,
       namespaces: durableObjectAlarmNamespaces,
     },
@@ -64,11 +64,11 @@ export function assertOperationalRequirements(
   config: OperationalConfig,
   env: Record<string, string | undefined> = process.env,
 ): void {
-  if (truthy(env.WASMPLANE_REQUIRE_EXTERNAL_DATABASE) && config.database.kind !== "postgres") {
-    throw new Error("WASMPLANE_REQUIRE_EXTERNAL_DATABASE requires DATABASE_URL or WASMPLANE_DATABASE_URL");
+  if (truthy(env.ODENCTL_REQUIRE_EXTERNAL_DATABASE) && config.database.kind !== "postgres") {
+    throw new Error("ODENCTL_REQUIRE_EXTERNAL_DATABASE requires DATABASE_URL or ODENCTL_DATABASE_URL");
   }
-  if (truthy(env.WASMPLANE_REQUIRE_EXTERNAL_ARTIFACT_STORE) && !config.artifactStore.external) {
-    throw new Error("WASMPLANE_REQUIRE_EXTERNAL_ARTIFACT_STORE requires an external artifact store");
+  if (truthy(env.ODENCTL_REQUIRE_EXTERNAL_ARTIFACT_STORE) && !config.artifactStore.external) {
+    throw new Error("ODENCTL_REQUIRE_EXTERNAL_ARTIFACT_STORE requires an external artifact store");
   }
 }
 

@@ -1,5 +1,5 @@
 {
-  "name": "wasmplane-cloudflare-control-poc",
+  "name": "odenctl-cloudflare-control-poc",
   "private": true,
   "type": "module",
   "scripts": {

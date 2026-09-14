@@ -242,7 +242,7 @@ name = "service-rust"
 version = "0.1.0"
 dependencies = [
  "serde_json",
- "wasmplane-service-sdk",
+ "oden-service-sdk",
 ]
 
 [[package]]
@@ -312,7 +312,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "wasmplane-service-sdk"
+name = "oden-service-sdk"
 version = "0.1.0"
 dependencies = [
  "wasip3",

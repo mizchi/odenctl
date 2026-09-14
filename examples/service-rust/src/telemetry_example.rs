@@ -1,11 +1,11 @@
-use wasmplane_service_sdk::{durable, io, sleep_ms, telemetry as t, types};
+use oden_service_sdk::{durable, io, sleep_ms, telemetry as t, types};
 pub async fn handle(request: &types::Request) -> String {
     let parent = t::from_request(request);
     let span = t::start_span(parent.as_ref(), "example.work");
     let context = span.as_ref().map(|s| s.context()).or(parent);
     t::log(context.as_ref(), t::Level::Info, "example.foreground", &[]);
     let captured = context.clone();
-    wasmplane_service_sdk::wasip3::wit_bindgen::spawn_local(async move {
+    oden_service_sdk::wasip3::wit_bindgen::spawn_local(async move {
         sleep_ms(40).await;
         t::log(captured.as_ref(), t::Level::Info, "example.background", &[]);
         if let Some(span) = t::background("example.detached", captured.as_ref()) {

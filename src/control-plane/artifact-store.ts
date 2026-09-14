@@ -141,18 +141,18 @@ export function createS3ControlPlaneArtifactStore(
 export function createConfiguredControlPlaneArtifactStore(
   env: Record<string, string | undefined> = process.env,
 ): ControlPlaneArtifactStore {
-  const artifactStoreKind = env.WASMPLANE_ARTIFACT_STORE?.trim().toLowerCase();
-  const bucket = firstNonEmpty(env.WASMPLANE_ARTIFACT_BUCKET);
+  const artifactStoreKind = env.ODENCTL_ARTIFACT_STORE?.trim().toLowerCase();
+  const bucket = firstNonEmpty(env.ODENCTL_ARTIFACT_BUCKET);
   if (artifactStoreKind === "s3" || bucket) {
     if (!bucket) {
-      throw new ControlPlaneError("validation", "WASMPLANE_ARTIFACT_BUCKET is required");
+      throw new ControlPlaneError("validation", "ODENCTL_ARTIFACT_BUCKET is required");
     }
     const accessKeyId = firstNonEmpty(
-      env.WASMPLANE_ARTIFACT_ACCESS_KEY_ID,
+      env.ODENCTL_ARTIFACT_ACCESS_KEY_ID,
       env.AWS_ACCESS_KEY_ID,
     );
     const secretAccessKey = firstNonEmpty(
-      env.WASMPLANE_ARTIFACT_SECRET_ACCESS_KEY,
+      env.ODENCTL_ARTIFACT_SECRET_ACCESS_KEY,
       env.AWS_SECRET_ACCESS_KEY,
     );
     if (!accessKeyId || !secretAccessKey) {
@@ -163,17 +163,17 @@ export function createConfiguredControlPlaneArtifactStore(
     }
     return createS3ControlPlaneArtifactStore({
       bucket,
-      prefix: firstNonEmpty(env.WASMPLANE_ARTIFACT_PREFIX),
-      endpoint: firstNonEmpty(env.WASMPLANE_ARTIFACT_ENDPOINT),
-      region: firstNonEmpty(env.WASMPLANE_ARTIFACT_REGION, env.AWS_REGION),
+      prefix: firstNonEmpty(env.ODENCTL_ARTIFACT_PREFIX),
+      endpoint: firstNonEmpty(env.ODENCTL_ARTIFACT_ENDPOINT),
+      region: firstNonEmpty(env.ODENCTL_ARTIFACT_REGION, env.AWS_REGION),
       accessKeyId,
       secretAccessKey,
-      sessionToken: firstNonEmpty(env.WASMPLANE_ARTIFACT_SESSION_TOKEN, env.AWS_SESSION_TOKEN),
-      publicBaseUrl: fixedPublicBaseUrl(env.WASMPLANE_ARTIFACT_PUBLIC_BASE_URL),
+      sessionToken: firstNonEmpty(env.ODENCTL_ARTIFACT_SESSION_TOKEN, env.AWS_SESSION_TOKEN),
+      publicBaseUrl: fixedPublicBaseUrl(env.ODENCTL_ARTIFACT_PUBLIC_BASE_URL),
     });
   }
   return createFileControlPlaneArtifactStore({
-    storeDir: firstNonEmpty(env.WASMPLANE_ARTIFACT_DIR) ?? ".wasmplane/artifacts",
+    storeDir: firstNonEmpty(env.ODENCTL_ARTIFACT_DIR) ?? ".odenctl/artifacts",
   });
 }
 

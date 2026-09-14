@@ -1,0 +1,13 @@
+[package]
+name = "wasm-app"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+oden-service-sdk = { path = "vendor/oden-sdk" }

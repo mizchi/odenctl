@@ -144,7 +144,7 @@ export function runtimePlacementPolicyFromEnv(
   env: Record<string, string | undefined> = process.env,
 ): RuntimePlacementPolicy | undefined {
   const projects = isolationProjectsFromEnv(env);
-  const drainedProjects = commaList(env.WASMPLANE_DRAINED_PROJECTS);
+  const drainedProjects = commaList(env.ODENCTL_DRAINED_PROJECTS);
   if (Object.keys(projects).length === 0 && drainedProjects.length === 0) {
     return undefined;
   }
@@ -299,9 +299,9 @@ function placedSnapshotId(generatedAt: string, routes: RouteSnapshot["routes"]):
 }
 
 function isolationProjectsFromEnv(env: Record<string, string | undefined>): Record<string, RuntimePlacementRule> {
-  const labelKey = env.WASMPLANE_ISOLATION_POOL_LABEL_KEY?.trim() || "pool";
+  const labelKey = env.ODENCTL_ISOLATION_POOL_LABEL_KEY?.trim() || "pool";
   const projects: Record<string, RuntimePlacementRule> = {};
-  for (const [projectId, pool] of projectValues(env.WASMPLANE_ISOLATION_POOL_PROJECTS)) {
+  for (const [projectId, pool] of projectValues(env.ODENCTL_ISOLATION_POOL_PROJECTS)) {
     projects[projectId] = { labels: { [labelKey]: pool } };
   }
   return projects;

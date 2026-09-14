@@ -10,7 +10,7 @@ source:
   - `src/control-plane/contracts.ts`: `CapabilityPolicy` and capability normalization.
   - `src/control-plane/service.ts`, `src/control-plane/async-service.ts`: deployment-time target validation.
   - `src/control-plane/admission.ts`: production admission guardrails.
-  - `crates/wasip3-host/src/lib.rs`: Wasmtime host policy enforcement.
+  - `crates/oden/src/lib.rs`: Wasmtime host policy enforcement.
 
 tool:
   bounded TypeScript capability relation model

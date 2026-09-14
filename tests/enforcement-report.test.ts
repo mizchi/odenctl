@@ -4,11 +4,11 @@ import { projectEnforcementPoliciesFromEnv } from "../src/control-plane/enforcem
 
 test("project enforcement policies parse control-plane environment limits", () => {
   assert.deepEqual(projectEnforcementPoliciesFromEnv({
-    WASMPLANE_ENFORCEMENT_CPU_MS_LIMITS: "prj_a=100, prj_b=200",
-    WASMPLANE_ENFORCEMENT_MEMORY_MB_MS_LIMITS: "prj_a=4096",
-    WASMPLANE_ENFORCEMENT_STORAGE_BYTES_LIMITS: "prj_a=1024, prj_b=2048",
-    WASMPLANE_ENFORCEMENT_CONCURRENCY_LIMITS: "prj_a=8",
-    WASMPLANE_ENFORCEMENT_RATE_LIMITS: "prj_a=50:100, prj_b=25",
+    ODENCTL_ENFORCEMENT_CPU_MS_LIMITS: "prj_a=100, prj_b=200",
+    ODENCTL_ENFORCEMENT_MEMORY_MB_MS_LIMITS: "prj_a=4096",
+    ODENCTL_ENFORCEMENT_STORAGE_BYTES_LIMITS: "prj_a=1024, prj_b=2048",
+    ODENCTL_ENFORCEMENT_CONCURRENCY_LIMITS: "prj_a=8",
+    ODENCTL_ENFORCEMENT_RATE_LIMITS: "prj_a=50:100, prj_b=25",
   }), {
     prj_a: {
       cpuMs: 100,

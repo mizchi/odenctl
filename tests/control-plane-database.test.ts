@@ -12,31 +12,31 @@ import {
 test("control-plane database config prefers DATABASE_URL Postgres over local SQLite", () => {
   assert.deepEqual(resolveControlPlaneDatabaseConfig({}), {
     kind: "sqlite",
-    path: "wasmplane.sqlite",
+    path: "odenctl.sqlite",
   });
-  assert.deepEqual(resolveControlPlaneDatabaseConfig({ WASMPLANE_DB: "/data/control.sqlite" }), {
+  assert.deepEqual(resolveControlPlaneDatabaseConfig({ ODENCTL_DB: "/data/control.sqlite" }), {
     kind: "sqlite",
     path: "/data/control.sqlite",
   });
   assert.deepEqual(
     resolveControlPlaneDatabaseConfig({
-      DATABASE_URL: "postgres://user:secret@db.example.com:5432/wasmplane?sslmode=require",
-      WASMPLANE_DB: "/data/control.sqlite",
+      DATABASE_URL: "postgres://user:secret@db.example.com:5432/odenctl?sslmode=require",
+      ODENCTL_DB: "/data/control.sqlite",
     }),
     {
       kind: "postgres",
-      url: "postgres://user:secret@db.example.com:5432/wasmplane?sslmode=require",
+      url: "postgres://user:secret@db.example.com:5432/odenctl?sslmode=require",
       ssl: true,
     },
   );
   assert.deepEqual(
     resolveControlPlaneDatabaseConfig({
-      WASMPLANE_DATABASE_URL: "postgres://user:secret@db.internal:5432/wasmplane",
-      WASMPLANE_POSTGRES_SSL: "0",
+      ODENCTL_DATABASE_URL: "postgres://user:secret@db.internal:5432/odenctl",
+      ODENCTL_POSTGRES_SSL: "0",
     }),
     {
       kind: "postgres",
-      url: "postgres://user:secret@db.internal:5432/wasmplane",
+      url: "postgres://user:secret@db.internal:5432/odenctl",
       ssl: false,
     },
   );
@@ -117,11 +117,11 @@ test("Postgres schema covers control-plane tables without SQLite-only syntax", a
 });
 
 test("control-plane migration status tracks SQLite schema version", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-migration-status-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-migration-status-"));
   const dbPath = join(dir, "control.sqlite");
 
   const pending = await checkConfiguredControlPlaneMigrations({
-    env: { WASMPLANE_DB: dbPath },
+    env: { ODENCTL_DB: dbPath },
   });
   assert.equal(pending.kind, "sqlite");
   assert.equal(pending.ok, false);
@@ -130,7 +130,7 @@ test("control-plane migration status tracks SQLite schema version", async () => 
   assert.ok(pending.pending.includes(pending.latestVersion));
 
   const applied = await applyConfiguredControlPlaneMigrations({
-    env: { WASMPLANE_DB: dbPath },
+    env: { ODENCTL_DB: dbPath },
   });
   assert.equal(applied.ok, true);
   assert.equal(applied.currentVersion, applied.latestVersion);

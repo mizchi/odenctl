@@ -75,19 +75,19 @@ export function verifyBillingInvoiceExportBundle(
 export function billingInvoiceExportSignerFromEnv(
   env: Record<string, string | undefined>,
 ): BillingInvoiceExportSigner | undefined {
-  const keyId = firstNonEmpty(env.WASMPLANE_BILLING_EXPORT_SIGNATURE_KEY_ID);
-  const keyBase64 = firstNonEmpty(env.WASMPLANE_BILLING_EXPORT_SIGNATURE_KEY_BASE64);
-  const keyText = firstNonEmpty(env.WASMPLANE_BILLING_EXPORT_SIGNATURE_KEY);
+  const keyId = firstNonEmpty(env.ODENCTL_BILLING_EXPORT_SIGNATURE_KEY_ID);
+  const keyBase64 = firstNonEmpty(env.ODENCTL_BILLING_EXPORT_SIGNATURE_KEY_BASE64);
+  const keyText = firstNonEmpty(env.ODENCTL_BILLING_EXPORT_SIGNATURE_KEY);
   if (!keyId && !keyBase64 && !keyText) {
     return undefined;
   }
   if (!keyId) {
-    throw new ControlPlaneError("validation", "WASMPLANE_BILLING_EXPORT_SIGNATURE_KEY_ID is required");
+    throw new ControlPlaneError("validation", "ODENCTL_BILLING_EXPORT_SIGNATURE_KEY_ID is required");
   }
   if (!keyBase64 && !keyText) {
     throw new ControlPlaneError(
       "validation",
-      "WASMPLANE_BILLING_EXPORT_SIGNATURE_KEY_BASE64 or WASMPLANE_BILLING_EXPORT_SIGNATURE_KEY is required",
+      "ODENCTL_BILLING_EXPORT_SIGNATURE_KEY_BASE64 or ODENCTL_BILLING_EXPORT_SIGNATURE_KEY is required",
     );
   }
   const key = keyBase64 ? Buffer.from(keyBase64, "base64") : Buffer.from(keyText ?? "");

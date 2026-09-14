@@ -383,6 +383,7 @@ export class DurableObjectSqlRawCursor implements Iterable<unknown[]> {
   }
 }
 
+// Persisted table names predate the odenctl branding.
 const kvTable = "__wasmplane_do_kv";
 const metaTable = "__wasmplane_do_meta";
 const alarmMetaKey = "alarm_at_ms";

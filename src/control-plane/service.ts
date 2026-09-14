@@ -2697,7 +2697,7 @@ function betaOnboardingBundle(input: {
   deployKey: CreateApiKeyOutput;
   defaultHost?: string;
 }): BetaOnboarding {
-  const host = input.defaultHost ? normalizeHost(input.defaultHost) : `${input.project.id}.wasmplane.local`;
+  const host = input.defaultHost ? normalizeHost(input.defaultHost) : `${input.project.id}.oden.local`;
   return {
     organization: input.organization,
     user: input.user,
@@ -2717,9 +2717,9 @@ function betaOnboardingBundle(input: {
       { id: "billing-review", title: "Review billing statement", done: false },
     ],
     next: {
-      tokenEnv: "WASMPLANE_CONTROL_PLANE_TOKEN",
+      tokenEnv: "ODENCTL_CONTROL_PLANE_TOKEN",
       deployCommand:
-        `WASMPLANE_CONTROL_PLANE_TOKEN=<deploy-token> pnpm wasmplane deploy --project-id ${input.project.id} --component ./worker.component.wasm --host ${host}`,
+        `ODENCTL_CONTROL_PLANE_TOKEN=<deploy-token> pnpm odenctl deploy --project-id ${input.project.id} --component ./worker.component.wasm --host ${host}`,
       usageUrl: `/projects/${encodeURIComponent(input.project.id)}/usage`,
       billingUrl: `/projects/${encodeURIComponent(input.project.id)}/billing-statement`,
       apiKeysUrl: `/projects/${encodeURIComponent(input.project.id)}/api-keys`,
@@ -2728,11 +2728,11 @@ function betaOnboardingBundle(input: {
 }
 
 function customDomainVerificationRecordName(host: string): string {
-  return `_wasmplane-challenge.${host}`;
+  return `_odenctl-challenge.${host}`;
 }
 
 function customDomainVerificationRecordValue(token: string): string {
-  return `wasmplane-domain-verification=${token}`;
+  return `odenctl-domain-verification=${token}`;
 }
 
 function txtRecordValues(value: unknown): string[] {
@@ -2787,11 +2787,11 @@ function deployPreviewUrl(host: string, pathPrefix: string): string {
 }
 
 function defaultDeployPreviewHost(projectId: string, deploymentId: string): string {
-  return `${dnsLabel(deploymentId)}.${dnsLabel(projectId)}.preview.wasmplane.local`;
+  return `${dnsLabel(deploymentId)}.${dnsLabel(projectId)}.preview.oden.local`;
 }
 
 function defaultEdgeWorkerScriptName(projectId: string, deploymentId: string): string {
-  const label = `wasmplane-${dnsLabel(projectId)}-${dnsLabel(deploymentId)}`;
+  const label = `odenctl-${dnsLabel(projectId)}-${dnsLabel(deploymentId)}`;
   if (label.length <= 63) {
     return label;
   }

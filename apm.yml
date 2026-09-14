@@ -1,6 +1,6 @@
-name: wasmplane
+name: odenctl
 version: 1.0.0
-description: APM project for wasmplane
+description: APM project for odenctl
 author: mizchi
 targets:
   - codex

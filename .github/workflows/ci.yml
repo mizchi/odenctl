@@ -24,9 +24,9 @@ jobs:
           node-version: "24"
       - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
       - name: Build the deployment image on Linux
-        run: just aws-image-build wasmplane-service:ci linux/amd64
+        run: just aws-image-build oden-service:ci linux/amd64
       - name: Verify HTTP and graceful restarts in the restricted container
-        run: just aws-container-test wasmplane-service:ci
+        run: just aws-container-test oden-service:ci
 
   test:
     runs-on: ubuntu-latest
@@ -58,10 +58,10 @@ jobs:
             ~/.cargo/git/db
             target
             examples/**/target
-          key: ${{ runner.os }}-rust-wasmplane-${{ github.job }}-${{ hashFiles('Cargo.lock', '**/Cargo.lock', '**/Cargo.toml', 'justfile') }}
+          key: ${{ runner.os }}-rust-odenctl-${{ github.job }}-${{ hashFiles('Cargo.lock', '**/Cargo.lock', '**/Cargo.toml', 'justfile') }}
           restore-keys: |
-            ${{ runner.os }}-rust-wasmplane-${{ github.job }}-
-            ${{ runner.os }}-rust-wasmplane-
+            ${{ runner.os }}-rust-odenctl-${{ github.job }}-
+            ${{ runner.os }}-rust-odenctl-
 
       - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
 
@@ -83,6 +83,29 @@ jobs:
 
       - name: Run standalone WASI HTTP integration
         run: just standalone-test
+
+      - name: Verify binary bodies through deployment adapters
+        run: just binary-http-test
+
+      - name: Verify response caching with a real WASI P3 guest
+        run: just response-cache-test
+
+      - name: Install Chromium for static site release tests
+        run: pnpm exec playwright install --with-deps --only-shell chromium
+
+      - name: Verify static site release and rollback in Chromium
+        run: just static-site-test
+
+      - name: Save static site browser reports
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: ${{ !cancelled() }}
+        with:
+          name: odenctl-static-site-browser
+          path: |
+            target/playwright-report
+            target/playwright-results
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Run async worker and daemon integration
         run: just worker-async-test
@@ -164,6 +187,6 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: ${{ !cancelled() }}
         with:
-          name: wasmplane-wac-migration
+          name: odenctl-wac-migration
           path: reports/wac-migration.md
           retention-days: 30

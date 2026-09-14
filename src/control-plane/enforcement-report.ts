@@ -90,11 +90,11 @@ export function projectEnforcementPoliciesFromEnv(
   env: Record<string, string | undefined> = process.env,
 ): ProjectEnforcementPolicies | undefined {
   const policies: ProjectEnforcementPolicies = {};
-  mergeNumberPolicies(policies, env.WASMPLANE_ENFORCEMENT_CPU_MS_LIMITS, "cpuMs");
-  mergeNumberPolicies(policies, env.WASMPLANE_ENFORCEMENT_MEMORY_MB_MS_LIMITS, "memoryMbMs");
-  mergeNumberPolicies(policies, env.WASMPLANE_ENFORCEMENT_STORAGE_BYTES_LIMITS, "storageBytes");
-  mergeNumberPolicies(policies, env.WASMPLANE_ENFORCEMENT_CONCURRENCY_LIMITS, "concurrency");
-  mergeRatePolicies(policies, env.WASMPLANE_ENFORCEMENT_RATE_LIMITS);
+  mergeNumberPolicies(policies, env.ODENCTL_ENFORCEMENT_CPU_MS_LIMITS, "cpuMs");
+  mergeNumberPolicies(policies, env.ODENCTL_ENFORCEMENT_MEMORY_MB_MS_LIMITS, "memoryMbMs");
+  mergeNumberPolicies(policies, env.ODENCTL_ENFORCEMENT_STORAGE_BYTES_LIMITS, "storageBytes");
+  mergeNumberPolicies(policies, env.ODENCTL_ENFORCEMENT_CONCURRENCY_LIMITS, "concurrency");
+  mergeRatePolicies(policies, env.ODENCTL_ENFORCEMENT_RATE_LIMITS);
   return Object.keys(policies).length > 0 ? policies : undefined;
 }
 

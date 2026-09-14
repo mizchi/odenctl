@@ -3,10 +3,10 @@ mod telemetry_example;
 use std::cell::Cell;
 use wasip3::http::types::{ErrorCode, Request, Response};
 use wasip3::wit_bindgen;
-use wasmplane_service_sdk::{HttpHandler, Lifecycle, wasip3};
+use oden_service_sdk::{HttpHandler, Lifecycle, wasip3};
 
 struct App;
-wasmplane_service_sdk::export!(App);
+oden_service_sdk::export!(App);
 
 thread_local! {
     static STARTS: Cell<u32> = const { Cell::new(0) };
@@ -54,12 +54,12 @@ impl HttpHandler for App {
     async fn handle(request: Request) -> Result<Response, ErrorCode> {
         let path = request.get_path_with_query().unwrap_or_default();
         if path == "/telemetry" {
-            return Ok(wasmplane_service_sdk::json(
+            return Ok(oden_service_sdk::json(
                 telemetry_example::handle(&request).await,
             ));
         }
         if let Some(value) = io_example::handle(&path).await {
-            return Ok(wasmplane_service_sdk::json(value.to_string()));
+            return Ok(oden_service_sdk::json(value.to_string()));
         }
         match path.as_str() {
             "/trap" => panic!("service test trap"),
@@ -76,6 +76,6 @@ impl HttpHandler for App {
             COUNT.get(),
             TICKS.get()
         );
-        Ok(wasmplane_service_sdk::json(text))
+        Ok(oden_service_sdk::json(text))
     }
 }

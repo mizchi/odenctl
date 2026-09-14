@@ -1,9 +1,0 @@
-{
-  "version": 1,
-  "mode": "service",
-  "component": "target/wasm32-wasip2/debug/wasm_app.wasm",
-  "listen": "127.0.0.1:8080",
-  "build": [["cargo", "build", "--target", "wasm32-wasip2"]],
-  "watch": ["src", "Cargo.toml", "Cargo.lock", "vendor/wasmplane-sdk"],
-  "runtime": { "timeout_ms": 5000 }
-}

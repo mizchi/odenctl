@@ -1,10 +1,10 @@
 [package]
-name = "wasmplane-service-sdk"
+name = "oden-service-sdk"
 version = "0.1.0"
 edition = "2024"
-description = "WASI service lifecycle and I/O SDK for wasmplane"
+description = "WASI service lifecycle and I/O SDK for oden"
 license = "MIT"
-repository = "https://github.com/mizchi/wasmplane"
+repository = "https://github.com/mizchi/odenctl"
 readme = "README.md"
 include = ["src/**", "wit/**", "README.md", "Cargo.toml"]
 

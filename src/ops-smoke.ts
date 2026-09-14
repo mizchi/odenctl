@@ -30,20 +30,20 @@ interface OpsSmokeArgsEnv {
   FLY_CONTROL_APP?: string;
   FLY_RUNTIME_APP?: string;
   FLY_COLLECTOR_APP?: string;
-  WASMPLANE_CONTROL_PLANE_URL?: string;
+  ODENCTL_CONTROL_PLANE_URL?: string;
   CONTROL_PLANE_URL?: string;
-  WASMPLANE_RUNTIME_URL?: string;
+  ODEN_RUNTIME_URL?: string;
   RUNTIME_URL?: string;
-  WASMPLANE_COLLECTOR_URL?: string;
+  ODENCTL_COLLECTOR_URL?: string;
   OTEL_COLLECTOR_URL?: string;
-  WASMPLANE_CONTROL_PLANE_TOKEN?: string;
+  ODENCTL_CONTROL_PLANE_TOKEN?: string;
   CONTROL_PLANE_TOKEN?: string;
-  WASMPLANE_RUNTIME_TOKEN?: string;
-  WASMPLANE_SMOKE_WORKER_HOST?: string;
-  WASMPLANE_SMOKE_WORKER_PATH?: string;
-  WASMPLANE_SMOKE_REQUIRE_EXTERNAL_DB?: string;
-  WASMPLANE_SMOKE_MIN_RUNTIME_NODES?: string;
-  WASMPLANE_SMOKE_REQUIRE_RUST_FORWARD?: string;
+  ODEN_RUNTIME_TOKEN?: string;
+  ODENCTL_SMOKE_WORKER_HOST?: string;
+  ODENCTL_SMOKE_WORKER_PATH?: string;
+  ODENCTL_SMOKE_REQUIRE_EXTERNAL_DB?: string;
+  ODENCTL_SMOKE_MIN_RUNTIME_NODES?: string;
+  ODENCTL_SMOKE_REQUIRE_RUST_FORWARD?: string;
 }
 
 export function parseOpsSmokeArgs(
@@ -57,25 +57,25 @@ export function parseOpsSmokeArgs(
   const skipWorker = flags["skip-worker"] === "1" || flags["skip-worker"] === "true";
   return {
     controlUrl: normalizeBaseUrl(
-      flags["control-url"] ?? env.WASMPLANE_CONTROL_PLANE_URL ?? env.CONTROL_PLANE_URL ?? flyUrl(controlApp),
+      flags["control-url"] ?? env.ODENCTL_CONTROL_PLANE_URL ?? env.CONTROL_PLANE_URL ?? flyUrl(controlApp),
     ),
     runtimeUrl: normalizeBaseUrl(
-      flags["runtime-url"] ?? env.WASMPLANE_RUNTIME_URL ?? env.RUNTIME_URL ?? flyUrl(runtimeApp),
+      flags["runtime-url"] ?? env.ODEN_RUNTIME_URL ?? env.RUNTIME_URL ?? flyUrl(runtimeApp),
     ),
     collectorUrl: normalizeBaseUrl(
-      flags["collector-url"] ?? env.WASMPLANE_COLLECTOR_URL ?? env.OTEL_COLLECTOR_URL ?? flyUrl(collectorApp),
+      flags["collector-url"] ?? env.ODENCTL_COLLECTOR_URL ?? env.OTEL_COLLECTOR_URL ?? flyUrl(collectorApp),
     ),
-    controlToken: nonEmpty(flags["control-token"] ?? env.WASMPLANE_CONTROL_PLANE_TOKEN ?? env.CONTROL_PLANE_TOKEN),
-    runtimeToken: nonEmpty(flags["runtime-token"] ?? env.WASMPLANE_RUNTIME_TOKEN),
+    controlToken: nonEmpty(flags["control-token"] ?? env.ODENCTL_CONTROL_PLANE_TOKEN ?? env.CONTROL_PLANE_TOKEN),
+    runtimeToken: nonEmpty(flags["runtime-token"] ?? env.ODEN_RUNTIME_TOKEN),
     workerHost: skipWorker
       ? undefined
-      : nonEmpty(flags["worker-host"] ?? env.WASMPLANE_SMOKE_WORKER_HOST ?? "hello.example.dev"),
+      : nonEmpty(flags["worker-host"] ?? env.ODENCTL_SMOKE_WORKER_HOST ?? "hello.example.dev"),
     workerPath: skipWorker
       ? undefined
-      : ensurePath(flags["worker-path"] ?? env.WASMPLANE_SMOKE_WORKER_PATH ?? "/"),
-    requireExternalDatabase: truthy(flags["require-external-db"] ?? env.WASMPLANE_SMOKE_REQUIRE_EXTERNAL_DB),
-    minRuntimeNodes: optionalPositiveInteger(flags["min-runtime-nodes"] ?? env.WASMPLANE_SMOKE_MIN_RUNTIME_NODES),
-    requireRustForward: truthy(flags["require-rust-forward"] ?? env.WASMPLANE_SMOKE_REQUIRE_RUST_FORWARD),
+      : ensurePath(flags["worker-path"] ?? env.ODENCTL_SMOKE_WORKER_PATH ?? "/"),
+    requireExternalDatabase: truthy(flags["require-external-db"] ?? env.ODENCTL_SMOKE_REQUIRE_EXTERNAL_DB),
+    minRuntimeNodes: optionalPositiveInteger(flags["min-runtime-nodes"] ?? env.ODENCTL_SMOKE_MIN_RUNTIME_NODES),
+    requireRustForward: truthy(flags["require-rust-forward"] ?? env.ODENCTL_SMOKE_REQUIRE_RUST_FORWARD),
   };
 }
 
@@ -166,7 +166,7 @@ export async function runOpsSmoke(input: OpsSmokeInput): Promise<OpsSmokeResult>
         "runtime rust-forward worker proxy",
         workerUrl,
         workerHeaders,
-        "x-wasmplane-host-daemon-route",
+        "x-oden-host-daemon-route",
         "1",
       ));
     }

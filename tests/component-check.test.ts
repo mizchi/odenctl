@@ -5,10 +5,10 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 
-const binary = process.env.WASMPLANE_SDK_BIN && resolve(process.env.WASMPLANE_SDK_BIN);
+const binary = process.env.ODEN_SDK_BIN && resolve(process.env.ODEN_SDK_BIN);
 const command = resolve("examples/minimal-command/command.wat");
 test("inspect reports the component contract without calling an entry point", { skip: !binary }, async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-check-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-check-"));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const component = join(dir, "loop.wat");
   await writeFile(component, `(component (core module $m (func (export "run") (result i32) (loop $l br $l) i32.const 0))
@@ -23,7 +23,7 @@ test("inspect reports the component contract without calling an entry point", { 
   assert.equal(report.sha256.length, 64);
 });
 test("check validates mode, imports and grants without leaking environment values", { skip: !binary }, async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-check-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-check-"));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const manifest = join(dir, "app.json");
   for (const mode of ["command", "service"]) {

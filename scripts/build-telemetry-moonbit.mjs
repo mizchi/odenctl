@@ -16,7 +16,7 @@ const example = resolve(root, "examples/telemetry-composition");
 const moonbit = resolve(example, "moonbit");
 const wit = resolve(moonbit, "target/wit");
 const bindgen = process.env.WIT_BINDGEN ?? "wit-bindgen";
-const project = "wasmplane/telemetry-fixture";
+const project = "odenctl/telemetry-fixture";
 
 function run(program, args, cwd = root) {
   const result = spawnSync(program, args, { cwd, stdio: "inherit" });

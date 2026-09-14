@@ -2,7 +2,7 @@
 mod bindings {
     wasip3::wit_bindgen::generate!({ path: "wit/telemetry.wit", world: "client", generate_all });
 }
-pub use bindings::wasmplane::telemetry::tracing::{
+pub use bindings::oden::telemetry::tracing::{
     Attribute, Context, Level, Outcome, Span, Value, log, start_span,
 };
 

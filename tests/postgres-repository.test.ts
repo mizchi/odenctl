@@ -14,23 +14,23 @@ test("Postgres repository module loads with the pg runtime dependency", async ()
 test("Postgres pool config lets explicit ssl options override URL sslmode", () => {
   assert.deepEqual(
     createPostgresPoolConfig({
-      connectionString: "postgres://user:secret@db.example/wasmplane?application_name=wasmplane&sslmode=require",
+      connectionString: "postgres://user:secret@db.example/odenctl?application_name=odenctl&sslmode=require",
       ssl: true,
       max: 3,
     }),
     {
-      connectionString: "postgres://user:secret@db.example/wasmplane?application_name=wasmplane",
+      connectionString: "postgres://user:secret@db.example/odenctl?application_name=odenctl",
       max: 3,
       ssl: { rejectUnauthorized: false },
     },
   );
   assert.deepEqual(
     createPostgresPoolConfig({
-      connectionString: "postgres://user:secret@db.example/wasmplane?sslmode=require",
+      connectionString: "postgres://user:secret@db.example/odenctl?sslmode=require",
       ssl: false,
     }),
     {
-      connectionString: "postgres://user:secret@db.example/wasmplane",
+      connectionString: "postgres://user:secret@db.example/odenctl",
       max: 10,
       ssl: false,
     },
@@ -39,11 +39,11 @@ test("Postgres pool config lets explicit ssl options override URL sslmode", () =
 
 test(
   "Postgres repository persists the core control-plane flow",
-  { skip: process.env.WASMPLANE_POSTGRES_TEST_URL ? false : "set WASMPLANE_POSTGRES_TEST_URL to run" },
+  { skip: process.env.ODENCTL_POSTGRES_TEST_URL ? false : "set ODENCTL_POSTGRES_TEST_URL to run" },
   async () => {
     const repository = await createPostgresRepository({
-      connectionString: process.env.WASMPLANE_POSTGRES_TEST_URL as string,
-      ssl: process.env.WASMPLANE_POSTGRES_SSL === "1",
+      connectionString: process.env.ODENCTL_POSTGRES_TEST_URL as string,
+      ssl: process.env.ODENCTL_POSTGRES_SSL === "1",
     });
     const suffix = randomUUID().replaceAll("-", "");
     const control = createAsyncControlPlane({
@@ -102,7 +102,7 @@ test(
         deploymentId: deployment.id,
         provider: "cloudflare-workers",
         mode: "mock",
-        scriptName: `wasmplane-pg-${suffix}`,
+        scriptName: `odenctl-pg-${suffix}`,
       });
       await control.pointRoute({
         projectId: project.id,

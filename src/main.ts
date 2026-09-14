@@ -27,53 +27,56 @@ import {
   operationalConfigFromEnv,
 } from "./ops-config.ts";
 import { parseRuntimeIdentityKeys } from "./runtime/config.ts";
+import { assertCurrentEnvironment } from "./environment.ts";
+
+assertCurrentEnvironment(process.env);
 
 const port = Number.parseInt(process.env.PORT ?? "8787", 10);
 const host = process.env.HOST ?? "127.0.0.1";
-const artifactPublicBaseUrl = process.env.WASMPLANE_ARTIFACT_PUBLIC_BASE_URL;
-const volumeSqliteRoot = process.env.WASMPLANE_VOLUME_SQLITE_ROOT;
+const artifactPublicBaseUrl = process.env.ODENCTL_ARTIFACT_PUBLIC_BASE_URL;
+const volumeSqliteRoot = process.env.ODENCTL_VOLUME_SQLITE_ROOT;
 const apiTokens = parseApiTokens(process.env);
-const runtimeNodeToken = process.env.WASMPLANE_RUNTIME_TOKEN;
+const runtimeNodeToken = process.env.ODEN_RUNTIME_TOKEN;
 const runtimeIdentityKeys = parseRuntimeIdentityKeys(process.env);
-const auditSink = process.env.WASMPLANE_AUDIT_LOG
-  ? createJsonlAuditSink({ path: process.env.WASMPLANE_AUDIT_LOG })
+const auditSink = process.env.ODENCTL_AUDIT_LOG
+  ? createJsonlAuditSink({ path: process.env.ODENCTL_AUDIT_LOG })
   : undefined;
 const runtimeNodeActiveTtlMs = positiveInteger(
-  process.env.WASMPLANE_RUNTIME_NODE_ACTIVE_TTL_MS,
+  process.env.ODENCTL_RUNTIME_NODE_ACTIVE_TTL_MS,
   90_000,
 );
 const snapshotPublishIntervalMs = optionalPositiveInteger(
-  process.env.WASMPLANE_SNAPSHOT_PUBLISH_INTERVAL_MS,
+  process.env.ODENCTL_SNAPSHOT_PUBLISH_INTERVAL_MS,
 );
 const billingWebhookDeliveryIntervalMs = optionalPositiveInteger(
-  process.env.WASMPLANE_BILLING_WEBHOOK_DELIVERY_INTERVAL_MS,
+  process.env.ODENCTL_BILLING_WEBHOOK_DELIVERY_INTERVAL_MS,
 );
 const billingInvoiceRetentionPruneIntervalMs = optionalPositiveInteger(
-  process.env.WASMPLANE_BILLING_RETENTION_PRUNE_INTERVAL_MS,
+  process.env.ODENCTL_BILLING_RETENTION_PRUNE_INTERVAL_MS,
 );
 const billingInvoiceRetentionOrganizations = billingInvoiceRetentionOrganizationsFromEnv(
-  process.env.WASMPLANE_BILLING_RETENTION_ORGANIZATIONS,
+  process.env.ODENCTL_BILLING_RETENTION_ORGANIZATIONS,
 );
 const volumeSqliteBackupIntervalMs = optionalPositiveInteger(
-  process.env.WASMPLANE_VOLUME_SQLITE_BACKUP_INTERVAL_MS,
+  process.env.ODENCTL_VOLUME_SQLITE_BACKUP_INTERVAL_MS,
 );
 const durableObjectAlarmIntervalMs = optionalPositiveInteger(
-  process.env.WASMPLANE_DURABLE_OBJECT_ALARM_INTERVAL_MS,
+  process.env.ODENCTL_DURABLE_OBJECT_ALARM_INTERVAL_MS,
 );
 const volumeSqliteBackupRequireEncryption =
-  process.env.WASMPLANE_VOLUME_SQLITE_BACKUP_REQUIRE_ENCRYPTION !== "0";
+  process.env.ODENCTL_VOLUME_SQLITE_BACKUP_REQUIRE_ENCRYPTION !== "0";
 const volumeSqliteBackupRestoreDrill =
-  process.env.WASMPLANE_VOLUME_SQLITE_BACKUP_RESTORE_DRILL === "1";
+  process.env.ODENCTL_VOLUME_SQLITE_BACKUP_RESTORE_DRILL === "1";
 const snapshotPublishOptions: RouteSnapshotPublishOptions = {
-  maxAttempts: positiveInteger(process.env.WASMPLANE_SNAPSHOT_PUBLISH_MAX_ATTEMPTS, 3),
-  retryDelayMs: nonnegativeInteger(process.env.WASMPLANE_SNAPSHOT_PUBLISH_RETRY_DELAY_MS, 100),
-  timeoutMs: optionalPositiveInteger(process.env.WASMPLANE_SNAPSHOT_PUBLISH_TIMEOUT_MS),
+  maxAttempts: positiveInteger(process.env.ODENCTL_SNAPSHOT_PUBLISH_MAX_ATTEMPTS, 3),
+  retryDelayMs: nonnegativeInteger(process.env.ODENCTL_SNAPSHOT_PUBLISH_RETRY_DELAY_MS, 100),
+  timeoutMs: optionalPositiveInteger(process.env.ODENCTL_SNAPSHOT_PUBLISH_TIMEOUT_MS),
 };
 const snapshotReplicationOptions: RouteSnapshotReplicationOptions = {
-  sourceRegion: firstNonEmpty(process.env.WASMPLANE_CONTROL_REGION, process.env.FLY_REGION),
-  maxAttempts: positiveInteger(process.env.WASMPLANE_SNAPSHOT_REPLICATION_MAX_ATTEMPTS, 3),
-  retryDelayMs: nonnegativeInteger(process.env.WASMPLANE_SNAPSHOT_REPLICATION_RETRY_DELAY_MS, 100),
-  timeoutMs: optionalPositiveInteger(process.env.WASMPLANE_SNAPSHOT_REPLICATION_TIMEOUT_MS),
+  sourceRegion: firstNonEmpty(process.env.ODENCTL_CONTROL_REGION, process.env.FLY_REGION),
+  maxAttempts: positiveInteger(process.env.ODENCTL_SNAPSHOT_REPLICATION_MAX_ATTEMPTS, 3),
+  retryDelayMs: nonnegativeInteger(process.env.ODENCTL_SNAPSHOT_REPLICATION_RETRY_DELAY_MS, 100),
+  timeoutMs: optionalPositiveInteger(process.env.ODENCTL_SNAPSHOT_REPLICATION_TIMEOUT_MS),
 };
 const volumeSqliteBackupCipher = createConfiguredVolumeSqliteBackupCipher(process.env);
 const operationalConfig = operationalConfigFromEnv(process.env);
@@ -86,23 +89,23 @@ const artifactStore = createConfiguredControlPlaneArtifactStore(process.env);
 const volumeSqliteRegistry = volumeSqliteRoot
   ? createVolumeSqliteRegistry({
     rootDir: volumeSqliteRoot,
-    maxOpenDatabases: positiveInteger(process.env.WASMPLANE_VOLUME_SQLITE_MAX_OPEN, 64),
-    maxPendingWritesPerDatabase: positiveInteger(process.env.WASMPLANE_VOLUME_SQLITE_MAX_PENDING_WRITES, 64),
-    maxBackupsPerDatabase: optionalPositiveInteger(process.env.WASMPLANE_VOLUME_SQLITE_MAX_BACKUPS_PER_DATABASE),
-    backupRetentionMs: optionalPositiveInteger(process.env.WASMPLANE_VOLUME_SQLITE_BACKUP_RETENTION_MS),
+    maxOpenDatabases: positiveInteger(process.env.ODENCTL_VOLUME_SQLITE_MAX_OPEN, 64),
+    maxPendingWritesPerDatabase: positiveInteger(process.env.ODENCTL_VOLUME_SQLITE_MAX_PENDING_WRITES, 64),
+    maxBackupsPerDatabase: optionalPositiveInteger(process.env.ODENCTL_VOLUME_SQLITE_MAX_BACKUPS_PER_DATABASE),
+    backupRetentionMs: optionalPositiveInteger(process.env.ODENCTL_VOLUME_SQLITE_BACKUP_RETENTION_MS),
     backupCipher: volumeSqliteBackupCipher,
-    busyTimeoutMs: positiveInteger(process.env.WASMPLANE_VOLUME_SQLITE_BUSY_TIMEOUT_MS, 5000),
+    busyTimeoutMs: positiveInteger(process.env.ODENCTL_VOLUME_SQLITE_BUSY_TIMEOUT_MS, 5000),
   })
   : undefined;
 if (volumeSqliteBackupIntervalMs && !volumeSqliteRegistry) {
-  throw new Error("WASMPLANE_VOLUME_SQLITE_BACKUP_INTERVAL_MS requires WASMPLANE_VOLUME_SQLITE_ROOT");
+  throw new Error("ODENCTL_VOLUME_SQLITE_BACKUP_INTERVAL_MS requires ODENCTL_VOLUME_SQLITE_ROOT");
 }
 if (durableObjectAlarmIntervalMs && !volumeSqliteRegistry) {
-  throw new Error("WASMPLANE_DURABLE_OBJECT_ALARM_INTERVAL_MS requires WASMPLANE_VOLUME_SQLITE_ROOT");
+  throw new Error("ODENCTL_DURABLE_OBJECT_ALARM_INTERVAL_MS requires ODENCTL_VOLUME_SQLITE_ROOT");
 }
 if (volumeSqliteBackupIntervalMs && volumeSqliteBackupRequireEncryption && !volumeSqliteBackupCipher) {
   throw new Error(
-    "scheduled volume sqlite backups require WASMPLANE_VOLUME_SQLITE_BACKUP_KEY_BASE64 or set WASMPLANE_VOLUME_SQLITE_BACKUP_REQUIRE_ENCRYPTION=0",
+    "scheduled volume sqlite backups require ODENCTL_VOLUME_SQLITE_BACKUP_KEY_BASE64 or set ODENCTL_VOLUME_SQLITE_BACKUP_REQUIRE_ENCRYPTION=0",
   );
 }
 const routeSnapshotReplicaStore = createInMemoryRouteSnapshotReplicaStore();
@@ -111,27 +114,27 @@ const appOptions = {
   artifactStore,
   artifactPublicBaseUrl,
   artifactValidator:
-    process.env.WASMPLANE_VALIDATE_LOCAL_ARTIFACTS === "0"
+    process.env.ODENCTL_VALIDATE_LOCAL_ARTIFACTS === "0"
       ? undefined
       : createWasip3HostArtifactValidator({
-          hostBin: process.env.WASMPLANE_WASIP3_HOST_BIN,
+          hostBin: process.env.ODEN_WASIP3_HOST_BIN,
         }),
   apiTokens: apiTokens.length > 0 ? apiTokens : undefined,
   alarmDemoWebhookToken: firstNonEmpty(
-    process.env.WASMPLANE_ALARM_DEMO_WEBHOOK_TOKEN,
-    process.env.WASMPLANE_DURABLE_OBJECT_ALARM_WEBHOOK_TOKEN,
+    process.env.ODENCTL_ALARM_DEMO_WEBHOOK_TOKEN,
+    process.env.ODENCTL_DURABLE_OBJECT_ALARM_WEBHOOK_TOKEN,
   ),
   auditSink,
   runtimeNodeToken,
   runtimeIdentityKeys,
-  runtimeNodes: runtimeNodeTargetsFromEnv(process.env.WASMPLANE_RUNTIME_NODES),
+  runtimeNodes: runtimeNodeTargetsFromEnv(process.env.ODENCTL_RUNTIME_NODES),
   runtimePlacement: runtimePlacementPolicyFromEnv(process.env),
   snapshotPublish: snapshotPublishOptions,
   volumeSqliteRegistry,
   routeSnapshotReplicaStore,
   routeSnapshotReplicas: routeSnapshotReplicaTargetsFromEnv(
-    process.env.WASMPLANE_ROUTE_SNAPSHOT_REPLICAS,
-    process.env.WASMPLANE_ROUTE_SNAPSHOT_REPLICA_TOKEN,
+    process.env.ODENCTL_ROUTE_SNAPSHOT_REPLICAS,
+    process.env.ODENCTL_ROUTE_SNAPSHOT_REPLICA_TOKEN,
   ),
   snapshotReplication: snapshotReplicationOptions,
   operationalConfig,
@@ -165,7 +168,7 @@ if (billingWebhookDeliveryIntervalMs) {
 }
 if (billingInvoiceRetentionPruneIntervalMs && billingInvoiceRetentionOrganizations.length === 0) {
   throw new Error(
-    "WASMPLANE_BILLING_RETENTION_PRUNE_INTERVAL_MS requires WASMPLANE_BILLING_RETENTION_ORGANIZATIONS",
+    "ODENCTL_BILLING_RETENTION_PRUNE_INTERVAL_MS requires ODENCTL_BILLING_RETENTION_ORGANIZATIONS",
   );
 }
 if (billingInvoiceRetentionPruneIntervalMs) {
@@ -207,8 +210,8 @@ if (volumeSqliteBackupIntervalMs && volumeSqliteRegistry) {
     requireEncrypted: volumeSqliteBackupRequireEncryption,
     restoreDrill: { enabled: volumeSqliteBackupRestoreDrill },
     retention: {
-      keepLatest: optionalPositiveInteger(process.env.WASMPLANE_VOLUME_SQLITE_MAX_BACKUPS_PER_DATABASE),
-      olderThanMs: optionalPositiveInteger(process.env.WASMPLANE_VOLUME_SQLITE_BACKUP_RETENTION_MS),
+      keepLatest: optionalPositiveInteger(process.env.ODENCTL_VOLUME_SQLITE_MAX_BACKUPS_PER_DATABASE),
+      olderThanMs: optionalPositiveInteger(process.env.ODENCTL_VOLUME_SQLITE_BACKUP_RETENTION_MS),
     },
     onReport(report) {
       const summary = [
@@ -263,7 +266,7 @@ if (durableObjectAlarmIntervalMs) {
     job.start();
   }
 }
-console.log(`wasmplane control plane listening on http://${host}:${port}`);
+console.log(`odenctl control plane listening on http://${host}:${port}`);
 console.log(
   `control-plane schema ${schemaStatus.currentVersion ?? "none"}/${schemaStatus.latestVersion ?? "none"}`,
 );

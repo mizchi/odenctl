@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Static site @VERSION@ | odenctl</title>
+    <link rel="icon" href="/assets/mark.png" type="image/png">
+    <link rel="stylesheet" href="/assets/@VERSION@/site.css">
+    <script src="/assets/@VERSION@/site.js" defer></script>
+  </head>
+  <body>
+    <main>
+      <img src="/assets/mark.png" alt="Site mark" width="48" height="48">
+      <p class="eyebrow">ODENCTL / RELEASE EXAMPLE</p>
+      <h1>Static site @VERSION@</h1>
+      <p>A small website with working styles, images, navigation, and JavaScript.</p>
+      <p class="release">You are viewing release <strong>@VERSION@</strong>.</p>
+      <a href="/guide/">Read the guide</a>
+      <section aria-label="Interactive example">
+        <button type="button">Try JavaScript</button>
+        <output role="status" aria-live="polite">Ready</output>
+      </section>
+      <footer>Built once. Delivered as a WebAssembly component.</footer>
+    </main>
+  </body>
+</html>

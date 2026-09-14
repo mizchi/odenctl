@@ -13,7 +13,7 @@ test("cluster benchmark CLI args parse node counts and concurrency list", () => 
     "--component",
     "worker.component.wasm",
     "--host-bin",
-    "target/debug/wasmplane-wasip3-host",
+    "target/debug/oden-host",
     "--nodes",
     "1,2,4",
     "--iterations",
@@ -29,7 +29,7 @@ test("cluster benchmark CLI args parse node counts and concurrency list", () => 
   ]);
 
   assert.equal(options.componentPath, "worker.component.wasm");
-  assert.equal(options.hostBin, "target/debug/wasmplane-wasip3-host");
+  assert.equal(options.hostBin, "target/debug/oden-host");
   assert.deepEqual(options.nodeCounts, [1, 2, 4]);
   assert.equal(options.iterations, 100);
   assert.equal(options.warmup, 3);

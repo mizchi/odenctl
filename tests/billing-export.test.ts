@@ -76,8 +76,8 @@ test("billing invoice export bundle signs invoice payload digests", () => {
 
 test("billing invoice export signer parses environment keys", () => {
   const signer = billingInvoiceExportSignerFromEnv({
-    WASMPLANE_BILLING_EXPORT_SIGNATURE_KEY_ID: "acct",
-    WASMPLANE_BILLING_EXPORT_SIGNATURE_KEY_BASE64: Buffer.from("accounting-secret").toString("base64"),
+    ODENCTL_BILLING_EXPORT_SIGNATURE_KEY_ID: "acct",
+    ODENCTL_BILLING_EXPORT_SIGNATURE_KEY_BASE64: Buffer.from("accounting-secret").toString("base64"),
   });
 
   assert.equal(signer?.keyId, "acct");
@@ -86,8 +86,8 @@ test("billing invoice export signer parses environment keys", () => {
   assert.throws(
     () =>
       billingInvoiceExportSignerFromEnv({
-        WASMPLANE_BILLING_EXPORT_SIGNATURE_KEY_BASE64: Buffer.from("missing id").toString("base64"),
+        ODENCTL_BILLING_EXPORT_SIGNATURE_KEY_BASE64: Buffer.from("missing id").toString("base64"),
       }),
-    /WASMPLANE_BILLING_EXPORT_SIGNATURE_KEY_ID/,
+    /ODENCTL_BILLING_EXPORT_SIGNATURE_KEY_ID/,
   );
 });

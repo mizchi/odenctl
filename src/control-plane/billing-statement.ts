@@ -109,13 +109,13 @@ export function projectBillingRatesFromEnv(
   env: Record<string, string | undefined> = process.env,
 ): ProjectBillingRates | undefined {
   const rates: ProjectBillingRates = {
-    ...numberRate("invocationsPerMillionUsd", env.WASMPLANE_BILLING_INVOCATION_PER_MILLION_USD),
-    ...numberRate("cpuMsPerMillionUsd", env.WASMPLANE_BILLING_CPU_MS_PER_MILLION_USD),
-    ...numberRate("wallMsPerMillionUsd", env.WASMPLANE_BILLING_WALL_MS_PER_MILLION_USD),
-    ...numberRate("memoryMbMsPerMillionUsd", env.WASMPLANE_BILLING_MEMORY_MB_MS_PER_MILLION_USD),
-    ...numberRate("egressGbUsd", env.WASMPLANE_BILLING_EGRESS_GB_USD),
-    ...numberRate("storageGbMonthUsd", env.WASMPLANE_BILLING_STORAGE_GB_MONTH_USD),
-    ...numberRate("sqliteUnitUsd", env.WASMPLANE_BILLING_SQLITE_UNIT_USD),
+    ...numberRate("invocationsPerMillionUsd", env.ODENCTL_BILLING_INVOCATION_PER_MILLION_USD),
+    ...numberRate("cpuMsPerMillionUsd", env.ODENCTL_BILLING_CPU_MS_PER_MILLION_USD),
+    ...numberRate("wallMsPerMillionUsd", env.ODENCTL_BILLING_WALL_MS_PER_MILLION_USD),
+    ...numberRate("memoryMbMsPerMillionUsd", env.ODENCTL_BILLING_MEMORY_MB_MS_PER_MILLION_USD),
+    ...numberRate("egressGbUsd", env.ODENCTL_BILLING_EGRESS_GB_USD),
+    ...numberRate("storageGbMonthUsd", env.ODENCTL_BILLING_STORAGE_GB_MONTH_USD),
+    ...numberRate("sqliteUnitUsd", env.ODENCTL_BILLING_SQLITE_UNIT_USD),
   };
   return Object.keys(rates).length > 0 ? rates : undefined;
 }

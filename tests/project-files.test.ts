@@ -17,7 +17,10 @@ test("project tooling keeps Wasm E2E portable", async () => {
   const flyCollector = await readFile("fly.collector.toml", "utf8");
   const ciToolInstaller = await readFile("scripts/install-wasm-ci-tools.sh", "utf8");
   const flyctlInstaller = await readFile("scripts/install-flyctl.sh", "utf8");
-  const readme = await readFile("README.md", "utf8");
+  const readme = (await Promise.all([
+    readFile("docs/user/control-plane-reference.md", "utf8"),
+    readFile("docs/developer/control-plane-reference.md", "utf8"),
+  ])).join("\n");
   await readFile("pnpm-lock.yaml", "utf8");
 
   assert.match(justfile, /^set shell := \["bash", "-cu"\]/m);
@@ -100,15 +103,15 @@ test("project tooling keeps Wasm E2E portable", async () => {
     assert.doesNotMatch(githubWorkflow, /cargo install wasm-tools/);
     assert.doesNotMatch(githubWorkflow, /cargo install wit-bindgen-cli/);
   }
-  assert.match(ciToolInstaller, /WASMPLANE_WASMTIME_VERSION:-48\.0\.2/);
-  assert.match(ciToolInstaller, /WASMPLANE_WASM_TOOLS_VERSION:-1\.259\.0/);
-  assert.match(ciToolInstaller, /WASMPLANE_WIT_BINDGEN_VERSION:-0\.62\.0/);
+  assert.match(ciToolInstaller, /ODENCTL_WASMTIME_VERSION:-48\.0\.2/);
+  assert.match(ciToolInstaller, /ODENCTL_WASM_TOOLS_VERSION:-1\.259\.0/);
+  assert.match(ciToolInstaller, /ODENCTL_WIT_BINDGEN_VERSION:-0\.62\.0/);
   assert.match(ciToolInstaller, /GITHUB_PATH/);
   assert.match(ciToolInstaller, /wasmtime --version/);
   assert.match(ciToolInstaller, /wasm-tools --version/);
   assert.match(ciToolInstaller, /wit-bindgen --version/);
-  assert.match(flyctlInstaller, /WASMPLANE_FLYCTL_VERSION:-0\.4\.67/);
-  assert.match(flyctlInstaller, /WASMPLANE_FLYCTL_SHA256/);
+  assert.match(flyctlInstaller, /ODENCTL_FLYCTL_VERSION:-0\.4\.67/);
+  assert.match(flyctlInstaller, /ODENCTL_FLYCTL_SHA256/);
   assert.match(flyctlInstaller, /sha256sum -c/);
   assert.match(flyctlInstaller, /GITHUB_PATH/);
   assert.match(flyctlInstaller, /flyctl version/);
@@ -131,31 +134,31 @@ test("project tooling keeps Wasm E2E portable", async () => {
     assert.doesNotMatch(nonWacWorkflow, /~\/\.cargo\/bin\/wac/);
     assert.match(
       nonWacWorkflow,
-      /\$\{\{ runner\.os \}\}-rust-wasmplane-\$\{\{ github\.job \}\}-\$\{\{ hashFiles\('Cargo\.lock', '\*\*\/Cargo\.lock', '\*\*\/Cargo\.toml', 'justfile'\) \}\}/,
+      /\$\{\{ runner\.os \}\}-rust-odenctl-\$\{\{ github\.job \}\}-\$\{\{ hashFiles\('Cargo\.lock', '\*\*\/Cargo\.lock', '\*\*\/Cargo\.toml', 'justfile'\) \}\}/,
     );
   }
   assert.match(workflow, /just wac-install/);
   assert.match(workflow, /just sample-rust-moonbit-wac-status/);
-  assert.match(workflow, /wasmplane-wac-migration/);
+  assert.match(workflow, /odenctl-wac-migration/);
   assert.match(rustMoonbitWorkflow, /workflow_dispatch:/);
   assert.match(rustMoonbitWorkflow, /just wac-install/);
   assert.match(rustMoonbitWorkflow, /just sample-rust-moonbit-smoke/);
-  assert.match(rustMoonbitWorkflow, /wasmplane-rust-moonbit-smoke/);
+  assert.match(rustMoonbitWorkflow, /odenctl-rust-moonbit-smoke/);
   assert.match(rustMoonbitReleaseWorkflow, /workflow_dispatch:/);
   assert.match(rustMoonbitReleaseWorkflow, /environment: production/);
-  assert.match(rustMoonbitReleaseWorkflow, /secrets\.WASMPLANE_CONTROL_PLANE_TOKEN/);
+  assert.match(rustMoonbitReleaseWorkflow, /secrets\.ODENCTL_CONTROL_PLANE_TOKEN/);
   assert.match(rustMoonbitReleaseWorkflow, /just sample-rust-moonbit-release-preflight/);
   assert.match(rustMoonbitReleaseWorkflow, /just sample-rust-moonbit-release/);
-  assert.match(rustMoonbitReleaseWorkflow, /wasmplane-rust-moonbit-release/);
+  assert.match(rustMoonbitReleaseWorkflow, /odenctl-rust-moonbit-release/);
   assert.match(productionReadinessWorkflow, /name: Production Readiness/);
   assert.match(productionReadinessWorkflow, /workflow_dispatch:/);
   assert.match(productionReadinessWorkflow, /environment: production/);
-  assert.match(productionReadinessWorkflow, /secrets\.WASMPLANE_CONTROL_PLANE_TOKEN/);
-  assert.match(productionReadinessWorkflow, /secrets\.WASMPLANE_RUNTIME_TOKEN/);
+  assert.match(productionReadinessWorkflow, /secrets\.ODENCTL_CONTROL_PLANE_TOKEN/);
+  assert.match(productionReadinessWorkflow, /secrets\.ODEN_RUNTIME_TOKEN/);
   assert.match(productionReadinessWorkflow, /secrets\.FLY_API_TOKEN/);
   assert.match(productionReadinessWorkflow, /Validate production secrets/);
   assert.match(productionReadinessWorkflow, /Missing production secret/);
-  assert.match(productionReadinessWorkflow, /WASMPLANE_CONTROL_PLANE_TOKEN WASMPLANE_RUNTIME_TOKEN FLY_API_TOKEN/);
+  assert.match(productionReadinessWorkflow, /ODENCTL_CONTROL_PLANE_TOKEN ODEN_RUNTIME_TOKEN FLY_API_TOKEN/);
   assert.match(productionReadinessWorkflow, /max_p95_ms:/);
   assert.match(productionReadinessWorkflow, /default: "1500"/);
   assert.match(productionReadinessWorkflow, /max_error_rate:/);
@@ -181,27 +184,27 @@ test("project tooling keeps Wasm E2E portable", async () => {
   assert.match(productionReadinessWorkflow, /fly-otel-evidence\.md/);
   assert.match(productionReadinessWorkflow, /just sample-rust-moonbit-release-preflight/);
   assert.match(productionReadinessWorkflow, /just sample-rust-moonbit-release/);
-  assert.match(productionReadinessWorkflow, /wasmplane-production-readiness/);
+  assert.match(productionReadinessWorkflow, /odenctl-production-readiness/);
   assert.match(productionReadinessWorkflow, /reports\/production-readiness/);
   assert.match(flyControl, /app = "mz-wasmplane-control"/);
-  assert.match(flyControl, /WASMPLANE_SNAPSHOT_PUBLISH_INTERVAL_MS = "5000"/);
-  assert.match(flyControl, /WASMPLANE_VOLUME_SQLITE_ROOT = "\/data\/sqlite"/);
-  assert.match(flyControl, /WASMPLANE_VOLUME_SQLITE_MAX_OPEN = "64"/);
-  assert.match(flyControl, /WASMPLANE_VOLUME_SQLITE_MAX_PENDING_WRITES = "64"/);
-  assert.match(flyControl, /WASMPLANE_VOLUME_SQLITE_MAX_BACKUPS_PER_DATABASE = "24"/);
-  assert.match(flyControl, /WASMPLANE_VOLUME_SQLITE_BACKUP_RETENTION_MS = "604800000"/);
-  assert.match(flyControl, /WASMPLANE_DURABLE_OBJECT_ALARM_INTERVAL_MS = "1000"/);
-  assert.match(flyControl, /WASMPLANE_DURABLE_OBJECT_ALARM_NAMESPACES = "alarm-demo"/);
-  assert.match(flyControl, /WASMPLANE_DURABLE_OBJECT_ALARM_WEBHOOK_URL = "https:\/\/mz-wasmplane-control\.fly\.dev\/alarm-demo\/webhook"/);
-  assert.match(readme, /WASMPLANE_VOLUME_SQLITE_BACKUP_KEY_BASE64/);
-  assert.match(readme, /WASMPLANE_VOLUME_SQLITE_BACKUP_KEYS_BASE64/);
-  assert.match(readme, /WASMPLANE_DURABLE_OBJECT_ALARM_INTERVAL_MS/);
-  assert.match(readme, /WASMPLANE_DURABLE_OBJECT_ALARM_WEBHOOK_URL/);
+  assert.match(flyControl, /ODENCTL_SNAPSHOT_PUBLISH_INTERVAL_MS = "5000"/);
+  assert.match(flyControl, /ODENCTL_VOLUME_SQLITE_ROOT = "\/data\/sqlite"/);
+  assert.match(flyControl, /ODENCTL_VOLUME_SQLITE_MAX_OPEN = "64"/);
+  assert.match(flyControl, /ODENCTL_VOLUME_SQLITE_MAX_PENDING_WRITES = "64"/);
+  assert.match(flyControl, /ODENCTL_VOLUME_SQLITE_MAX_BACKUPS_PER_DATABASE = "24"/);
+  assert.match(flyControl, /ODENCTL_VOLUME_SQLITE_BACKUP_RETENTION_MS = "604800000"/);
+  assert.match(flyControl, /ODENCTL_DURABLE_OBJECT_ALARM_INTERVAL_MS = "1000"/);
+  assert.match(flyControl, /ODENCTL_DURABLE_OBJECT_ALARM_NAMESPACES = "alarm-demo"/);
+  assert.match(flyControl, /ODENCTL_DURABLE_OBJECT_ALARM_WEBHOOK_URL = "https:\/\/mz-wasmplane-control\.fly\.dev\/alarm-demo\/webhook"/);
+  assert.match(readme, /ODENCTL_VOLUME_SQLITE_BACKUP_KEY_BASE64/);
+  assert.match(readme, /ODENCTL_VOLUME_SQLITE_BACKUP_KEYS_BASE64/);
+  assert.match(readme, /ODENCTL_DURABLE_OBJECT_ALARM_INTERVAL_MS/);
+  assert.match(readme, /ODENCTL_DURABLE_OBJECT_ALARM_WEBHOOK_URL/);
   assert.match(readme, /just fly-alarm-demo/);
   assert.match(readme, /just fly-scale-eval/);
   assert.match(readme, /Production readiness gate/);
   assert.match(readme, /production-readiness\.yml/);
-  assert.match(readme, /WASMPLANE_RUNTIME_TOKEN/);
+  assert.match(readme, /ODEN_RUNTIME_TOKEN/);
   assert.match(readme, /SLO thresholds/);
   assert.match(readme, /fly-otel-evidence/);
   assert.match(readme, /scripts\/install-flyctl\.sh/);
@@ -213,8 +216,8 @@ test("project tooling keeps Wasm E2E portable", async () => {
   assert.match(flyRuntime, /app = "mz-wasmplane-runtime"/);
   assert.match(flyRuntime, /RUNTIME_HOST = "::"/);
   assert.match(flyRuntime, /RUNTIME_ROUTE_SNAPSHOT_FILE = "\/data\/route-snapshot\.json"/);
-  assert.match(flyRuntime, /WASMPLANE_WASIP3_HOST_DAEMON_ROUTES = "1"/);
-  assert.match(flyRuntime, /WASMPLANE_WASIP3_HOST_DAEMON_WORKER_PROXY = "1"/);
+  assert.match(flyRuntime, /ODEN_WASIP3_HOST_DAEMON_ROUTES = "1"/);
+  assert.match(flyRuntime, /ODEN_WASIP3_HOST_DAEMON_WORKER_PROXY = "1"/);
   assert.match(flyRuntime, /path = "\/__runtime\/healthz"/);
   assert.match(flyCollector, /app = "mz-wasmplane-otel-collector"/);
 });
@@ -222,7 +225,7 @@ test("project tooling keeps Wasm E2E portable", async () => {
 test("Rust and MoonBit interop examples share a WASI p3 component contract", async () => {
   const justfile = await readFile("justfile", "utf8");
   const cargoToml = await readFile("Cargo.toml", "utf8");
-  const readme = await readFile("README.md", "utf8");
+  const readme = await readFile("docs/developer/control-plane-reference.md", "utf8");
   const wit = await readFile("examples/interop/wit/world.wit", "utf8");
   const rustLib = await readFile("examples/rust-interop/src/lib.rs", "utf8");
   const rustCargo = await readFile("examples/rust-interop/Cargo.toml", "utf8");
@@ -248,7 +251,7 @@ test("Rust and MoonBit release sample composes a runtime worker", async () => {
   const justfile = await readFile("justfile", "utf8");
   const packageJson = await readFile("package.json", "utf8");
   const cargoToml = await readFile("Cargo.toml", "utf8");
-  const readme = await readFile("README.md", "utf8");
+  const readme = await readFile("docs/developer/control-plane-reference.md", "utf8");
   const sampleReadme = await readFile("examples/rust-moonbit-release/README.md", "utf8");
   const workerWit = await readFile("examples/rust-moonbit-release/wit/worker.wit", "utf8");
   const pingWit = await readFile("examples/rust-moonbit-release/wit/ping.wit", "utf8");
@@ -265,11 +268,11 @@ test("Rust and MoonBit release sample composes a runtime worker", async () => {
   assert.match(justfile, /^sample-rust-moonbit-smoke:/m);
   assert.match(justfile, /^sample-rust-moonbit-release-preflight:/m);
   assert.match(justfile, /sample-rust-moonbit-release: sample-rust-moonbit-release-preflight sample-rust-moonbit-build/);
-  assert.match(justfile, /WASMPLANE_CONTROL_PLANE_TOKEN is required/);
+  assert.match(justfile, /ODENCTL_CONTROL_PLANE_TOKEN is required/);
   assert.match(justfile, /^wac-install:/m);
   assert.match(justfile, /command -v wac/);
-  assert.match(justfile, /wac_git_url := env_var_or_default\("WASMPLANE_WAC_GIT_URL", "https:\/\/github\.com\/mizchi\/wac"\)/);
-  assert.match(justfile, /wac_git_ref_arg := env_var_or_default\("WASMPLANE_WAC_GIT_REF_ARG", "--tag wasmplane-wac-0\.10\.1-p1"\)/);
+  assert.match(justfile, /wac_git_url := env_var_or_default\("ODEN_WAC_GIT_URL", "https:\/\/github\.com\/mizchi\/wac"\)/);
+  assert.match(justfile, /wac_git_ref_arg := env_var_or_default\("ODEN_WAC_GIT_REF_ARG", "--tag wasmplane-wac-0\.10\.1-p1"\)/);
   assert.match(justfile, /^sample-rust-moonbit-wac-build:/m);
   assert.match(justfile, /^sample-rust-moonbit-wac-smoke:/m);
   assert.match(justfile, /^sample-rust-moonbit-wac-status /m);
@@ -297,12 +300,12 @@ test("Rust and MoonBit release sample composes a runtime worker", async () => {
   assert.match(rustLib, /bridge::ping\(35\)/);
   assert.match(wacCallerCargo, /name = "rust-moonbit-wac-caller"/);
   assert.match(wacCallerLib, /bridge::ping\(35\)/);
-  assert.match(moonbitModule, /"name": "wasmplane\/sample"/);
+  assert.match(moonbitModule, /"name": "oden\/sample"/);
   assert.match(moonbitPing, /pub fn ping\(value : UInt\) -> UInt/);
 });
 
 test("project docs track Cloudflare smoke results and composition CI policy", async () => {
-  const readme = await readFile("README.md", "utf8");
+  const readme = await readFile("docs/developer/control-plane-reference.md", "utf8");
   const todo = await readFile("TODO.md", "utf8");
   const gitignore = await readFile(".gitignore", "utf8");
 
@@ -316,17 +319,17 @@ test("project docs track Cloudflare smoke results and composition CI policy", as
   assert.match(todo, /Add static runtime worker WIT diagnostics/);
   assert.match(todo, /Replace deprecated `wasm-tools compose` with forked `wac` for the WASIp3 async worker world/);
   assert.match(todo, /mizchi\/wac@wasmplane-wac-0\.10\.1-p1/);
-  assert.match(readme, /Latest deployed Cloudflare Containers smoke/);
+  assert.match(readme, /historical Cloudflare Containers smoke/);
   assert.match(readme, /container health.*1439ms/);
   assert.match(readme, /post-wakeup health.*135ms/);
   assert.match(readme, /## Rust \+ MoonBit CI policy/);
-  assert.match(readme, /full build\s+smoke stays out of default CI/);
+  assert.match(readme, /Default CI has a dedicated `wac-migration-report` job/);
   assert.match(readme, /sample-rust-moonbit-wac-status/);
   assert.match(readme, /static WIT summary/);
   assert.match(readme, /mizchi\/wac/);
   assert.match(readme, /sample-rust-moonbit-compose-build/);
   assert.match(readme, /Rust MoonBit Release workflow/);
-  assert.match(readme, /WASMPLANE_CONTROL_PLANE_TOKEN/);
+  assert.match(readme, /ODENCTL_CONTROL_PLANE_TOKEN/);
   assert.match(todo, /Add a protected GitHub Actions release gate for the Rust \+ MoonBit sample/);
   assert.match(todo, /Production readiness gate/);
   assert.match(todo, /Add a protected manual GitHub Actions gate for Fly production smoke, alarms, scale evaluation, and Rust \+ MoonBit release/);

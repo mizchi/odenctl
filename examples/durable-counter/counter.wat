@@ -24,7 +24,7 @@
     (type (func (param "binding" string) (param "name" string) (result 15)))
     (export "open" (func (type 16)))
   ))
-  (import "wasmplane:durable/objects@0.1.0" (instance $objects (type $objects)))
+  (import "oden:durable/objects@0.1.0" (instance $objects (type $objects)))
 
   ;; A separate memory instance breaks the cycle between canonical lowering
   ;; (which needs memory/realloc) and the application (which calls the imports).

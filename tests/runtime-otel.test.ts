@@ -6,7 +6,7 @@ test("OTLP HTTP trace exporter sends worker request spans as OTLP JSON", async (
   const calls: Array<{ url: string; init: any; body: any }> = [];
   const exporter = createOtlpHttpTraceExporter({
     endpoint: "http://collector.local:4318",
-    serviceName: "wasmplane-runtime",
+    serviceName: "oden-runtime",
     serviceInstanceId: "rt_machine",
     headers: { "x-api-key": "redacted" },
     nowMs: () => 1_782_740_000_500,
@@ -50,9 +50,9 @@ test("OTLP HTTP trace exporter sends worker request spans as OTLP JSON", async (
       ["server.address", "hello.example.dev"],
       ["url.path", "/"],
       ["http.response.status_code", "200"],
-      ["wasmplane.request_id", "req_1"],
-      ["wasmplane.project_id", "prj_hello"],
-      ["wasmplane.deployment_id", "dep_hello"],
+      ["oden.request_id", "req_1"],
+      ["oden.project_id", "prj_hello"],
+      ["oden.deployment_id", "dep_hello"],
     ],
   );
 });

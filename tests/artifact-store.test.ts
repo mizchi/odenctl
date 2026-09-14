@@ -13,7 +13,7 @@ import {
 } from "../src/control-plane/artifact-store.ts";
 
 test("file artifact store writes digest-addressed Wasm bytes", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-file-artifact-store-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-file-artifact-store-"));
   const bytes = Buffer.from("component bytes");
   const decoded = decodeLocalArtifactBytes(bytes.toString("base64"));
   const store = createFileControlPlaneArtifactStore({ storeDir: dir });
@@ -36,7 +36,7 @@ test("S3 artifact store uploads with SigV4 and returns public object location", 
   const decoded = decodeLocalArtifactBytes(bytes.toString("base64"));
   const calls: Array<{ url: string; init: RequestInit }> = [];
   const store = createS3ControlPlaneArtifactStore({
-    bucket: "wasmplane-artifacts",
+    bucket: "odenctl-artifacts",
     prefix: "workers",
     region: "auto",
     endpoint: "https://r2.example.com",
@@ -55,7 +55,7 @@ test("S3 artifact store uploads with SigV4 and returns public object location", 
   assert.equal(calls.length, 1);
   assert.equal(
     calls[0].url,
-    `https://r2.example.com/wasmplane-artifacts/workers/${decoded.digestHex}.wasm`,
+    `https://r2.example.com/odenctl-artifacts/workers/${decoded.digestHex}.wasm`,
   );
   assert.equal(calls[0].init.method, "PUT");
   assert.deepEqual(calls[0].init.body, bytes);
@@ -73,12 +73,12 @@ test("S3 artifact store uploads with SigV4 and returns public object location", 
 
 test("artifact store config selects S3 when a bucket is configured", () => {
   const store = createConfiguredControlPlaneArtifactStore({
-    WASMPLANE_ARTIFACT_BUCKET: "wasmplane-artifacts",
-    WASMPLANE_ARTIFACT_PREFIX: "workers",
-    WASMPLANE_ARTIFACT_ENDPOINT: "https://r2.example.com",
-    WASMPLANE_ARTIFACT_REGION: "auto",
-    WASMPLANE_ARTIFACT_ACCESS_KEY_ID: "test-access-key",
-    WASMPLANE_ARTIFACT_SECRET_ACCESS_KEY: "test-secret-key",
+    ODENCTL_ARTIFACT_BUCKET: "odenctl-artifacts",
+    ODENCTL_ARTIFACT_PREFIX: "workers",
+    ODENCTL_ARTIFACT_ENDPOINT: "https://r2.example.com",
+    ODENCTL_ARTIFACT_REGION: "auto",
+    ODENCTL_ARTIFACT_ACCESS_KEY_ID: "test-access-key",
+    ODENCTL_ARTIFACT_SECRET_ACCESS_KEY: "test-secret-key",
   });
 
   assert.equal(store.kind, "s3");

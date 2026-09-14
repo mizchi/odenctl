@@ -1135,6 +1135,50 @@ dependencies = [
 ]
 
 [[package]]
+name = "oden"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64",
+ "bytes",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "libc",
+ "oden-runtime-core",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
+name = "oden-runtime-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64",
+ "bytes",
+ "futures",
+ "getrandom 0.3.4",
+ "http-body",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "wasmtime",
+ "wasmtime-wasi",
+ "wasmtime-wasi-http",
+]
+
+[[package]]
 name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2175,49 +2219,6 @@ dependencies = [
  "bitflags",
  "indexmap",
  "semver",
-]
-
-[[package]]
-name = "wasmplane-runtime-core"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "base64",
- "bytes",
- "futures",
- "getrandom 0.3.4",
- "http-body",
- "http-body-util",
- "hyper",
- "hyper-util",
- "reqwest",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "tokio",
- "tokio-util",
- "wasmtime",
- "wasmtime-wasi",
- "wasmtime-wasi-http",
-]
-
-[[package]]
-name = "wasmplane-wasip3-host"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bytes",
- "http-body-util",
- "hyper",
- "hyper-util",
- "libc",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "tokio-util",
- "wasmplane-runtime-core",
 ]
 
 [[package]]

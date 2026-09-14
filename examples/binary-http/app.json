@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "mode": "http",
+  "component": "target/wasm32-wasip2/debug/binary_http.wasm",
+  "listen": "127.0.0.1:8080",
+  "build": [["cargo", "build", "--locked", "--target", "wasm32-wasip2"]],
+  "watch": ["src", "Cargo.toml", "Cargo.lock"],
+  "runtime": { "timeout_ms": 5000, "max_body_bytes": 1048576 }
+}

@@ -35,19 +35,19 @@ export interface ConfiguredControlPlaneMigrationOptions {
 export function resolveControlPlaneDatabaseConfig(
   env: Record<string, string | undefined> = process.env,
 ): ControlPlaneDatabaseConfig {
-  const postgresUrl = firstNonEmpty(env.DATABASE_URL, env.WASMPLANE_DATABASE_URL);
+  const postgresUrl = firstNonEmpty(env.DATABASE_URL, env.ODENCTL_DATABASE_URL);
   if (postgresUrl) {
-    const maxConnections = positiveInteger(env.WASMPLANE_POSTGRES_POOL_SIZE);
+    const maxConnections = positiveInteger(env.ODENCTL_POSTGRES_POOL_SIZE);
     return {
       kind: "postgres",
       url: postgresUrl,
-      ssl: resolvePostgresSsl(postgresUrl, env.WASMPLANE_POSTGRES_SSL),
+      ssl: resolvePostgresSsl(postgresUrl, env.ODENCTL_POSTGRES_SSL),
       ...(maxConnections ? { maxConnections } : {}),
     };
   }
   return {
     kind: "sqlite",
-    path: firstNonEmpty(env.WASMPLANE_DB) ?? "wasmplane.sqlite",
+    path: firstNonEmpty(env.ODENCTL_DB) ?? "odenctl.sqlite",
   };
 }
 
@@ -62,11 +62,11 @@ export async function createConfiguredControlPlane(
   const projectUsageQuotas = projectUsageQuotasFromEnv(env);
   const projectBillingRates = projectBillingRatesFromEnv(env);
   const projectBillingBudgets = projectBillingBudgetsFromEnv(env);
-  const billingRateCardVersion = firstNonEmpty(env.WASMPLANE_BILLING_RATE_CARD_VERSION);
+  const billingRateCardVersion = firstNonEmpty(env.ODENCTL_BILLING_RATE_CARD_VERSION);
   const billingInvoiceExportSigner = billingInvoiceExportSignerFromEnv(env);
-  const billingWebhookTargetUrl = firstNonEmpty(env.WASMPLANE_BILLING_WEBHOOK_URL);
-  const billingWebhookMaxAttempts = positiveInteger(env.WASMPLANE_BILLING_WEBHOOK_MAX_ATTEMPTS);
-  const billingWebhookRetryDelayMs = positiveInteger(env.WASMPLANE_BILLING_WEBHOOK_RETRY_DELAY_MS);
+  const billingWebhookTargetUrl = firstNonEmpty(env.ODENCTL_BILLING_WEBHOOK_URL);
+  const billingWebhookMaxAttempts = positiveInteger(env.ODENCTL_BILLING_WEBHOOK_MAX_ATTEMPTS);
+  const billingWebhookRetryDelayMs = positiveInteger(env.ODENCTL_BILLING_WEBHOOK_RETRY_DELAY_MS);
   const admissionPolicy = admissionPolicyFromEnv(env);
   const edgeWorkerDeployer = edgeWorkerDeployerFromEnv(env);
   if (config.kind === "postgres") {
@@ -123,9 +123,9 @@ export async function createConfiguredControlPlane(
 export function edgeWorkerDeployerFromEnv(
   env: Record<string, string | undefined> = process.env,
 ): EdgeWorkerDeployer | undefined {
-  const mode = firstNonEmpty(env.WASMPLANE_EDGE_WORKER_DEPLOYER, env.WASMPLANE_EDGE_WORKER_MODE);
+  const mode = firstNonEmpty(env.ODENCTL_EDGE_WORKER_DEPLOYER, env.ODENCTL_EDGE_WORKER_MODE);
   const workersDevSubdomain = firstNonEmpty(
-    env.WASMPLANE_CLOUDFLARE_WORKERS_DEV_SUBDOMAIN,
+    env.ODENCTL_CLOUDFLARE_WORKERS_DEV_SUBDOMAIN,
     env.CLOUDFLARE_WORKERS_DEV_SUBDOMAIN,
   );
   if (!mode) {
@@ -136,11 +136,11 @@ export function edgeWorkerDeployerFromEnv(
     return createMockCloudflareWorkerDeployer({ workersDevSubdomain });
   }
   if (normalized === "cloudflare-api" || normalized === "api") {
-    const accountId = firstNonEmpty(env.WASMPLANE_CLOUDFLARE_ACCOUNT_ID, env.CLOUDFLARE_ACCOUNT_ID);
-    const apiToken = firstNonEmpty(env.WASMPLANE_CLOUDFLARE_API_TOKEN, env.CLOUDFLARE_API_TOKEN);
+    const accountId = firstNonEmpty(env.ODENCTL_CLOUDFLARE_ACCOUNT_ID, env.CLOUDFLARE_ACCOUNT_ID);
+    const apiToken = firstNonEmpty(env.ODENCTL_CLOUDFLARE_API_TOKEN, env.CLOUDFLARE_API_TOKEN);
     if (!accountId || !apiToken) {
       throw new Error(
-        "Cloudflare edge worker deployer requires WASMPLANE_CLOUDFLARE_ACCOUNT_ID and WASMPLANE_CLOUDFLARE_API_TOKEN",
+        "Cloudflare edge worker deployer requires ODENCTL_CLOUDFLARE_ACCOUNT_ID and ODENCTL_CLOUDFLARE_API_TOKEN",
       );
     }
     return createCloudflareWorkersApiDeployer({
@@ -149,7 +149,7 @@ export function edgeWorkerDeployerFromEnv(
       workersDevSubdomain,
     });
   }
-  throw new Error("WASMPLANE_EDGE_WORKER_DEPLOYER must be mock, cloudflare-api, or api");
+  throw new Error("ODENCTL_EDGE_WORKER_DEPLOYER must be mock, cloudflare-api, or api");
 }
 
 export async function applyConfiguredControlPlaneMigrations(

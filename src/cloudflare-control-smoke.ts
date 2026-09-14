@@ -52,16 +52,16 @@ export interface CloudflareControlSmokeSummary {
 }
 
 interface CloudflareControlSmokeEnv {
-  WASMPLANE_CLOUDFLARE_CONTROL_URL?: string;
+  ODENCTL_CLOUDFLARE_CONTROL_URL?: string;
   CLOUDFLARE_CONTROL_URL?: string;
-  WASMPLANE_CONTROL_PLANE_TOKEN?: string;
+  ODENCTL_CONTROL_PLANE_TOKEN?: string;
   CONTROL_PLANE_TOKEN?: string;
-  WASMPLANE_CLOUDFLARE_SMOKE_PROJECT_ID?: string;
-  WASMPLANE_CLOUDFLARE_SMOKE_ARTIFACT_ID?: string;
-  WASMPLANE_CLOUDFLARE_SMOKE_DEPLOYMENT_ID?: string;
-  WASMPLANE_CLOUDFLARE_SMOKE_SCRIPT_NAME?: string;
-  WASMPLANE_CLOUDFLARE_SMOKE_RELEASE_MODE?: string;
-  WASMPLANE_CLOUDFLARE_SMOKE_LOGS_URL?: string;
+  ODENCTL_CLOUDFLARE_SMOKE_PROJECT_ID?: string;
+  ODENCTL_CLOUDFLARE_SMOKE_ARTIFACT_ID?: string;
+  ODENCTL_CLOUDFLARE_SMOKE_DEPLOYMENT_ID?: string;
+  ODENCTL_CLOUDFLARE_SMOKE_SCRIPT_NAME?: string;
+  ODENCTL_CLOUDFLARE_SMOKE_RELEASE_MODE?: string;
+  ODENCTL_CLOUDFLARE_SMOKE_LOGS_URL?: string;
 }
 
 export function parseCloudflareControlSmokeArgs(
@@ -70,31 +70,31 @@ export function parseCloudflareControlSmokeArgs(
 ): CloudflareControlSmokeInput {
   const flags = parseFlags(args);
   const suffix = Date.now().toString(36);
-  const projectId = nonEmpty(flags["project-id"] ?? env.WASMPLANE_CLOUDFLARE_SMOKE_PROJECT_ID)
+  const projectId = nonEmpty(flags["project-id"] ?? env.ODENCTL_CLOUDFLARE_SMOKE_PROJECT_ID)
     ?? `prj_cf_smoke_${suffix}`;
   return {
     controlUrl: normalizeBaseUrl(
       required(
-        flags["control-url"] ?? env.WASMPLANE_CLOUDFLARE_CONTROL_URL ?? env.CLOUDFLARE_CONTROL_URL,
+        flags["control-url"] ?? env.ODENCTL_CLOUDFLARE_CONTROL_URL ?? env.CLOUDFLARE_CONTROL_URL,
         "control URL",
       ),
     ),
-    token: nonEmpty(flags["token"] ?? env.WASMPLANE_CONTROL_PLANE_TOKEN ?? env.CONTROL_PLANE_TOKEN),
+    token: nonEmpty(flags["token"] ?? env.ODENCTL_CONTROL_PLANE_TOKEN ?? env.CONTROL_PLANE_TOKEN),
     projectId,
-    artifactId: nonEmpty(flags["artifact-id"] ?? env.WASMPLANE_CLOUDFLARE_SMOKE_ARTIFACT_ID)
+    artifactId: nonEmpty(flags["artifact-id"] ?? env.ODENCTL_CLOUDFLARE_SMOKE_ARTIFACT_ID)
       ?? `art_cf_smoke_${suffix}`,
-    deploymentId: nonEmpty(flags["deployment-id"] ?? env.WASMPLANE_CLOUDFLARE_SMOKE_DEPLOYMENT_ID)
+    deploymentId: nonEmpty(flags["deployment-id"] ?? env.ODENCTL_CLOUDFLARE_SMOKE_DEPLOYMENT_ID)
       ?? `dep_cf_smoke_${suffix}`,
-    scriptName: nonEmpty(flags["script-name"] ?? env.WASMPLANE_CLOUDFLARE_SMOKE_SCRIPT_NAME)
-      ?? `wasmplane-cf-smoke-${suffix}`,
-    releaseMode: releaseMode(flags["release-mode"] ?? env.WASMPLANE_CLOUDFLARE_SMOKE_RELEASE_MODE),
+    scriptName: nonEmpty(flags["script-name"] ?? env.ODENCTL_CLOUDFLARE_SMOKE_SCRIPT_NAME)
+      ?? `odenctl-cf-smoke-${suffix}`,
+    releaseMode: releaseMode(flags["release-mode"] ?? env.ODENCTL_CLOUDFLARE_SMOKE_RELEASE_MODE),
     requireLocalSqlite: !truthy(flags["allow-external-db"]),
     deleteRelease: !truthy(flags["keep-release"]),
     deleteProvider: truthy(flags["delete-provider"]),
     forceProviderDelete: truthy(flags["force-provider-delete"]) || truthy(flags.force),
     jsonOutput: nonEmpty(flags["json-output"]),
     markdownOutput: nonEmpty(flags["markdown-output"]),
-    logsUrl: nonEmpty(flags["logs-url"] ?? env.WASMPLANE_CLOUDFLARE_SMOKE_LOGS_URL),
+    logsUrl: nonEmpty(flags["logs-url"] ?? env.ODENCTL_CLOUDFLARE_SMOKE_LOGS_URL),
     wakeDelayMs: nonnegativeInteger(flagNumber(flags["wake-delay-ms"], 0), "wake-delay-ms"),
     maxContainerHealthMs: positiveInteger(flagNumber(flags["max-container-health-ms"], 60_000), "max-container-health-ms"),
   };
@@ -206,7 +206,7 @@ export async function runCloudflareControlSmoke(
     name: "edge release manifest",
     ok: release.check.ok
       && typeof release.body?.scriptModule === "string"
-      && release.body.scriptModule.includes("/__wasmplane/manifest"),
+      && release.body.scriptModule.includes("/__odenctl/manifest"),
     status: release.check.status,
     detail: release.check.ok ? undefined : release.check.detail,
   });
@@ -540,7 +540,7 @@ function printResult(result: CloudflareControlSmokeResult): void {
 export function formatCloudflareControlSmokeMarkdown(result: CloudflareControlSmokeResult): string {
   const summary = result.summary;
   const lines = [
-    "# wasmplane Cloudflare Containers smoke",
+    "# odenctl Cloudflare Containers smoke",
     "",
     `status: ${result.ok ? "ok" : "failed"}`,
     `control URL: \`${summary.controlUrl}\``,

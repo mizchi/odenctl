@@ -1,5 +1,7 @@
 node_modules/
 target/
+.odenctl/
+.oden/
 .wasmplane/
 perf-results/
 reports/

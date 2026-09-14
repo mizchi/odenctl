@@ -8,13 +8,13 @@ import { test } from "node:test";
 import { promisify } from "node:util";
 
 const exec = promisify(execFile);
-const host = process.env.WASMPLANE_TEST_BIN;
+const host = process.env.ODEN_TEST_BIN;
 for (const language of ["rust", "moonbit"]) {
   test(`exported ${language} tests drive async I/O with explicit permissions`, {
     skip: !host,
     timeout: 30_000,
   }, async (t) => {
-    const directory = await mkdtemp(resolve(tmpdir(), "wasmplane-tests-"));
+    const directory = await mkdtemp(resolve(tmpdir(), "odenctl-tests-"));
     t.after(() => rm(directory, { recursive: true, force: true }));
     let calls = 0;
     let respond = true;

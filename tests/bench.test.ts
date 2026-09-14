@@ -137,7 +137,7 @@ test("benchmark CLI args parse benchmark modes and concurrency list", () => {
     "--component",
     "worker.component.wasm",
     "--host-bin",
-    "target/debug/wasmplane-wasip3-host",
+    "target/debug/oden-host",
     "--iterations",
     "100",
     "--warmup",
@@ -152,7 +152,7 @@ test("benchmark CLI args parse benchmark modes and concurrency list", () => {
 
   assert.equal(options.mode, "all");
   assert.equal(options.componentPath, "worker.component.wasm");
-  assert.equal(options.hostBin, "target/debug/wasmplane-wasip3-host");
+  assert.equal(options.hostBin, "target/debug/oden-host");
   assert.equal(options.iterations, 100);
   assert.equal(options.warmup, 5);
   assert.deepEqual(options.concurrency, [1, 4, 16]);

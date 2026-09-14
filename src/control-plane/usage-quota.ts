@@ -129,13 +129,13 @@ export function projectUsageQuotasFromEnv(
   env: Record<string, string | undefined> = process.env,
 ): ProjectUsageQuotaPolicies | undefined {
   const policies: ProjectUsageQuotaPolicies = {};
-  mergeNumberPolicies(policies, env.WASMPLANE_USAGE_QUOTA_INVOCATION_LIMITS, "invocations");
-  mergeNumberPolicies(policies, env.WASMPLANE_USAGE_QUOTA_CPU_MS_LIMITS, "cpuMs");
-  mergeNumberPolicies(policies, env.WASMPLANE_USAGE_QUOTA_WALL_MS_LIMITS, "wallMs");
-  mergeNumberPolicies(policies, env.WASMPLANE_USAGE_QUOTA_MEMORY_MB_MS_LIMITS, "memoryMbMs");
-  mergeNumberPolicies(policies, env.WASMPLANE_USAGE_QUOTA_EGRESS_BYTES_LIMITS, "egressBytes");
-  mergeNumberPolicies(policies, env.WASMPLANE_USAGE_QUOTA_STORAGE_BYTES_LIMITS, "storageBytes");
-  mergeNumberPolicies(policies, env.WASMPLANE_USAGE_QUOTA_SQLITE_UNIT_LIMITS, "sqliteUnits");
+  mergeNumberPolicies(policies, env.ODENCTL_USAGE_QUOTA_INVOCATION_LIMITS, "invocations");
+  mergeNumberPolicies(policies, env.ODENCTL_USAGE_QUOTA_CPU_MS_LIMITS, "cpuMs");
+  mergeNumberPolicies(policies, env.ODENCTL_USAGE_QUOTA_WALL_MS_LIMITS, "wallMs");
+  mergeNumberPolicies(policies, env.ODENCTL_USAGE_QUOTA_MEMORY_MB_MS_LIMITS, "memoryMbMs");
+  mergeNumberPolicies(policies, env.ODENCTL_USAGE_QUOTA_EGRESS_BYTES_LIMITS, "egressBytes");
+  mergeNumberPolicies(policies, env.ODENCTL_USAGE_QUOTA_STORAGE_BYTES_LIMITS, "storageBytes");
+  mergeNumberPolicies(policies, env.ODENCTL_USAGE_QUOTA_SQLITE_UNIT_LIMITS, "sqliteUnits");
   return Object.keys(policies).length > 0 ? policies : undefined;
 }
 

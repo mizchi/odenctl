@@ -41,13 +41,13 @@ export function projectQuotasFromEnv(
   env: Record<string, string | undefined> = process.env,
 ): ProjectQuotas | undefined {
   const quotas: ProjectQuotas = {
-    maxArtifacts: positiveLimit(envInteger(env.WASMPLANE_QUOTA_MAX_ARTIFACTS)),
-    maxDeployments: positiveLimit(envInteger(env.WASMPLANE_QUOTA_MAX_DEPLOYMENTS)),
-    maxRoutes: positiveLimit(envInteger(env.WASMPLANE_QUOTA_MAX_ROUTES)),
-    maxSecrets: positiveLimit(envInteger(env.WASMPLANE_QUOTA_MAX_SECRETS)),
-    maxKvNamespaces: positiveLimit(envInteger(env.WASMPLANE_QUOTA_MAX_KV_NAMESPACES)),
+    maxArtifacts: positiveLimit(envInteger(env.ODENCTL_QUOTA_MAX_ARTIFACTS)),
+    maxDeployments: positiveLimit(envInteger(env.ODENCTL_QUOTA_MAX_DEPLOYMENTS)),
+    maxRoutes: positiveLimit(envInteger(env.ODENCTL_QUOTA_MAX_ROUTES)),
+    maxSecrets: positiveLimit(envInteger(env.ODENCTL_QUOTA_MAX_SECRETS)),
+    maxKvNamespaces: positiveLimit(envInteger(env.ODENCTL_QUOTA_MAX_KV_NAMESPACES)),
     maxDurableObjectNamespaces: positiveLimit(
-      envInteger(env.WASMPLANE_QUOTA_MAX_DURABLE_OBJECT_NAMESPACES),
+      envInteger(env.ODENCTL_QUOTA_MAX_DURABLE_OBJECT_NAMESPACES),
     ),
   };
   return Object.values(quotas).some((value) => value !== undefined) ? quotas : undefined;

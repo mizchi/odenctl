@@ -102,7 +102,7 @@ function buildOtlpTracePayload(input: BuildOtlpTracePayloadInput) {
         resource: { attributes: resourceAttributes },
         scopeSpans: [
           {
-            scope: { name: "wasmplane-runtime" },
+            scope: { name: "oden-runtime" },
             spans: [
               stripUndefined({
                 traceId: input.traceId,
@@ -117,10 +117,10 @@ function buildOtlpTracePayload(input: BuildOtlpTracePayloadInput) {
                   stringAttribute("server.address", input.host),
                   stringAttribute("url.path", input.path),
                   intAttribute("http.response.status_code", input.status),
-                  stringAttribute("wasmplane.request_id", input.requestId),
-                  ...(input.projectId ? [stringAttribute("wasmplane.project_id", input.projectId)] : []),
-                  ...(input.deploymentId ? [stringAttribute("wasmplane.deployment_id", input.deploymentId)] : []),
-                  ...(input.errorCode ? [stringAttribute("wasmplane.error_code", input.errorCode)] : []),
+                  stringAttribute("oden.request_id", input.requestId),
+                  ...(input.projectId ? [stringAttribute("oden.project_id", input.projectId)] : []),
+                  ...(input.deploymentId ? [stringAttribute("oden.deployment_id", input.deploymentId)] : []),
+                  ...(input.errorCode ? [stringAttribute("oden.error_code", input.errorCode)] : []),
                 ],
                 status: {
                   code: input.status >= 500 || input.errorCode ? 2 : 1,

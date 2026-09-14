@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-wasmtime_version="${WASMPLANE_WASMTIME_VERSION:-48.0.2}"
-wasm_tools_version="${WASMPLANE_WASM_TOOLS_VERSION:-1.259.0}"
-wit_bindgen_version="${WASMPLANE_WIT_BINDGEN_VERSION:-0.62.0}"
+wasmtime_version="${ODENCTL_WASMTIME_VERSION:-48.0.2}"
+wasm_tools_version="${ODENCTL_WASM_TOOLS_VERSION:-1.259.0}"
+wit_bindgen_version="${ODENCTL_WIT_BINDGEN_VERSION:-0.62.0}"
 
 case "$(uname -s)-$(uname -m)" in
   Linux-x86_64)
@@ -18,8 +18,8 @@ case "$(uname -s)-$(uname -m)" in
     ;;
 esac
 
-install_dir="${WASMPLANE_CI_BIN_DIR:-$HOME/.local/bin}"
-work_dir="${RUNNER_TEMP:-/tmp}/wasmplane-ci-tools"
+install_dir="${ODENCTL_CI_BIN_DIR:-$HOME/.local/bin}"
+work_dir="${RUNNER_TEMP:-/tmp}/odenctl-ci-tools"
 
 mkdir -p "$install_dir" "$work_dir"
 export PATH="$install_dir:$PATH"

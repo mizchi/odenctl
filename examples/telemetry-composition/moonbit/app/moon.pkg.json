@@ -1,15 +1,15 @@
 {
   "import": [
-    { "path": "wasmplane/service-sdk/async-core", "alias": "async-core" },
+    { "path": "oden/service-sdk/async-core", "alias": "async-core" },
     {
-      "path": "wasmplane/service-sdk/interface/wasi/http/types",
+      "path": "oden/service-sdk/interface/wasi/http/types",
       "alias": "types"
     },
     {
-      "path": "wasmplane/service-sdk/interface/example/boundary/operations",
+      "path": "oden/service-sdk/interface/example/boundary/operations",
       "alias": "operations"
     },
-    { "path": "wasmplane/service-sdk/sdk", "alias": "service" }
+    { "path": "oden/service-sdk/sdk", "alias": "service" }
   ],
   "supported-targets": "+wasm"
 }

@@ -201,8 +201,8 @@ test("placement policy can force-drain tenants from every runtime snapshot", () 
 
 test("placement policy parses isolation pool and drained tenants from environment", () => {
   assert.deepEqual(runtimePlacementPolicyFromEnv({
-    WASMPLANE_ISOLATION_POOL_PROJECTS: "prj_noisy=isolation, prj_gpu=gpu",
-    WASMPLANE_DRAINED_PROJECTS: "prj_blocked",
+    ODENCTL_ISOLATION_POOL_PROJECTS: "prj_noisy=isolation, prj_gpu=gpu",
+    ODENCTL_DRAINED_PROJECTS: "prj_blocked",
   }), {
     isolation: {
       projects: {

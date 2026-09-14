@@ -1,4 +1,4 @@
-package wasmplane:standard-http;
+package oden:standard-http;
 
 // Rust wasm32-wasip2 std imports coexist with a standard WASIp3 service export.
 world service {

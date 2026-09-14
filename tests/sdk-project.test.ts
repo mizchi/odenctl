@@ -6,10 +6,10 @@ import { join, resolve } from "node:path";
 import test from "node:test";
 import { startServiceProcess } from "../src/service-process.ts";
 
-const binary = process.env.WASMPLANE_SDK_BIN && resolve(process.env.WASMPLANE_SDK_BIN);
+const binary = process.env.ODEN_SDK_BIN && resolve(process.env.ODEN_SDK_BIN);
 for (const language of ["rust", "moonbit"]) {
   test(`init creates a self-contained ${language} project outside the runtime repository`, { skip: !binary, timeout: 180_000 }, async (t) => {
-    const dir = await mkdtemp(join(tmpdir(), "wasmplane-sdk-"));
+    const dir = await mkdtemp(join(tmpdir(), "oden-sdk-"));
     t.after(() => rm(dir, { recursive: true, force: true }));
     const app = join(dir, "app with spaces");
     const init = spawnSync(binary!, ["init", app, "--language", language], { encoding: "utf8", cwd: dir });
@@ -18,15 +18,15 @@ for (const language of ["rust", "moonbit"]) {
     assert.equal(manifest.mode, "service");
     const repeat = spawnSync(binary!, ["init", app, "--language", language], { encoding: "utf8" });
     assert.notEqual(repeat.status, 0, "init must not overwrite an existing project");
-    if (process.env.WASMPLANE_SDK_PACKAGES) {
-      const packages = resolve(process.env.WASMPLANE_SDK_PACKAGES);
-      const archive = join(packages, language === "rust" ? "wasmplane-service-sdk-0.1.0.crate" : "wasmplane-moonbit-service-sdk-0.1.0.tgz");
+    if (process.env.ODEN_SDK_PACKAGES) {
+      const packages = resolve(process.env.ODEN_SDK_PACKAGES);
+      const archive = join(packages, language === "rust" ? "oden-service-sdk-0.1.0.crate" : "oden-moonbit-service-sdk-0.1.0.tgz");
       const extracted = join(dir, "extracted"); await mkdir(extracted);
       const unpacked = spawnSync("tar", ["xzf", archive, "-C", extracted], { encoding: "utf8" });
       assert.equal(unpacked.status, 0, unpacked.stderr);
-      const vendor = join(app, "vendor/wasmplane-sdk");
+      const vendor = join(app, "vendor/oden-sdk");
       await rm(vendor, { recursive: true });
-      await cp(join(extracted, language === "rust" ? "wasmplane-service-sdk-0.1.0" : "package"), vendor, { recursive: true });
+      await cp(join(extracted, language === "rust" ? "oden-service-sdk-0.1.0" : "package"), vendor, { recursive: true });
     }
     const built = spawnSync(binary!, ["build", join(app, "app.json")], {
       cwd: dir, encoding: "utf8", timeout: 150_000, maxBuffer: 8 * 1024 * 1024,
@@ -46,13 +46,13 @@ for (const language of ["rust", "moonbit"]) {
       assert.equal(shutdown.pidAlive, false);
     }
     // Neither the build script nor SDK refers back to this repository.
-    const path = language === "rust" ? "vendor/wasmplane-sdk/Cargo.toml" : "vendor/wasmplane-sdk/build.mjs";
+    const path = language === "rust" ? "vendor/oden-sdk/Cargo.toml" : "vendor/oden-sdk/build.mjs";
     assert.ok(!(await readFile(join(app, path), "utf8")).includes(process.cwd()));
   });
 }
 
 test("init rejects unknown languages without creating a project", { skip: !binary }, async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-init-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-init-"));
   t.after(() => rm(dir, { recursive: true, force: true }));
   await writeFile(join(dir, "keep.txt"), "keep");
   const result = spawnSync(binary!, ["init", dir, "--language", "unknown"], { encoding: "utf8" });

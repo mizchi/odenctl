@@ -1,5 +1,5 @@
 use std::cell::Cell;
-use wasmplane_service_sdk::{io, sleep_ms, types, wasip3};
+use oden_service_sdk::{io, sleep_ms, types, wasip3};
 
 mod pricing;
 wit_bindgen::generate!({

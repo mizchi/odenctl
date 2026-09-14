@@ -7,16 +7,16 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 
-const bin = process.env.WASMPLANE_STANDALONE_BIN;
-const component = process.env.WASMPLANE_STANDALONE_HTTP_COMPONENT;
-const p3Component = process.env.WASMPLANE_STANDALONE_HTTP_P3_COMPONENT;
+const bin = process.env.ODEN_STANDALONE_BIN;
+const component = process.env.ODEN_STANDALONE_HTTP_COMPONENT;
+const p3Component = process.env.ODEN_STANDALONE_HTTP_P3_COMPONENT;
 const enabled = Boolean(bin && component);
 
 async function start(config: unknown, guestComponent = component!) {
-  const directory = await mkdtemp(join(tmpdir(), "wasmplane-standalone-"));
+  const directory = await mkdtemp(join(tmpdir(), "odenctl-standalone-"));
   const path = join(directory, "runtime.json");
   await writeFile(path, JSON.stringify(config));
-  const child = spawn(resolve(bin!), ["serve", resolve(guestComponent), "--addr", "127.0.0.1:0", "--config", path], { cwd: directory, env: { ...process.env, WASMPLANE_TEST_PRIVATE: "host-private" } });
+  const child = spawn(resolve(bin!), ["serve", resolve(guestComponent), "--addr", "127.0.0.1:0", "--config", path], { cwd: directory, env: { ...process.env, ODEN_TEST_PRIVATE: "host-private" } });
   let stderr = "";
   const ready = new Promise<string>((resolve, reject) => {
     child.stderr.on("data", (data) => {
@@ -94,14 +94,14 @@ test("standalone outbound requests progress concurrently and require an explicit
 });
 
 test("filesystem and environment capabilities are explicit and read-only by default", { skip: !enabled }, async (t) => {
-  const directory = await mkdtemp(join(tmpdir(), "wasmplane-preopen-"));
+  const directory = await mkdtemp(join(tmpdir(), "odenctl-preopen-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   await writeFile(join(directory, "message"), "granted file");
   const denied = await start({});
   t.after(() => denied.stop());
   assert.equal(await (await fetch(`${denied.url}/env`)).text(), "env denied");
   assert.equal(await (await fetch(`${denied.url}/file`)).text(), "file denied");
-  const allowed = await start({ env: { WASMPLANE_TEST_PRIVATE: "explicit value" }, directories: [{ host: directory, guest: "/data" }] });
+  const allowed = await start({ env: { ODEN_TEST_PRIVATE: "explicit value" }, directories: [{ host: directory, guest: "/data" }] });
   t.after(() => allowed.stop());
   assert.equal(await (await fetch(`${allowed.url}/env`)).text(), "explicit value");
   assert.equal(await (await fetch(`${allowed.url}/file`)).text(), "granted file");

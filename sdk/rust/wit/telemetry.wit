@@ -1,4 +1,4 @@
-package wasmplane:telemetry@0.1.0;
+package oden:telemetry@0.1.0;
 
 /// Explicit contexts are values and may cross tasks and composed components.
 /// Never keep a shared "current span" across an async suspension.

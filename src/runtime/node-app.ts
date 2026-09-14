@@ -9,6 +9,8 @@ import {
   type RuntimeNodeStatus,
 } from "../control-plane/contracts.ts";
 import { RuntimeError } from "./errors.ts";
+import { createResponseCache, type ResponseCacheStatus } from "./response-cache.ts";
+import { parseResponseCacheScope, type ResponseCacheConfig } from "./response-cache-policy.ts";
 import { verifyRuntimeIdentityHeaders } from "./identity.ts";
 import {
   invalidatePrecompiledCacheVariants,
@@ -44,6 +46,7 @@ export interface RuntimeNodeAppOptions {
   maxConcurrentInvocations?: number;
   maxConcurrentInvocationsByProject?: Record<string, number>;
   requestRateLimitsByProject?: Record<string, RuntimeProjectRateLimit>;
+  responseCache?: ResponseCacheConfig;
   cacheRetention?: RuntimeCacheRetentionOptions;
   precompiledCacheEngineVariant?: string;
   cacheRetentionIntervalMs?: number;
@@ -112,6 +115,7 @@ export function createRuntimeNodeApp(options: RuntimeNodeAppOptions) {
   const projectRateLimiter = createProjectRateLimiter(options.requestRateLimitsByProject, monotonicNowMs);
   const cacheRetentionJob = createRuntimeCacheRetentionJob(options);
   const invocationDrain = createInvocationDrainTracker();
+  const responseCache = options.responseCache ? createResponseCache(options.responseCache) : undefined;
   let lifecycleStatus: RuntimeNodeStatus = options.initialLifecycleStatus ?? "active";
   const server = createServer(async (request, response) => {
     let workerRequest = false;
@@ -128,6 +132,7 @@ export function createRuntimeNodeApp(options: RuntimeNodeAppOptions) {
     let eventErrorCode: string | undefined;
     let eventMethod: string | undefined;
     let eventTraceparent: string | undefined;
+    let cleanupCacheWait: (() => void) | undefined;
     try {
       const url = new URL(request.url ?? "/", "http://runtime.local");
       const method = request.method ?? "GET";
@@ -203,6 +208,30 @@ export function createRuntimeNodeApp(options: RuntimeNodeAppOptions) {
         return;
       }
 
+      if (url.pathname === "/__runtime/response-cache" || url.pathname === "/__runtime/response-cache/purge") {
+        // Unlike the legacy local management endpoints, these controls are closed
+        // unless an operator explicitly configures a bearer token.
+        if (!options.managementToken) {
+          writeJson(response, 401, { error: { code: "unauthorized", message: "response cache management requires a configured bearer token" } });
+          return;
+        }
+        if (responseCache && method === "GET" && url.pathname === "/__runtime/response-cache") {
+          writeJson(response, 200, responseCache.stats());
+          return;
+        }
+        if (responseCache && method === "POST" && url.pathname === "/__runtime/response-cache/purge") {
+          const bodyText = Buffer.from(await readBody(request, 4096)).toString("utf8");
+          if (!authorizeRuntimeIdentity(options, request.headers, method, url.pathname, bodyText)) {
+            writeJson(response, 401, { error: { code: "unauthorized", message: "missing or invalid runtime identity signature" } });
+            return;
+          }
+          let body: unknown;
+          try { body = JSON.parse(bodyText); } catch { throw new RuntimeError("validation", "response cache purge body must be JSON"); }
+          writeJson(response, 200, responseCache.purge(parseResponseCacheScope(body)));
+          return;
+        }
+      }
+
       if (method === "PUT" && url.pathname === "/__runtime/snapshots/routes") {
         const bodyText = await readText(request);
         if (!authorizeRuntimeIdentity(options, request.headers, method, url.pathname, bodyText)) {
@@ -213,33 +242,38 @@ export function createRuntimeNodeApp(options: RuntimeNodeAppOptions) {
         }
         const snapshot = parseJson<RouteSnapshot>(bodyText);
         assertRouteSnapshot(snapshot);
-        const warmup = options.warmupOnSnapshot === true;
-        let preparedComponents: CompiledComponent[] | undefined;
-        if (warmup || options.hostDaemonRoutes) {
-          if (!options.supervisor.warmupSnapshot) {
-            throw new RuntimeError("validation", "runtime supervisor does not support snapshot warmup");
+        const resumeCache = responseCache?.suspend();
+        try {
+          const warmup = options.warmupOnSnapshot === true;
+          let preparedComponents: CompiledComponent[] | undefined;
+          if (warmup || options.hostDaemonRoutes) {
+            if (!options.supervisor.warmupSnapshot) {
+              throw new RuntimeError("validation", "runtime supervisor does not support snapshot warmup");
+            }
+            preparedComponents = await options.supervisor.warmupSnapshot(snapshot);
+          } else {
+            options.supervisor.loadSnapshot(snapshot);
           }
-          preparedComponents = await options.supervisor.warmupSnapshot(snapshot);
-        } else {
-          options.supervisor.loadSnapshot(snapshot);
+          const daemonRoutes = options.hostDaemonRoutes
+            ? await publishWasip3HostDaemonRoutes({
+              ...options.hostDaemonRoutes,
+              snapshot,
+              components: preparedComponents ?? await options.supervisor.preparedComponents?.() ?? [],
+            })
+            : undefined;
+          await options.snapshotStore?.save(snapshot);
+          metrics.recordSnapshot(snapshot);
+          writeJson(response, 200, stripUndefined({
+            ok: true,
+            snapshotId: snapshot.id,
+            warmed: warmup,
+            routes: snapshot.routes.length,
+            generatedAt: snapshot.generatedAt,
+            daemonRoutes,
+          }));
+        } finally {
+          resumeCache?.();
         }
-        const daemonRoutes = options.hostDaemonRoutes
-          ? await publishWasip3HostDaemonRoutes({
-            ...options.hostDaemonRoutes,
-            snapshot,
-            components: preparedComponents ?? await options.supervisor.preparedComponents?.() ?? [],
-          })
-          : undefined;
-        await options.snapshotStore?.save(snapshot);
-        metrics.recordSnapshot(snapshot);
-        writeJson(response, 200, stripUndefined({
-          ok: true,
-          snapshotId: snapshot.id,
-          warmed: warmup,
-          routes: snapshot.routes.length,
-          generatedAt: snapshot.generatedAt,
-          daemonRoutes,
-        }));
         return;
       }
 
@@ -260,6 +294,7 @@ export function createRuntimeNodeApp(options: RuntimeNodeAppOptions) {
         metrics.recordInvocationRejected();
         throw new RuntimeError("draining", "runtime node is draining");
       }
+      const cacheRevision = responseCache?.revision();
       const prepared = await options.supervisor.prepareRoute({
         host: eventHost,
         path: url.pathname,
@@ -273,66 +308,102 @@ export function createRuntimeNodeApp(options: RuntimeNodeAppOptions) {
       }
 
       const canProxyToHostDaemon = options.hostDaemonWorkerProxy
+        && !(responseCache && options.invoker)
         && canProxyToHostDaemonWorker(method, url.pathname);
       if (options.invoker || canProxyToHostDaemon) {
         const component = await withResolvedCapabilities(prepared, options.secretStore);
         enforceRuntimeCapabilities(component.capabilities);
-        const projectInvocation = projectConcurrency.tryStart(component.projectId);
-        if (!projectInvocation.acquired) {
-          metrics.recordInvocationRejected(runtimeScope(eventProjectId, eventDeploymentId));
-          throw new RuntimeError("overloaded", "runtime node project concurrency limit exceeded");
+        const cacheController = responseCache && !canProxyToHostDaemon ? new AbortController() : undefined;
+        if (cacheController) {
+          const abort = () => cacheController.abort(new RuntimeError("invoke", "request disconnected"));
+          const close = () => { if (!response.writableEnded) abort(); };
+          request.once("aborted", abort);
+          response.once("close", close);
+          const waitMs = component.limits?.wallMs ?? 30_000;
+          const timer = setTimeout(() => cacheController.abort(new RuntimeError("timeout", `response cache request exceeded ${waitMs}ms`)), waitMs);
+          cleanupCacheWait = () => {
+            clearTimeout(timer);
+            request.off("aborted", abort);
+            response.off("close", close);
+          };
+          if (request.aborted || response.destroyed) abort();
         }
-        if (!metrics.tryStartInvocation(options.maxConcurrentInvocations, runtimeScope(eventProjectId, eventDeploymentId))) {
-          projectInvocation.release();
-          throw new RuntimeError("overloaded", "runtime node concurrency limit exceeded");
-        }
-        const finishInvocationDrain = invocationDrain.start();
-        invocationStarted = true;
-        try {
-          const body = await readBody(request, component.limits?.requestBytes);
-          const headers = requestHeaders(request.headers);
-          const invocation = await withWallTimeout(
-            canProxyToHostDaemon
-              ? proxyWasip3HostDaemonWorkerRequest(options.hostDaemonWorkerProxy!, {
-                method,
-                path: requestPath(url),
-                headers,
-                body,
-              })
-              : options.invoker!.invoke({
-                deploymentId: component.deploymentId,
-                component,
-                method,
-                uri: requestUri(request.headers, url),
-                headers,
-                body,
-              }),
-            component.limits?.wallMs,
-          );
-          enforceResponseBytes(component, invocation);
-          const drainedLogs = logs.recordInvocationLogs({
-            timestamp: now(),
-            requestId,
-            host: eventHost,
-            path: eventPath,
+        const invoke = async (): Promise<InvokeComponentResponse> => {
+          cacheController?.signal.throwIfAborted();
+          const projectInvocation = projectConcurrency.tryStart(component.projectId);
+          if (!projectInvocation.acquired) {
+            metrics.recordInvocationRejected(runtimeScope(eventProjectId, eventDeploymentId));
+            throw new RuntimeError("overloaded", "runtime node project concurrency limit exceeded");
+          }
+          if (!metrics.tryStartInvocation(options.maxConcurrentInvocations, runtimeScope(eventProjectId, eventDeploymentId))) {
+            projectInvocation.release();
+            throw new RuntimeError("overloaded", "runtime node concurrency limit exceeded");
+          }
+          const finishInvocationDrain = invocationDrain.start();
+          invocationStarted = true;
+          try {
+            const body = await readBody(request, component.limits?.requestBytes);
+            cacheController?.signal.throwIfAborted();
+            const headers = requestHeaders(request.headers);
+            const invocation = await withWallTimeout(
+              canProxyToHostDaemon
+                ? proxyWasip3HostDaemonWorkerRequest(options.hostDaemonWorkerProxy!, {
+                  method,
+                  path: requestPath(url),
+                  headers,
+                  body,
+                })
+                : options.invoker!.invoke({
+                  deploymentId: component.deploymentId,
+                  component,
+                  method,
+                  uri: requestUri(request.headers, url),
+                  headers,
+                  body,
+                }),
+              component.limits?.wallMs,
+            );
+            cacheController?.signal.throwIfAborted();
+            enforceResponseBytes(component, invocation);
+            const drainedLogs = logs.recordInvocationLogs({
+              timestamp: now(),
+              requestId,
+              host: eventHost,
+              path: eventPath,
+              projectId: component.projectId,
+              deploymentId: component.deploymentId,
+              lines: invocation.logs,
+              secretValues: component.capabilities?.secrets
+                .map((secret) => secret.value)
+                .filter((value): value is string => typeof value === "string" && value.length > 0) ?? [],
+            });
+            await sendLogDrains(options.logDrains, drainedLogs);
+            cacheController?.signal.throwIfAborted();
+            invocationSettled = true;
+            metrics.recordInvocationSuccess(runtimeScope(eventProjectId, eventDeploymentId));
+            return invocation;
+          } finally {
+            finishInvocationDrain();
+            metrics.recordInvocationEnd(runtimeScope(eventProjectId, eventDeploymentId));
+            projectInvocation.release();
+          }
+        };
+        const result = responseCache && cacheController
+          ? await responseCache.execute({
             projectId: component.projectId,
             deploymentId: component.deploymentId,
-            lines: invocation.logs,
-            secretValues: component.capabilities?.secrets
-              .map((secret) => secret.value)
-              .filter((value): value is string => typeof value === "string" && value.length > 0) ?? [],
-          });
-          await sendLogDrains(options.logDrains, drainedLogs);
-          invocationSettled = true;
-          metrics.recordInvocationSuccess(runtimeScope(eventProjectId, eventDeploymentId));
-          metrics.recordResponse(invocation.status, runtimeScope(eventProjectId, eventDeploymentId));
-          eventStatus = invocation.status;
-          writeInvocationResponse(response, component, invocation, requestId);
-        } finally {
-          finishInvocationDrain();
-          metrics.recordInvocationEnd(runtimeScope(eventProjectId, eventDeploymentId));
-          projectInvocation.release();
-        }
+            componentIdentity: component.precompiledPath,
+            method,
+            // Retain the authority port; the legacy invocation URI omits it.
+            uri: `${firstHeader(request.headers["x-forwarded-proto"]) ?? "http"}://${eventHost}${requestPath(url)}`,
+            headers: requestHeaders(request.headers),
+            bodyBytes: 0, // GET/HEAD bodies are rejected by framing headers before lookup.
+          }, invoke, { signal: cacheController.signal, revision: cacheRevision })
+          : { response: await invoke(), status: responseCache ? "BYPASS" as const : undefined };
+        enforceResponseBytes(component, result.response);
+        metrics.recordResponse(result.response.status, runtimeScope(eventProjectId, eventDeploymentId));
+        eventStatus = result.response.status;
+        writeInvocationResponse(response, component, result.response, requestId, result.status);
         return;
       }
 
@@ -342,9 +413,9 @@ export function createRuntimeNodeApp(options: RuntimeNodeAppOptions) {
       eventErrorCode = "invoke_not_implemented";
       response.writeHead(501, {
         "content-type": "application/json; charset=utf-8",
-        "x-wasmplane-request-id": requestId,
-        "x-wasmplane-deployment": prepared.deploymentId,
-        "x-wasmplane-precompiled": prepared.precompiledPath,
+        "x-oden-request-id": requestId,
+        "x-oden-deployment": prepared.deploymentId,
+        "x-oden-precompiled": prepared.precompiledPath,
       });
       response.end(
         JSON.stringify({
@@ -372,8 +443,9 @@ export function createRuntimeNodeApp(options: RuntimeNodeAppOptions) {
       }
       writeJson(response, errorResponse.status, {
         error: { code: errorResponse.code, message: errorResponse.message },
-      }, requestId ? { "x-wasmplane-request-id": requestId } : undefined);
+      }, requestId ? { "x-oden-request-id": requestId } : undefined);
     } finally {
+      cleanupCacheWait?.();
       if (workerRequest && requestId && eventHost && eventPath && eventStatus !== undefined) {
         const durationMs = Math.max(0, monotonicNowMs() - requestStartedMs);
         events.record({
@@ -420,6 +492,7 @@ export function createRuntimeNodeApp(options: RuntimeNodeAppOptions) {
     async close(closeOptions: RuntimeNodeCloseOptions = {}) {
       lifecycleStatus = "draining";
       cacheRetentionJob.stop();
+      responseCache?.suspend();
       await invocationDrain.wait(closeOptions.drainTimeoutMs ?? 30_000);
       await closeServer(server);
     },
@@ -428,6 +501,9 @@ export function createRuntimeNodeApp(options: RuntimeNodeAppOptions) {
     },
     logs() {
       return logs.snapshot({});
+    },
+    responseCacheStats() {
+      return responseCache?.stats();
     },
     lifecycleStatus() {
       return lifecycleStatus;
@@ -1628,19 +1704,23 @@ function writeInvocationResponse(
   prepared: CompiledComponent,
   invocation: InvokeComponentResponse,
   requestId?: string,
+  cacheStatus?: ResponseCacheStatus,
 ) {
   const headers: Record<string, string> = {
-    "x-wasmplane-deployment": prepared.deploymentId,
-    "x-wasmplane-precompiled": prepared.precompiledPath,
+    "x-oden-deployment": prepared.deploymentId,
+    "x-oden-precompiled": prepared.precompiledPath,
   };
   if (requestId) {
-    headers["x-wasmplane-request-id"] = requestId;
+    headers["x-oden-request-id"] = requestId;
   }
   for (const header of invocation.headers) {
-    if (isSafeResponseHeader(header.name)) {
+    if (isSafeResponseHeader(header.name) && ![
+      "x-oden-request-id", "x-oden-deployment", "x-oden-precompiled", "x-oden-cache",
+    ].includes(header.name.toLowerCase())) {
       headers[header.name] = header.value;
     }
   }
+  if (cacheStatus) headers["x-oden-cache"] = cacheStatus;
   response.writeHead(invocation.status, headers);
   response.end(Buffer.from(invocation.body));
 }

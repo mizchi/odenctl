@@ -13,14 +13,14 @@ export interface ApiToken {
 
 export function parseApiTokens(env: Record<string, string | undefined> = process.env): ApiToken[] {
   const tokens: ApiToken[] = [];
-  if (env.WASMPLANE_API_TOKEN && env.WASMPLANE_API_TOKEN.trim().length > 0) {
+  if (env.ODENCTL_API_TOKEN && env.ODENCTL_API_TOKEN.trim().length > 0) {
     tokens.push({
-      token: env.WASMPLANE_API_TOKEN.trim(),
+      token: env.ODENCTL_API_TOKEN.trim(),
       scopes: ["*"],
       principal: "legacy",
     });
   }
-  const scoped = env.WASMPLANE_API_TOKENS;
+  const scoped = env.ODENCTL_API_TOKENS;
   if (scoped) {
     for (const entry of scoped.split(";")) {
       const [token, scopesText] = entry.split("=");

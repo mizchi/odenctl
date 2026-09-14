@@ -16,7 +16,7 @@ export function build(appPath = ".", options = {}) {
     if (result.status !== 0) process.exit(result.status ?? 1);
   }
   rmSync(generated, { recursive: true, force: true });
-  run(process.env.WIT_BINDGEN ?? "wit-bindgen", ["moonbit", wit, "--world", world, "--out-dir", generated, "--project-name", "wasmplane/service-sdk"]);
+  run(process.env.WIT_BINDGEN ?? "wit-bindgen", ["moonbit", wit, "--world", world, "--out-dir", generated, "--project-name", "oden/service-sdk"]);
   mkdirSync(resolve(generated, "sdk"), { recursive: true });
   for (const file of readdirSync(sdk).filter(name => name.endsWith(".mbt") || name === "moon.pkg.json")) {
     cpSync(resolve(sdk, file), resolve(generated, "sdk", file));
@@ -26,13 +26,13 @@ export function build(appPath = ".", options = {}) {
     cpSync(resolve(app, file), resolve(generated, "app", file));
   }
   for (const [path, implementation] of [
-    ["wasmplane/app/lifecycle", `pub async fn start(background_group : @async-core.TaskGroup[Unit]) -> Result[Unit, String] { @app.start(background_group) }
+    ["oden/app/lifecycle", `pub async fn start(background_group : @async-core.TaskGroup[Unit]) -> Result[Unit, String] { @app.start(background_group) }
   pub async fn stop(background_group : @async-core.TaskGroup[Unit]) -> Result[Unit, String] { @app.stop(background_group) }`],
     ["wasi/http/handler", `pub async fn handle(request : @types.Request, background_group : @async-core.TaskGroup[Unit]) -> Result[@types.Response, @types.ErrorCode] { @app.handle(request, background_group) }`],
   ]) {
     const directory = resolve(generated, "gen/interface", path);
     const pkg = JSON.parse(readFileSync(resolve(directory, "moon.pkg.json"), "utf8"));
-    pkg.import.push({ path: "wasmplane/service-sdk/app", alias: "app" });
+    pkg.import.push({ path: "oden/service-sdk/app", alias: "app" });
     writeFileSync(resolve(directory, "moon.pkg.json"), JSON.stringify(pkg, null, 2));
     writeFileSync(resolve(directory, "implementation.mbt"), implementation + "\n");
   }

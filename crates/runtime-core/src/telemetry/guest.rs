@@ -3,9 +3,9 @@ use super::{Span, TraceContext};
 use crate::runtime::Host;
 use wasmtime::component::{Linker, Resource};
 mod bindings {
-    wasmtime::component::bindgen!({ path: "../../sdk/rust/wit/telemetry.wit", world: "client", imports: { default: trappable }, with: { "wasmplane:telemetry/tracing.span": crate::telemetry::Span } });
+    wasmtime::component::bindgen!({ path: "../../sdk/rust/wit/telemetry.wit", world: "client", imports: { default: trappable }, with: { "oden:telemetry/tracing.span": crate::telemetry::Span } });
 }
-use bindings::wasmplane::telemetry::tracing::{self, Attribute, Context, Level, Outcome, Value};
+use bindings::oden::telemetry::tracing::{self, Attribute, Context, Level, Outcome, Value};
 pub(crate) fn add_to_linker(linker: &mut Linker<Host>) -> wasmtime::Result<()> {
     bindings::Client::add_to_linker::<Host, Host>(linker, |host| host)
 }

@@ -13,7 +13,7 @@ import {
 } from "../src/control-plane/volume-sqlite-backup-job.ts";
 
 test("scheduled volume sqlite backup cycle encrypts backups, prunes retention, and verifies restore drills", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-volume-sqlite-scheduled-backup-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-volume-sqlite-scheduled-backup-"));
   const clock = incrementingClock("2026-07-01T00:00:00.000Z");
   const registry = createVolumeSqliteRegistry({
     rootDir: dir,
@@ -86,7 +86,7 @@ test("scheduled volume sqlite backup cycle encrypts backups, prunes retention, a
 });
 
 test("volume sqlite restore drill reports encrypted backup corruption without restoring into the catalog", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-volume-sqlite-restore-drill-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-volume-sqlite-restore-drill-"));
   const registry = createVolumeSqliteRegistry({
     rootDir: dir,
     backupCipher: createAesGcmVolumeSqliteBackupCipher({

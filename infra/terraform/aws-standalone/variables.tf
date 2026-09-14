@@ -12,7 +12,7 @@ variable "region" {
 }
 variable "name" {
   type    = string
-  default = "wasmplane"
+  default = "oden"
 }
 variable "certificate_arn" {
   description = "Issued ACM certificate in this region, covering the application DNS name."

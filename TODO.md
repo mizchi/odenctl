@@ -1,6 +1,6 @@
 # TODO
 
-The current priority is the [standalone Wasm runtime direction](docs/runtime-direction.md).
+The current priority is the [standalone Wasm runtime direction](docs/developer/runtime-direction.md).
 The numbered production-readiness sections below retain the existing implementation backlog.
 
 ## Standalone runtime priorities (2026-09-11)
@@ -198,7 +198,7 @@ The numbered production-readiness sections below retain the existing implementat
 - [x] Add optional historical benchmark inputs to `perf-check`.
 - [x] Compare current rows against historical medians by name and dimensions.
 - [x] Add trend thresholds to `perf/budgets.json`.
-- [x] Wire `WASMPLANE_PERF_HISTORY` into `just perf-regression`.
+- [x] Wire `ODENCTL_PERF_HISTORY` into `just perf-regression`.
 - [x] Document remaining GitHub Actions artifact-download work.
 
 ## 26. Runtime readiness and local drain controls
@@ -249,7 +249,7 @@ The numbered production-readiness sections below retain the existing implementat
 
 ## 31. Platform developer experience
 
-- [x] Add `wasmplane dev` with local runtime, WIT validation, log tailing, and route preview.
+- [x] Add `odenctl dev` with local runtime, WIT validation, log tailing, and route preview.
 - [x] Provide a Rust template using standard WASIp3 bindings; remove the old custom-WIT templates.
 - [x] Add deployment diff output for routes, capabilities, secrets, KV bindings, and runtime limits.
 - [x] Add project/deployment scoped metrics, logs, traces, and log drain configuration.
@@ -321,7 +321,7 @@ The numbered production-readiness sections below retain the existing implementat
 - [x] Add a WAC canary that composes the Rust socket component with the MoonBit provider and verifies `answer() == 42`.
 - [x] Add a WAC migration status report that records canary success separately from the WASIp3 async runtime worker blocker.
 - [x] Add static runtime worker WIT diagnostics to the WAC migration report.
-- [x] Replace deprecated `wasm-tools compose` with forked `wac` for the WASIp3 async worker world. wasmplane uses `mizchi/wac@wasmplane-wac-0.10.1-p1`; `sample-rust-moonbit-compose-build` remains as a rollback fallback.
+- [x] Replace deprecated `wasm-tools compose` with forked `wac` for the WASIp3 async worker world. odenctl uses `mizchi/wac@wasmplane-wac-0.10.1-p1`; `sample-rust-moonbit-compose-build` remains as a rollback fallback.
 - [x] Add a protected GitHub Actions release gate for the Rust + MoonBit sample.
 
 ## 39. Production readiness gate
@@ -338,7 +338,7 @@ The numbered production-readiness sections below retain the existing implementat
 ## 40. Service beta lifecycle
 
 - [x] Add a beta onboarding API that creates organization, owner user, project, owner membership, and a project-scoped deploy key in one transaction-like flow.
-- [x] Add a `wasmplane onboard beta` CLI for invite-only tenant bootstrap.
+- [x] Add a `odenctl onboard beta` CLI for invite-only tenant bootstrap.
 - [x] Add billing provider/customer ids and payment status to organization records.
 - [x] Add invite acceptance and owner email verification before production quota increases.
 - [x] Add a customer-facing project settings surface for API keys, usage, billing, and domains.
@@ -354,7 +354,7 @@ The numbered production-readiness sections below retain the existing implementat
 
 ## 42. Standalone runtime developer tools and SDKs
 
-- [x] Generate self-contained Rust/MoonBit services with `wasmplane init`.
+- [x] Generate self-contained Rust/MoonBit services with `oden init`.
 - [x] Package SDKs locally and build consumer projects outside this repository.
 - [x] Inspect imports, exports, compatible modes and potential capabilities without executing a guest.
 - [x] Check manifest contracts and host grants; validate a compiled snapshot before dev replaces its current generation.

@@ -2,7 +2,7 @@
 mod bindings;
 
 use bindings::Guest;
-use bindings::wasmplane::sample::bridge;
+use bindings::oden::sample::bridge;
 
 struct Component;
 

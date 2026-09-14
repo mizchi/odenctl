@@ -1,6 +1,6 @@
 //! Shared conformance/demo routes for the SDK's capability-based I/O.
 use serde_json::{Value, json};
-use wasmplane_service_sdk::{durable, io, types};
+use oden_service_sdk::{durable, io, types};
 
 pub async fn handle(path: &str) -> Option<Value> {
     if !path.starts_with("/io/") {

@@ -331,7 +331,7 @@ export function buildClusterRouteSnapshot(
 
 export function parseClusterBenchArgs(args: string[]): ClusterBenchOptions {
   const options: ClusterBenchOptions = {
-    hostBin: "target/debug/wasmplane-wasip3-host",
+    hostBin: "target/debug/oden-host",
     nodeCounts: [1, 2, 4],
     iterations: 30,
     warmup: 2,
@@ -498,7 +498,7 @@ export function clusterHostPoolingArgs(options: ClusterBenchOptions): string[] {
 
 export function formatClusterBenchmarkMarkdown(report: ClusterBenchmarkReport): string {
   const lines = [
-    "# wasmplane cluster benchmark",
+    "# odenctl cluster benchmark",
     "",
     `generated: ${report.generatedAt}`,
     `environment: node ${report.environment.node}, ${report.environment.platform}/${report.environment.arch}, cpus=${report.environment.cpus}`,
@@ -560,8 +560,8 @@ async function startRuntimeCluster(
   try {
     for (let index = 0; index < nodeCount; index += 1) {
       const id = `runtime-${index + 1}`;
-      const cacheDir = await mkdtemp(join(tmpdir(), `wasmplane-cluster-${id}-cwasm-`));
-      const artifactCacheDir = await mkdtemp(join(tmpdir(), `wasmplane-cluster-${id}-artifacts-`));
+      const cacheDir = await mkdtemp(join(tmpdir(), `odenctl-cluster-${id}-cwasm-`));
+      const artifactCacheDir = await mkdtemp(join(tmpdir(), `odenctl-cluster-${id}-artifacts-`));
       const poolingArgs = clusterHostPoolingArgs(options);
       const precompiledCompileArgs = options.hostDaemonUrl ? poolingArgs : [];
       const cacheVariant = clusterEngineCacheVariant([
@@ -865,7 +865,7 @@ async function fetchWorker(
   }
   return {
     status: response.status,
-    deploymentId: response.headers.get("x-wasmplane-deployment") ?? "",
+    deploymentId: response.headers.get("x-oden-deployment") ?? "",
   };
 }
 

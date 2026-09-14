@@ -16,7 +16,7 @@ function run(program, args, cwd) {
 }
 // cargo package verifies the extracted crate with no workspace source paths.
 run("cargo", ["package", "--allow-dirty", "--target", "wasm32-wasip2", "--target-dir", join(output, "rust-build")], join(root, "sdk/rust"));
-cpSync(join(output, `rust-build/package/wasmplane-service-sdk-${version}.crate`), join(output, `wasmplane-service-sdk-${version}.crate`));
+cpSync(join(output, `rust-build/package/oden-service-sdk-${version}.crate`), join(output, `oden-service-sdk-${version}.crate`));
 function copyContract(source, target) {
   mkdirSync(target, { recursive: true });
   for (const name of readdirSync(source)) {
@@ -25,7 +25,7 @@ function copyContract(source, target) {
     else writeFileSync(to, readFileSync(from));
   }
 }
-const stage = mkdtempSync(join(tmpdir(), "wasmplane-sdk-pack-"));
+const stage = mkdtempSync(join(tmpdir(), "oden-sdk-pack-"));
 try {
   cpSync(join(root, "sdk/moonbit"), stage, { recursive: true });
   copyContract(join(root, "wit/app"), join(stage, "wit/app"));

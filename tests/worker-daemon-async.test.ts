@@ -5,8 +5,8 @@ import { createServer } from "node:http";
 import { resolve } from "node:path";
 import test from "node:test";
 
-const binary = process.env.WASMPLANE_WORKER_HOST_BIN;
-const component = process.env.WASMPLANE_WORKER_COMPONENT;
+const binary = process.env.ODENCTL_WORKER_HOST_BIN;
+const component = process.env.ODEN_WORKER_COMPONENT;
 
 test("daemon serves concurrent outbound calls on one thread and cancels disconnected callers", {
   skip: !(binary && component), timeout: 30_000,

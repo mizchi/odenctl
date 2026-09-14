@@ -1,21 +1,21 @@
 {
   "import": [
     {
-      "path": "wasmplane/service-sdk/async-core",
+      "path": "oden/service-sdk/async-core",
       "alias": "async-core"
     },
     {
-      "path": "wasmplane/service-sdk/interface/wasi/http/types",
+      "path": "oden/service-sdk/interface/wasi/http/types",
       "alias": "types"
     },
     {
-      "path": "wasmplane/service-sdk/sdk",
+      "path": "oden/service-sdk/sdk",
       "alias": "service"
     },
     "moonbitlang/core/encoding/utf8",
     "moonbitlang/core/json",
     {
-      "path": "wasmplane/service-sdk/interface/wasmplane/durable/objects",
+      "path": "oden/service-sdk/interface/oden/durable/objects",
       "alias": "objects"
     }
   ],

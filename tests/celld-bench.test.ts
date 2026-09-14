@@ -91,10 +91,10 @@ test("benchmark rejects successful replies when updates were not committed", asy
 });
 
 test("benchmark compares real celld and WIT with concurrent calls and verified writes", {
-  skip: !(process.env.WASMPLANE_CELLD_BIN && process.env.WASMPLANE_BENCH_HOST_BIN), timeout: 120_000,
+  skip: !(process.env.ODEN_CELLD_BIN && process.env.ODEN_BENCH_HOST_BIN), timeout: 120_000,
 }, async () => {
   const options = parseCelldBenchArgs([
-    "--host-bin", process.env.WASMPLANE_BENCH_HOST_BIN!,
+    "--host-bin", process.env.ODEN_BENCH_HOST_BIN!,
     "--iterations", "6", "--warmup", "2", "--concurrency", "1,3", "--objects", "2",
   ]);
   const report = await runCelldBenchmark(options);

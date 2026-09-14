@@ -304,14 +304,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "wasmplane-deployment-sample"
+name = "oden-deployment-sample"
 version = "0.1.0"
 dependencies = [
- "wasmplane-service-sdk",
+ "oden-service-sdk",
 ]
 
 [[package]]
-name = "wasmplane-service-sdk"
+name = "oden-service-sdk"
 version = "0.1.0"
 dependencies = [
  "wasip3",

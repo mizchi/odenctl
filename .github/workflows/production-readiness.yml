@@ -21,7 +21,7 @@ on:
       sample_host:
         description: Host header routed to the Rust + MoonBit sample
         required: true
-        default: rust-moonbit.sample.wasmplane.local
+        default: rust-moonbit.sample.oden.local
         type: string
       project_id:
         description: Project id used by the Rust + MoonBit release smoke
@@ -140,13 +140,13 @@ jobs:
     timeout-minutes: 90
     environment: production
     env:
-      WASMPLANE_CONTROL_PLANE_URL: ${{ inputs.control_plane_url }}
-      WASMPLANE_RUNTIME_URL: ${{ inputs.runtime_url }}
-      WASMPLANE_COLLECTOR_URL: ${{ inputs.collector_url }}
-      WASMPLANE_SAMPLE_HOST: ${{ inputs.sample_host }}
-      WASMPLANE_SAMPLE_PROJECT_ID: ${{ inputs.project_id }}
-      WASMPLANE_CONTROL_PLANE_TOKEN: ${{ secrets.WASMPLANE_CONTROL_PLANE_TOKEN }}
-      WASMPLANE_RUNTIME_TOKEN: ${{ secrets.WASMPLANE_RUNTIME_TOKEN }}
+      ODENCTL_CONTROL_PLANE_URL: ${{ inputs.control_plane_url }}
+      ODEN_RUNTIME_URL: ${{ inputs.runtime_url }}
+      ODENCTL_COLLECTOR_URL: ${{ inputs.collector_url }}
+      ODENCTL_SAMPLE_HOST: ${{ inputs.sample_host }}
+      ODENCTL_SAMPLE_PROJECT_ID: ${{ inputs.project_id }}
+      ODENCTL_CONTROL_PLANE_TOKEN: ${{ secrets.ODENCTL_CONTROL_PLANE_TOKEN }}
+      ODEN_RUNTIME_TOKEN: ${{ secrets.ODEN_RUNTIME_TOKEN }}
       FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
       FLY_CONTROL_APP: ${{ inputs.control_app }}
       FLY_RUNTIME_APP: ${{ inputs.runtime_app }}
@@ -204,7 +204,7 @@ jobs:
       - name: Validate production secrets
         run: |
           missing=0
-          for name in WASMPLANE_CONTROL_PLANE_TOKEN WASMPLANE_RUNTIME_TOKEN FLY_API_TOKEN; do
+          for name in ODENCTL_CONTROL_PLANE_TOKEN ODEN_RUNTIME_TOKEN FLY_API_TOKEN; do
             if [ -z "${!name}" ]; then
               echo "::error title=Missing production secret::$name is required in the production environment"
               missing=1
@@ -280,7 +280,7 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: ${{ !cancelled() }}
         with:
-          name: wasmplane-production-readiness
+          name: odenctl-production-readiness
           path: |
             reports/production-readiness/
             examples/rust-moonbit-release/target/rust-moonbit-release.component.wasm

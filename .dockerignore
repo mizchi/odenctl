@@ -1,8 +1,10 @@
 .git
+.odenctl
+.oden
 .wasmplane
 node_modules
 target
-wasmplane.sqlite
+odenctl.sqlite
 *.sqlite
 *.db
 examples/hello-worker/target

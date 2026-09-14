@@ -24,7 +24,7 @@ test("control plane records a mock Cloudflare Workers release for a wasm deploym
   const release = await control.createEdgeWorkerRelease({
     projectId: project.id,
     deploymentId: deployment.id,
-    scriptName: "wasmplane-prj-edge",
+    scriptName: "odenctl-prj-edge",
   });
 
   assert.equal(release.id, "ewr_1");
@@ -33,12 +33,12 @@ test("control plane records a mock Cloudflare Workers release for a wasm deploym
   assert.equal(release.provider, "cloudflare-workers");
   assert.equal(release.mode, "mock");
   assert.equal(release.status, "active");
-  assert.equal(release.scriptName, "wasmplane-prj-edge");
+  assert.equal(release.scriptName, "odenctl-prj-edge");
   assert.equal(release.versionId, "mock-ver-ewr_1");
   assert.equal(release.externalDeploymentId, "mock-dep-ewr_1");
-  assert.equal(release.url, "https://wasmplane-prj-edge.workers.dev");
+  assert.equal(release.url, "https://odenctl-prj-edge.workers.dev");
   assert.equal(release.artifact.digest, artifact.digest);
-  assert.match(release.scriptModule, /__wasmplane\/manifest/);
+  assert.match(release.scriptModule, /__odenctl\/manifest/);
   assert.match(release.scriptModule, new RegExp(artifact.digest));
   assert.equal(release.scriptDigest, digest(release.scriptModule));
   assert.deepEqual(control.listProjectEdgeWorkerReleases({ projectId: project.id }), [release]);
@@ -76,7 +76,7 @@ test("control plane reads and soft-deletes edge worker releases with provider cl
   const release = await control.createEdgeWorkerRelease({
     projectId: project.id,
     deploymentId: deployment.id,
-    scriptName: "wasmplane-delete-edge",
+    scriptName: "odenctl-delete-edge",
   });
 
   assert.deepEqual(control.getEdgeWorkerRelease({ id: release.id }), release);
@@ -87,7 +87,7 @@ test("control plane reads and soft-deletes edge worker releases with provider cl
   });
 
   assert.deepEqual(deleted, [
-    { releaseId: release.id, scriptName: "wasmplane-delete-edge", force: true },
+    { releaseId: release.id, scriptName: "odenctl-delete-edge", force: true },
   ]);
   assert.equal(deletedRelease.status, "deleted");
   assert.equal(deletedRelease.deletedAt, fixedNow());
@@ -130,7 +130,7 @@ test("control plane records provider delete failures as retryable edge release o
   const release = await control.createEdgeWorkerRelease({
     projectId: project.id,
     deploymentId: deployment.id,
-    scriptName: "wasmplane-retry-delete",
+    scriptName: "odenctl-retry-delete",
   });
 
   const failedRelease = await control.deleteEdgeWorkerRelease({
@@ -162,7 +162,7 @@ test("control plane records provider delete failures as retryable edge release o
 
   assert.deepEqual(report, { attempted: 1, succeeded: 1, failed: 0 });
   assert.deepEqual(deleted, [
-    { releaseId: release.id, scriptName: "wasmplane-retry-delete", force: true },
+    { releaseId: release.id, scriptName: "odenctl-retry-delete", force: true },
   ]);
   assert.equal(control.getEdgeWorkerRelease({ id: release.id }).status, "deleted");
   assert.equal(control.listEdgeWorkerReleaseOperations({ releaseId: release.id })[0]?.status, "succeeded");
@@ -182,7 +182,7 @@ test("edge worker release rejects deployments from another project", async () =>
       control.createEdgeWorkerRelease({
         projectId: other.id,
         deploymentId: deployment.id,
-        scriptName: "wasmplane-other",
+        scriptName: "odenctl-other",
       }),
     /edge worker release deployment must belong to the same project/,
   );
@@ -209,12 +209,12 @@ test("HTTP API creates and lists edge worker releases", async () => {
       body: JSON.stringify({
         projectId: project.id,
         deploymentId: deployment.id,
-        scriptName: "wasmplane-http-edge",
+        scriptName: "odenctl-http-edge",
       }),
     });
     assert.equal(createResponse.status, 201);
     const release = await createResponse.json();
-    assert.equal(release.scriptName, "wasmplane-http-edge");
+    assert.equal(release.scriptName, "odenctl-http-edge");
     assert.equal(release.mode, "mock");
 
     const listResponse = await fetch(`${baseUrl}/projects/${project.id}/edge-worker-releases`);
@@ -235,7 +235,7 @@ test("HTTP API reads and deletes edge worker releases with publish scope", async
   const release = await control.createEdgeWorkerRelease({
     projectId: project.id,
     deploymentId: deployment.id,
-    scriptName: "wasmplane-http-delete-edge",
+    scriptName: "odenctl-http-delete-edge",
   });
   const app = createHttpApp({
     controlPlane: control,
@@ -310,7 +310,7 @@ test("HTTP API exposes edge worker release operation retry controls", async () =
   const release = await control.createEdgeWorkerRelease({
     projectId: project.id,
     deploymentId: deployment.id,
-    scriptName: "wasmplane-http-retry-edge",
+    scriptName: "odenctl-http-retry-edge",
   });
   await control.deleteEdgeWorkerRelease({ id: release.id, deleteProvider: true });
 
@@ -357,7 +357,7 @@ test("HTTP API exposes edge worker release operation retry controls", async () =
 });
 
 test("SQLite repository persists edge worker releases across control-plane instances", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-edge-worker-release-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-edge-worker-release-"));
   const dbPath = join(dir, "control.sqlite");
   const control = createControlPlane({
     repository: createSqliteRepository(dbPath),
@@ -369,7 +369,7 @@ test("SQLite repository persists edge worker releases across control-plane insta
   const release = await control.createEdgeWorkerRelease({
     projectId: project.id,
     deploymentId: deployment.id,
-    scriptName: "wasmplane-sqlite-edge",
+    scriptName: "odenctl-sqlite-edge",
   });
 
   const reopened = createControlPlane({
@@ -401,7 +401,7 @@ test("Cloudflare API deployer uploads the generated worker through the script up
   });
   const scriptModule = renderCloudflareWasmWorkerModule({
     releaseId: "ewr_api",
-    scriptName: "wasmplane-api-edge",
+    scriptName: "odenctl-api-edge",
     projectId: "prj_api",
     deploymentId: "dep_api",
     artifact: {
@@ -414,7 +414,7 @@ test("Cloudflare API deployer uploads the generated worker through the script up
 
   const result = await deployer.deploy({
     releaseId: "ewr_api",
-    scriptName: "wasmplane-api-edge",
+    scriptName: "odenctl-api-edge",
     projectId: "prj_api",
     deploymentId: "dep_api",
     artifact: {
@@ -429,7 +429,7 @@ test("Cloudflare API deployer uploads the generated worker through the script up
   assert.equal(calls.length, 1);
   assert.equal(
     calls[0].url,
-    "https://api.cloudflare.com/client/v4/accounts/acc_123/workers/scripts/wasmplane-api-edge",
+    "https://api.cloudflare.com/client/v4/accounts/acc_123/workers/scripts/odenctl-api-edge",
   );
   assert.equal(calls[0].init.method, "PUT");
   assert.equal((calls[0].init.headers as Record<string, string>).Authorization, "Bearer token_123");
@@ -437,19 +437,19 @@ test("Cloudflare API deployer uploads the generated worker through the script up
   const form = calls[0].init.body as FormData;
   const metadata = JSON.parse(await (form.get("metadata") as Blob).text());
   assert.deepEqual(metadata, {
-    main_module: "wasmplane-api-edge.mjs",
+    main_module: "odenctl-api-edge.mjs",
     compatibility_date: "2026-07-03",
     bindings: [
-      { type: "plain_text", name: "WASMPLANE_RELEASE_ID", text: "ewr_api" },
-      { type: "plain_text", name: "WASMPLANE_PROJECT_ID", text: "prj_api" },
-      { type: "plain_text", name: "WASMPLANE_DEPLOYMENT_ID", text: "dep_api" },
-      { type: "plain_text", name: "WASMPLANE_ARTIFACT_DIGEST", text: digest("artifact") },
+      { type: "plain_text", name: "ODEN_RELEASE_ID", text: "ewr_api" },
+      { type: "plain_text", name: "ODEN_PROJECT_ID", text: "prj_api" },
+      { type: "plain_text", name: "ODEN_DEPLOYMENT_ID", text: "dep_api" },
+      { type: "plain_text", name: "ODEN_ARTIFACT_DIGEST", text: digest("artifact") },
     ],
   });
   assert.equal(result.mode, "api");
   assert.equal(result.versionId, "version_123");
   assert.equal(result.externalDeploymentId, "deployment_123");
-  assert.equal(result.url, "https://wasmplane-api-edge.example.workers.dev");
+  assert.equal(result.url, "https://odenctl-api-edge.example.workers.dev");
 });
 
 test("Cloudflare API deployer deletes generated workers through the script API", async () => {
@@ -465,34 +465,34 @@ test("Cloudflare API deployer deletes generated workers through the script API",
 
   const result = await deployer.delete?.({
     releaseId: "ewr_api",
-    scriptName: "wasmplane-api-edge",
+    scriptName: "odenctl-api-edge",
     force: true,
   });
 
   assert.equal(calls.length, 1);
   assert.equal(
     calls[0].url,
-    "https://api.cloudflare.com/client/v4/accounts/acc_123/workers/scripts/wasmplane-api-edge?force=true",
+    "https://api.cloudflare.com/client/v4/accounts/acc_123/workers/scripts/odenctl-api-edge?force=true",
   );
   assert.equal(calls[0].init.method, "DELETE");
   assert.equal((calls[0].init.headers as Record<string, string>).Authorization, "Bearer token_123");
   assert.deepEqual(result, {
     provider: "cloudflare-workers",
     mode: "api",
-    scriptName: "wasmplane-api-edge",
+    scriptName: "odenctl-api-edge",
     deleted: true,
   });
 });
 
 test("configured edge worker deployer supports mock mode and validates Cloudflare API credentials", async () => {
   const deployer = edgeWorkerDeployerFromEnv({
-    WASMPLANE_EDGE_WORKER_DEPLOYER: "mock",
-    WASMPLANE_CLOUDFLARE_WORKERS_DEV_SUBDOMAIN: "preview",
+    ODENCTL_EDGE_WORKER_DEPLOYER: "mock",
+    ODENCTL_CLOUDFLARE_WORKERS_DEV_SUBDOMAIN: "preview",
   });
   assert.ok(deployer);
   const scriptModule = renderCloudflareWasmWorkerModule({
     releaseId: "ewr_mock",
-    scriptName: "wasmplane-env-edge",
+    scriptName: "odenctl-env-edge",
     projectId: "prj_env",
     deploymentId: "dep_env",
     artifact: {
@@ -504,7 +504,7 @@ test("configured edge worker deployer supports mock mode and validates Cloudflar
   });
   const result = await deployer.deploy({
     releaseId: "ewr_mock",
-    scriptName: "wasmplane-env-edge",
+    scriptName: "odenctl-env-edge",
     projectId: "prj_env",
     deploymentId: "dep_env",
     artifact: {
@@ -516,10 +516,10 @@ test("configured edge worker deployer supports mock mode and validates Cloudflar
     scriptModule,
   });
   assert.equal(result.mode, "mock");
-  assert.equal(result.url, "https://wasmplane-env-edge.preview.workers.dev");
+  assert.equal(result.url, "https://odenctl-env-edge.preview.workers.dev");
 
   assert.throws(
-    () => edgeWorkerDeployerFromEnv({ WASMPLANE_EDGE_WORKER_DEPLOYER: "cloudflare-api" }),
+    () => edgeWorkerDeployerFromEnv({ ODENCTL_EDGE_WORKER_DEPLOYER: "cloudflare-api" }),
     /Cloudflare edge worker deployer requires/,
   );
 });

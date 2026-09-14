@@ -44,7 +44,7 @@ test("billing webhook delivery attempts include idempotency headers and schedule
   const delivery = createBillingInvoiceIssuedWebhookDelivery({
     id: "bwh_invoice",
     invoice,
-    targetUrl: "https://accounting.example/webhooks/wasmplane",
+    targetUrl: "https://accounting.example/webhooks/odenctl",
     createdAt: "2026-08-01T00:00:00.000Z",
   });
   const requests: Array<{ url: string; headers: Record<string, string>; body: any }> = [];
@@ -67,9 +67,9 @@ test("billing webhook delivery attempts include idempotency headers and schedule
   );
 
   assert.equal(requests.length, 1);
-  assert.equal(requests[0].url, "https://accounting.example/webhooks/wasmplane");
+  assert.equal(requests[0].url, "https://accounting.example/webhooks/odenctl");
   assert.equal(requests[0].headers["idempotency-key"], delivery.idempotencyKey);
-  assert.equal(requests[0].headers["x-wasmplane-event-type"], "billing.invoice.issued");
+  assert.equal(requests[0].headers["x-oden-event-type"], "billing.invoice.issued");
   assert.equal(requests[0].body.invoice.id, invoice.id);
   assert.equal(retried.status, "pending");
   assert.equal(retried.attempts, 1);

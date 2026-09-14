@@ -45,7 +45,7 @@ export function generateWrapper(
   const iface = graph.interfaces[ifaceId];
   const path = modulePath(graph, ifaceId);
   const tracingId = graph.interfaces.findIndex((_, id) =>
-    canonical(graph, id) === "wasmplane:telemetry/tracing@0.1.0"
+    canonical(graph, id) === "oden:telemetry/tracing@0.1.0"
   );
   function ultimate(type) {
     return typeof type === "number" && graph.types[type].kind.type !== undefined
@@ -145,8 +145,8 @@ export function generateWrapper(
       occupied.add(base);
       return base;
     };
-    const spanName = local("wasmplane_span"),
-      resultName = local("wasmplane_result");
+    const spanName = local("odenctl_span"),
+      resultName = local("odenctl_result");
     const trait = new RegExp(
       `(?:async\\s+)?fn (?:r#)?${name}\\(([^;{]*?)\\)\\s*(->[^;{]+)?;`,
     ).exec(bindings.slice(bindings.lastIndexOf("pub trait Guest")));
@@ -163,7 +163,7 @@ export function generateWrapper(
       const type = graph.types[ultimate(parent.type)];
       if (type?.name !== "context" || type.owner?.interface !== tracingId) {
         throw new Error(
-          `${contextParam} must use wasmplane:telemetry/tracing.context`,
+          `${contextParam} must use oden:telemetry/tracing.context`,
         );
       }
     }
@@ -210,7 +210,7 @@ use telemetry_wrapper as bindings;
 use bindings::${path} as input;
 use bindings::exports::${path} as output;
 use output::*;
-use bindings::wasmplane::telemetry::tracing as telemetry;
+use bindings::oden::telemetry::tracing as telemetry;
 struct Wrapper;
 impl output::Guest for Wrapper { ${implementations.join("\n")} }
 bindings::export!(Wrapper with_types_in bindings);
@@ -268,14 +268,14 @@ export function compose(options) {
   // wasm-tools may use the source package name for a WIT input; component binaries use component.wit.
   writeFileSync(
     rootFile,
-    `package wasmplane:boundary-wrapper;\nworld telemetry-wrapper { import ${selected}; export ${selected}; import wasmplane:telemetry/tracing@0.1.0; }\n`,
+    `package oden:boundary-wrapper;\nworld telemetry-wrapper { import ${selected}; export ${selected}; import oden:telemetry/tracing@0.1.0; }\n`,
   );
   // A compiled provider often imports only context/log. Expand that subset to
   // the same version's complete contract so the wrapper can also create spans.
   const telemetryFile = readdirSync(wit, { recursive: true }).filter((name) =>
     name.endsWith(".wit")
   ).map((name) => join(wit, name)).find((path) =>
-    readFileSync(path, "utf8").includes("package wasmplane:telemetry@0.1.0;")
+    readFileSync(path, "utf8").includes("package oden:telemetry@0.1.0;")
   );
   cpSync(
     join(root, "sdk/rust/wit/telemetry.wit"),
@@ -302,14 +302,14 @@ export function compose(options) {
   );
   writeFileSync(join(src, "lib.rs"), source);
   // Share dependency builds, but keep distinct wrappers' artifacts independent.
-  const library = "wasmplane_boundary_" +
+  const library = "odenctl_boundary_" +
     createHash("sha256").update(bindings).update(source).digest("hex").slice(
       0,
       24,
     );
   writeFileSync(
     join(work, "Cargo.toml"),
-    `[package]\nname="wasmplane-boundary-wrapper"\nversion="0.1.0"\nedition="2024"\n[workspace]\n[lib]\nname="${library}"\ncrate-type=["cdylib"]\n[dependencies]\nwit-bindgen={version="=0.62.0",features=["async"]}\n`,
+    `[package]\nname="odenctl-boundary-wrapper"\nversion="0.1.0"\nedition="2024"\n[workspace]\n[lib]\nname="${library}"\ncrate-type=["cdylib"]\n[dependencies]\nwit-bindgen={version="=0.62.0",features=["async"]}\n`,
   );
   run("cargo", [
     "build",

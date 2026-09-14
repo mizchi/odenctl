@@ -1,11 +1,11 @@
 aws_account_id  = "123456789012"
 region          = "ap-northeast-1"
-name            = "wasmplane"
+name            = "oden"
 certificate_arn = "arn:aws:acm:ap-northeast-1:123456789012:certificate/REPLACE-WITH-ISSUED-CERTIFICATE"
 # Bootstrap the ECR repository before building and pushing the application image.
 desired_count = 0
 # Then set both:
-# image         = "123456789012.dkr.ecr.ap-northeast-1.amazonaws.com/wasmplane@sha256:..."
+# image         = "123456789012.dkr.ecr.ap-northeast-1.amazonaws.com/oden@sha256:..."
 # desired_count = 1
 cpu_architecture   = "ARM64"
 availability_zones = ["ap-northeast-1a", "ap-northeast-1c"]

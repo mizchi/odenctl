@@ -5,7 +5,7 @@ COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 COPY sdk ./sdk
 COPY wit ./wit
-RUN cargo build --locked --release -p wasmplane-wasip3-host --bin wasmplane
+RUN cargo build --locked --release -p oden --bin oden
 
 # A stateless deployment sample. Replace service.wasm and app.json in a derived image
 # to deploy another Rust, MoonBit, or WAT/Wasm Component Model application.
@@ -18,12 +18,12 @@ FROM debian:bookworm-slim AS runtime
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates libssl3 \
   && rm -rf /var/lib/apt/lists/*
-COPY --from=build /src/target/release/wasmplane /usr/local/bin/wasmplane
+COPY --from=build /src/target/release/oden /usr/local/bin/oden
 WORKDIR /app
-COPY --from=sample /src/infra/aws-image/service/target/wasm32-wasip2/release/wasmplane_deployment_sample.wasm /app/service.wasm
+COPY --from=sample /src/infra/aws-image/service/target/wasm32-wasip2/release/oden_deployment_sample.wasm /app/service.wasm
 COPY infra/aws-image/app.json /app/app.json
 USER 65532:65532
 EXPOSE 8080
 STOPSIGNAL SIGTERM
-ENTRYPOINT ["/usr/local/bin/wasmplane"]
+ENTRYPOINT ["/usr/local/bin/oden"]
 CMD ["start", "/app/app.json"]

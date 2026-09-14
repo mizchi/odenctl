@@ -1,0 +1,16 @@
+[package]
+name = "static-site-example"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+release-v2 = []
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasip3 = { version = "=0.9.0", features = ["async-spawn"] }
+
+[workspace]

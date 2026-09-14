@@ -20,7 +20,7 @@ import {
 
 test("runtime config uses Fly machine identity for scaled runtime nodes", () => {
   const env = {
-    FLY_APP_NAME: "wasmplane-runtime",
+    FLY_APP_NAME: "oden-runtime",
     FLY_MACHINE_ID: "d8953eda04d9e8",
     FLY_VM_MEMORY_MB: "2048",
     RUNTIME_PUBLIC_URL: "auto",
@@ -29,7 +29,7 @@ test("runtime config uses Fly machine identity for scaled runtime nodes", () => 
   assert.equal(resolveRuntimeNodeId(env, "0.0.0.0", 8080), "rt_d8953eda04d9e8");
   assert.equal(
     resolveRuntimePublicUrl(env, "0.0.0.0", 8080),
-    "http://d8953eda04d9e8.vm.wasmplane-runtime.internal:8080",
+    "http://d8953eda04d9e8.vm.oden-runtime.internal:8080",
   );
   assert.equal(resolveRuntimeMemoryMb(env, 4096), 2048);
   assert.equal(resolveRuntimeRegion(env), undefined);
@@ -37,7 +37,7 @@ test("runtime config uses Fly machine identity for scaled runtime nodes", () => 
 
 test("runtime config keeps explicit non-auto public url override", () => {
   const env = {
-    FLY_APP_NAME: "wasmplane-runtime",
+    FLY_APP_NAME: "oden-runtime",
     FLY_MACHINE_ID: "d8953eda04d9e8",
     RUNTIME_NODE_ID: "rt_manual",
     RUNTIME_PUBLIC_URL: "https://runtime.example.dev",
@@ -51,9 +51,9 @@ test("runtime config keeps explicit non-auto public url override", () => {
 
 test("runtime config parses runtime identity keyring and advertised key id", () => {
   const env = {
-    WASMPLANE_RUNTIME_IDENTITY_KEY_ID: "rt-key",
-    WASMPLANE_RUNTIME_IDENTITY_KEYS: "rt-key=secret,old-key=old-secret,broken",
-    WASMPLANE_RUNTIME_IDENTITY_CERT_SHA256: "a".repeat(64),
+    ODEN_RUNTIME_IDENTITY_KEY_ID: "rt-key",
+    ODEN_RUNTIME_IDENTITY_KEYS: "rt-key=secret,old-key=old-secret,broken",
+    ODEN_RUNTIME_IDENTITY_CERT_SHA256: "a".repeat(64),
   };
 
   assert.deepEqual(parseRuntimeIdentityKeys(env), {
@@ -139,8 +139,8 @@ test("runtime config parses warm deployment packing policy", () => {
 test("runtime config parses cache retention policy", () => {
   assert.deepEqual(
     parseRuntimeCacheRetentionPolicy({
-      WASMPLANE_RUNTIME_CACHE_MAX_BYTES: "1048576",
-      WASMPLANE_RUNTIME_CACHE_MAX_AGE_MS: "3600000",
+      ODEN_RUNTIME_CACHE_MAX_BYTES: "1048576",
+      ODEN_RUNTIME_CACHE_MAX_AGE_MS: "3600000",
     }),
     {
       maxBytes: 1048576,
@@ -150,17 +150,17 @@ test("runtime config parses cache retention policy", () => {
   assert.equal(parseRuntimeCacheRetentionPolicy({}), undefined);
   assert.equal(
     parseRuntimeCacheRetentionPolicy({
-      WASMPLANE_RUNTIME_CACHE_MAX_BYTES: "bad",
-      WASMPLANE_RUNTIME_CACHE_MAX_AGE_MS: "0",
+      ODEN_RUNTIME_CACHE_MAX_BYTES: "bad",
+      ODEN_RUNTIME_CACHE_MAX_AGE_MS: "0",
     }),
     undefined,
   );
   assert.equal(
-    parseRuntimeCacheGcIntervalMs({ WASMPLANE_RUNTIME_CACHE_GC_INTERVAL_MS: "60000" }),
+    parseRuntimeCacheGcIntervalMs({ ODEN_RUNTIME_CACHE_GC_INTERVAL_MS: "60000" }),
     60000,
   );
   assert.equal(
-    parseRuntimeCacheGcIntervalMs({ WASMPLANE_RUNTIME_CACHE_GC_INTERVAL_MS: "0" }),
+    parseRuntimeCacheGcIntervalMs({ ODEN_RUNTIME_CACHE_GC_INTERVAL_MS: "0" }),
     undefined,
   );
 });
@@ -184,8 +184,8 @@ test("runtime config parses shutdown drain timeout", () => {
 test("runtime config resolves route snapshot file", () => {
   assert.equal(resolveRuntimeRouteSnapshotFile({}), undefined);
   assert.equal(
-    resolveRuntimeRouteSnapshotFile({ RUNTIME_ROUTE_SNAPSHOT_FILE: "  .wasmplane/runtime-snapshot.json  " }),
-    ".wasmplane/runtime-snapshot.json",
+    resolveRuntimeRouteSnapshotFile({ RUNTIME_ROUTE_SNAPSHOT_FILE: "  .odenctl/runtime-snapshot.json  " }),
+    ".odenctl/runtime-snapshot.json",
   );
   assert.equal(resolveRuntimeRouteSnapshotFile({ RUNTIME_ROUTE_SNAPSHOT_FILE: "   " }), undefined);
 });

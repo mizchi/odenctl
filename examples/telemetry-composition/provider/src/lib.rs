@@ -1,11 +1,11 @@
-use wasmplane_service_sdk::{telemetry, wasip3};
-wasip3::wit_bindgen::generate!({path:"../wit", world:"provider", generate_all, with:{"wasmplane:telemetry/tracing@0.1.0":wasmplane_service_sdk::telemetry}});
+use oden_service_sdk::{telemetry, wasip3};
+wasip3::wit_bindgen::generate!({path:"../wit", world:"provider", generate_all, with:{"oden:telemetry/tracing@0.1.0":oden_service_sdk::telemetry}});
 use exports::example::boundary::operations::{Context, Guest, Payload};
 struct Provider;
 export!(Provider);
 impl Guest for Provider {
     async fn work(context: Context, input: Payload) -> Result<Payload, String> {
-        wasmplane_service_sdk::sleep_ms(5).await;
+        oden_service_sdk::sleep_ms(5).await;
         telemetry::log(
             Some(&context),
             telemetry::Level::Info,

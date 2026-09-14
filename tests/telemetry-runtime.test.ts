@@ -8,19 +8,19 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 
-const binary = process.env.WASMPLANE_SERVICE_BIN;
+const binary = process.env.ODEN_SERVICE_BIN;
 const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
 for (
   const [language, component] of [
-    ["rust", process.env.WASMPLANE_SERVICE_RUST],
-    ["moonbit", process.env.WASMPLANE_SERVICE_MOONBIT],
+    ["rust", process.env.ODEN_SERVICE_RUST],
+    ["moonbit", process.env.ODEN_SERVICE_MOONBIT],
   ] as const
 ) {
   test(
     `${language}: resident tasks, HTTP and durable calls propagate independent traces through OTLP`,
     { skip: !(binary && component), timeout: 60_000 },
     async (t) => {
-      const dir = await mkdtemp(join(tmpdir(), "wasmplane-telemetry-"));
+      const dir = await mkdtemp(join(tmpdir(), "odenctl-telemetry-"));
       t.after(() => rm(dir, { recursive: true, force: true }));
       const records: { path: string; data: any }[] = [];
       const outgoing: { parent: string; state: string; durable: boolean }[] =

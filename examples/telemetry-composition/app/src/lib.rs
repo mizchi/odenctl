@@ -1,9 +1,9 @@
-use wasmplane_service_sdk::{HttpHandler, Lifecycle, telemetry, types};
+use oden_service_sdk::{HttpHandler, Lifecycle, telemetry, types};
 mod api {
-    wasmplane_service_sdk::wasip3::wit_bindgen::generate!({path:"../wit", world:"app", generate_all, with:{"wasmplane:telemetry/tracing@0.1.0":wasmplane_service_sdk::telemetry}});
+    oden_service_sdk::wasip3::wit_bindgen::generate!({path:"../wit", world:"app", generate_all, with:{"oden:telemetry/tracing@0.1.0":oden_service_sdk::telemetry}});
 }
 struct App;
-wasmplane_service_sdk::export!(App);
+oden_service_sdk::export!(App);
 impl Lifecycle for App {
     async fn start() -> Result<(), String> {
         Ok(())
@@ -46,6 +46,6 @@ impl HttpHandler for App {
                 "{\"error\":true,\"message\":\"zero is rejected\"}".into()
             }
         };
-        Ok(wasmplane_service_sdk::json(body))
+        Ok(oden_service_sdk::json(body))
     }
 }

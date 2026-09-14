@@ -163,7 +163,7 @@ export function evaluatePerfBudgets(
 
 export function formatPerfRegressionMarkdown(report: PerfRegressionReport): string {
   const lines = [
-    "# wasmplane perf regression",
+    "# odenctl perf regression",
     "",
     `generated: ${report.generatedAt}`,
     `status: ${report.ok ? "pass" : "fail"}`,

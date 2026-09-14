@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
-import { stat } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { MVP_RUNTIME_BACKEND, MVP_WASI_PROFILE, type RuntimeNodeHostInfo } from "../control-plane/contracts.ts";
 import { createConfiguredSecretCipherAsync } from "../control-plane/secret-encryption.ts";
 import { createSqliteRepository } from "../control-plane/repository.ts";
@@ -28,6 +28,7 @@ import {
   resolveRuntimeRegion,
 } from "./config.ts";
 import { createRuntimeNodeApp } from "./node-app.ts";
+import { parseResponseCacheConfig } from "./response-cache-policy.ts";
 import { createOtlpHttpTraceExporter, parseOtlpHeaders } from "./otel.ts";
 import { createEnvSecretStore, createRepositorySecretStore } from "./secrets.ts";
 import { installRuntimeShutdownHandlers } from "./shutdown.ts";
@@ -41,18 +42,21 @@ import {
   wasip3HostDaemonPoolingRuntimeArgsFromEnv,
   wasip3HostDaemonRuntimeArgsFromEnv,
 } from "./wasip3-host.ts";
+import { assertCurrentEnvironment } from "../environment.ts";
+
+assertCurrentEnvironment(process.env);
 
 const port = Number.parseInt(process.env.RUNTIME_PORT ?? "8788", 10);
 const host = process.env.RUNTIME_HOST ?? "127.0.0.1";
-const cacheDir = process.env.WASMPLANE_CACHE_DIR ?? ".wasmplane/cache";
-const artifactCacheDir = process.env.WASMPLANE_ARTIFACT_CACHE_DIR ?? ".wasmplane/runtime-artifacts";
-const hostBin = process.env.WASMPLANE_WASIP3_HOST_BIN ?? "target/debug/wasmplane-wasip3-host";
-const hostDaemonEnabled = process.env.WASMPLANE_WASIP3_HOST_DAEMON === "1";
-const hostDaemonPort = Number.parseInt(process.env.WASMPLANE_WASIP3_HOST_DAEMON_PORT ?? "8790", 10);
-const hostDaemonUrl = process.env.WASMPLANE_WASIP3_HOST_DAEMON_URL
+const cacheDir = process.env.ODEN_CACHE_DIR ?? ".oden/cache";
+const artifactCacheDir = process.env.ODEN_ARTIFACT_CACHE_DIR ?? ".oden/runtime-artifacts";
+const hostBin = process.env.ODEN_WASIP3_HOST_BIN ?? "target/debug/oden-host";
+const hostDaemonEnabled = process.env.ODEN_WASIP3_HOST_DAEMON === "1";
+const hostDaemonPort = Number.parseInt(process.env.ODEN_WASIP3_HOST_DAEMON_PORT ?? "8790", 10);
+const hostDaemonUrl = process.env.ODEN_WASIP3_HOST_DAEMON_URL
   ?? (hostDaemonEnabled ? `http://127.0.0.1:${hostDaemonPort}` : undefined);
-const hostDaemonRoutesEnabled = process.env.WASMPLANE_WASIP3_HOST_DAEMON_ROUTES === "1";
-const hostDaemonWorkerProxyEnabled = process.env.WASMPLANE_WASIP3_HOST_DAEMON_WORKER_PROXY === "1";
+const hostDaemonRoutesEnabled = process.env.ODEN_WASIP3_HOST_DAEMON_ROUTES === "1";
+const hostDaemonWorkerProxyEnabled = process.env.ODEN_WASIP3_HOST_DAEMON_WORKER_PROXY === "1";
 const publicUrl = resolveRuntimePublicUrl(process.env, host, port);
 const runtimeNodeId = resolveRuntimeNodeId(process.env, host, port);
 const runtimeRegion = resolveRuntimeRegion(process.env);
@@ -63,10 +67,13 @@ const runtimeCacheRetention = parseRuntimeCacheRetentionPolicy(process.env);
 const runtimeCacheGcIntervalMs = parseRuntimeCacheGcIntervalMs(process.env);
 const shutdownDrainTimeoutMs = parseRuntimeShutdownDrainTimeoutMs(process.env, 30_000);
 const routeSnapshotFile = resolveRuntimeRouteSnapshotFile(process.env);
-const controlPlaneUrl = process.env.CONTROL_PLANE_URL ?? process.env.WASMPLANE_CONTROL_PLANE_URL;
-const controlPlaneToken = process.env.CONTROL_PLANE_TOKEN ?? process.env.WASMPLANE_CONTROL_PLANE_TOKEN;
-const runtimeManagementToken = process.env.WASMPLANE_RUNTIME_TOKEN;
-const secretDbPath = process.env.WASMPLANE_SECRET_DB;
+const controlPlaneUrl = process.env.CONTROL_PLANE_URL ?? process.env.ODENCTL_CONTROL_PLANE_URL;
+const controlPlaneToken = process.env.CONTROL_PLANE_TOKEN ?? process.env.ODENCTL_CONTROL_PLANE_TOKEN;
+const runtimeManagementToken = process.env.ODEN_RUNTIME_TOKEN;
+const responseCache = process.env.RUNTIME_RESPONSE_CACHE_FILE
+  ? parseResponseCacheConfig(JSON.parse(await readFile(process.env.RUNTIME_RESPONSE_CACHE_FILE, "utf8")))
+  : undefined;
+const secretDbPath = process.env.ODEN_SECRET_DB;
 const secretCipher = await createConfiguredSecretCipherAsync({ env: process.env });
 const runtimeConcurrency = Number.parseInt(process.env.RUNTIME_CONCURRENCY ?? "128", 10);
 const projectConcurrencyLimits = parseProjectConcurrencyLimits(process.env);
@@ -80,8 +87,8 @@ const otlpTraceEndpoint =
 const hostDaemonPoolingArgs = wasip3HostDaemonPoolingRuntimeArgsFromEnv(process.env);
 const hostDaemonServeArgs = wasip3HostDaemonRuntimeArgsFromEnv(process.env, hostDaemonPoolingArgs);
 const precompiledCompileArgs = hostDaemonUrl ? hostDaemonPoolingArgs : [];
-const runtimeVersion = "wasmplane-runtime/0.1.0";
-const runtimeHostVersion = process.env.WASMPLANE_WASIP3_HOST_VERSION ?? "wasmplane-wasip3-host";
+const runtimeVersion = "oden-runtime/0.1.0";
+const runtimeHostVersion = process.env.ODEN_WASIP3_HOST_VERSION ?? "oden-host";
 const runtimeEngineVariant = engineCacheVariant([
   runtimeHostVersion,
   await hostBinaryCacheKey(hostBin),
@@ -140,6 +147,7 @@ const app = createRuntimeNodeApp({
     ? createWasip3HostDaemonInvoker({ url: hostDaemonUrl })
     : createWasip3HostInvoker({ hostBin }),
   managementToken: runtimeManagementToken,
+  responseCache,
   managementIdentityKeys: runtimeIdentityKeys,
   maxConcurrentInvocations: runtimeConcurrency,
   maxConcurrentInvocationsByProject: projectConcurrencyLimits,
@@ -158,7 +166,7 @@ const app = createRuntimeNodeApp({
   telemetry: otlpTraceEndpoint
     ? createOtlpHttpTraceExporter({
       endpoint: otlpTraceEndpoint,
-      serviceName: process.env.OTEL_SERVICE_NAME ?? "wasmplane-runtime",
+      serviceName: process.env.OTEL_SERVICE_NAME ?? "oden-runtime",
       serviceInstanceId: runtimeNodeId,
       headers: parseOtlpHeaders(process.env.OTEL_EXPORTER_OTLP_HEADERS),
     })
@@ -196,7 +204,7 @@ if (controlPlaneUrl) {
     intervalMs: Number.parseInt(process.env.RUNTIME_HEARTBEAT_INTERVAL_MS ?? "30000", 10),
   });
 }
-console.log(`wasmplane ${MVP_WASI_PROFILE} runtime node listening on http://${host}:${port}`);
+console.log(`oden ${MVP_WASI_PROFILE} runtime node listening on http://${host}:${port}`);
 
 async function startWasip3HostDaemon(input: {
   hostBin: string;

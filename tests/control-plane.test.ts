@@ -435,7 +435,7 @@ test("control plane creates a beta onboarding bundle for a new service tenant", 
   assert.match(onboarding.deployKey.token, /^wmp_[a-z0-9]{32}$/);
   assert.match(onboarding.next.deployCommand, /--project-id prj_acme_api/);
   assert.match(onboarding.next.deployCommand, /--host api\.acme\.example/);
-  assert.match(onboarding.next.deployCommand, /WASMPLANE_CONTROL_PLANE_TOKEN=<deploy-token>/);
+  assert.match(onboarding.next.deployCommand, /ODENCTL_CONTROL_PLANE_TOKEN=<deploy-token>/);
   assert.deepEqual(onboarding.checklist.map((item) => [item.id, item.done]), [
     ["organization", true],
     ["user", true],
@@ -1217,7 +1217,7 @@ test("control plane enqueues and retries billing webhook deliveries", async () =
     projectBillingRates: {
       invocationsPerMillionUsd: 1,
     },
-    billingWebhookTargetUrl: "https://accounting.example/webhooks/wasmplane",
+    billingWebhookTargetUrl: "https://accounting.example/webhooks/odenctl",
     billingWebhookRetryDelayMs: 1_000,
     billingWebhookMaxAttempts: 3,
   });
@@ -1901,7 +1901,7 @@ test("artifact signatures are verified before deployment and provenance is surfa
     signature,
     provenance: {
       builder: "github-actions",
-      source: "github.com/mizchi/wasmplane",
+      source: "github.com/mizchi/odenctl",
       revision: "abc123",
       buildId: "run-1",
     },
@@ -2161,8 +2161,8 @@ test("control plane manages custom domain verification and TLS hooks", () => {
   assert.equal(domain.host, "app.example.dev");
   assert.equal(domain.status, "pending_verification");
   assert.equal(domain.tlsStatus, "none");
-  assert.equal(domain.verificationRecordName, "_wasmplane-challenge.app.example.dev");
-  assert.match(domain.verificationRecordValue, /^wasmplane-domain-verification=wmpdv_[a-f0-9]{32}$/);
+  assert.equal(domain.verificationRecordName, "_odenctl-challenge.app.example.dev");
+  assert.match(domain.verificationRecordValue, /^odenctl-domain-verification=wmpdv_[a-f0-9]{32}$/);
   assert.deepEqual(control.listProjectCustomDomains({ projectId: project.id }), [domain]);
 
   const artifact = control.createArtifact({
@@ -2944,7 +2944,7 @@ test("registers runtime nodes for route snapshot publication", () => {
     host: {
       backend: "wasmtime",
       wasi: "wasip3",
-      runtimeVersion: "wasmplane-runtime/0.1.0",
+      runtimeVersion: "oden-runtime/0.1.0",
       hostVersion: "wasmtime-43.0.0",
       engineVariant: "engine-abcd1234",
     },
@@ -2959,7 +2959,7 @@ test("registers runtime nodes for route snapshot publication", () => {
   assert.deepEqual(node.host, {
     backend: "wasmtime",
     wasi: "wasip3",
-    runtimeVersion: "wasmplane-runtime/0.1.0",
+    runtimeVersion: "oden-runtime/0.1.0",
     hostVersion: "wasmtime-43.0.0",
     engineVariant: "engine-abcd1234",
   });
@@ -2987,14 +2987,14 @@ test("tracks runtime node heartbeat and excludes inactive nodes from publish tar
 
   const heartbeat = control.recordRuntimeNodeHeartbeat({
     id: "rt_active",
-    version: "wasmplane-runtime/0.1.0",
+    version: "oden-runtime/0.1.0",
     capacity: { concurrentRequests: 128, memoryMb: 4096 },
     load: { activeRequests: 64 },
     identity: { keyId: "rt-key", certificateSha256: "a".repeat(64) },
     host: {
       backend: "wasmtime",
       wasi: "wasip3",
-      runtimeVersion: "wasmplane-runtime/0.1.0",
+      runtimeVersion: "oden-runtime/0.1.0",
       hostVersion: "wasmtime-43.0.0",
       engineVariant: "engine-hot",
     },
@@ -3003,14 +3003,14 @@ test("tracks runtime node heartbeat and excludes inactive nodes from publish tar
 
   assert.equal(heartbeat.status, "active");
   assert.equal(heartbeat.lastSeenAt, fixedNow());
-  assert.equal(heartbeat.version, "wasmplane-runtime/0.1.0");
+  assert.equal(heartbeat.version, "oden-runtime/0.1.0");
   assert.deepEqual(heartbeat.capacity, { concurrentRequests: 128, memoryMb: 4096 });
   assert.deepEqual(heartbeat.load, { activeRequests: 64 });
   assert.deepEqual(heartbeat.identity, { keyId: "rt-key", certificateSha256: "a".repeat(64) });
   assert.deepEqual(heartbeat.host, {
     backend: "wasmtime",
     wasi: "wasip3",
-    runtimeVersion: "wasmplane-runtime/0.1.0",
+    runtimeVersion: "oden-runtime/0.1.0",
     hostVersion: "wasmtime-43.0.0",
     engineVariant: "engine-hot",
   });
@@ -3030,7 +3030,7 @@ test("updates runtime node lifecycle status without rewriting heartbeat data", (
   control.registerRuntimeNode({ id: "rt_maint", url: "http://127.0.0.1:8788" });
   control.recordRuntimeNodeHeartbeat({
     id: "rt_maint",
-    version: "wasmplane-runtime/0.1.0",
+    version: "oden-runtime/0.1.0",
     capacity: { concurrentRequests: 128, memoryMb: 4096 },
     load: { activeRequests: 3 },
   });
@@ -3039,7 +3039,7 @@ test("updates runtime node lifecycle status without rewriting heartbeat data", (
 
   assert.equal(draining.status, "draining");
   assert.equal(draining.lastSeenAt, fixedNow());
-  assert.equal(draining.version, "wasmplane-runtime/0.1.0");
+  assert.equal(draining.version, "oden-runtime/0.1.0");
   assert.deepEqual(draining.capacity, { concurrentRequests: 128, memoryMb: 4096 });
   assert.deepEqual(draining.load, { activeRequests: 3 });
   assert.deepEqual(control.listActiveRuntimeNodes(), []);
@@ -3319,7 +3319,7 @@ test("route canary analysis rolls back failed candidates and records decisions",
 });
 
 test("sqlite repository records schema migrations and upgrades existing databases", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-migrations-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-migrations-"));
   const dbPath = join(dir, "control.sqlite");
   const oldDb = new DatabaseSync(dbPath);
   oldDb.exec(oldSchema);

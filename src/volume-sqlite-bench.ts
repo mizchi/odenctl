@@ -183,7 +183,7 @@ export async function runVolumeSqliteBenchmarkSuite(
 
 export function parseVolumeSqliteBenchArgs(args: string[]): VolumeSqliteBenchOptions {
   const options: VolumeSqliteBenchOptions = {
-    rootDir: ".wasmplane/volume-sqlite-bench",
+    rootDir: ".odenctl/volume-sqlite-bench",
     databaseCount: 500,
     maxOpenDatabases: 64,
     maxPendingWritesPerDatabase: 64,
@@ -244,7 +244,7 @@ export function parseVolumeSqliteBenchArgs(args: string[]): VolumeSqliteBenchOpt
 
 export function formatVolumeSqliteBenchmarkMarkdown(report: VolumeSqliteBenchmarkReport): string {
   const lines = [
-    "# wasmplane volume sqlite benchmark",
+    "# odenctl volume sqlite benchmark",
     "",
     `generated: ${report.generatedAt}`,
     `environment: node ${report.environment.node}, ${report.environment.platform}/${report.environment.arch}, cpus=${report.environment.cpus}`,

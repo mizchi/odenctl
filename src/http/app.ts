@@ -1383,7 +1383,7 @@ async function applyReplicatedRouteSnapshot(options: HttpAppOptions, request: an
   }
   return options.routeSnapshotReplicaStore.apply({
     snapshot,
-    sourceRegion: firstHeader(request.headers["x-wasmplane-source-region"]),
+    sourceRegion: firstHeader(request.headers["x-oden-source-region"]),
     receivedAt: (options.now ?? (() => new Date().toISOString()))(),
   });
 }
@@ -1637,7 +1637,7 @@ async function renderAdminPage(options: HttpAppOptions, notice: string | null): 
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>wasmplane admin</title>
+  <title>odenctl admin</title>
   <style>
     :root { color-scheme: light; --ink: #18202f; --muted: #64748b; --line: #d8dee8; --bg: #f7f9fc; --accent: #0f766e; --warn: #b45309; --bad: #b91c1c; }
     * { box-sizing: border-box; }
@@ -1676,7 +1676,7 @@ async function renderAdminPage(options: HttpAppOptions, notice: string | null): 
 </head>
 <body>
   <header>
-    <h1>wasmplane admin</h1>
+    <h1>odenctl admin</h1>
     <nav>
       <a href="#projects">Projects</a>
       <a href="#routes">Routes</a>
@@ -2666,7 +2666,7 @@ async function putValidatedArtifact(input: {
 }
 
 async function stageArtifactForValidation(decoded: ReturnType<typeof decodeLocalArtifactBytes>) {
-  const dir = await mkdtemp(join(tmpdir(), "wasmplane-artifact-validation-"));
+  const dir = await mkdtemp(join(tmpdir(), "odenctl-artifact-validation-"));
   const path = join(dir, `${decoded.digestHex}.wasm`);
   await writeFile(path, decoded.bytes);
   return { dir, path, fileUrl: `file://${path}` };

@@ -24,8 +24,8 @@ fn main() {
         "src",
         "build.rs",
         "Cargo.toml",
-        "../wasip3-host/Cargo.toml",
-        "../wasip3-host/src",
+        "../oden/Cargo.toml",
+        "../oden/src",
         "../../wit",
         "../../Cargo.lock",
     ] {
@@ -45,8 +45,8 @@ fn main() {
     assert!(rustc.status.success());
     hash.update(rustc.stdout);
     println!(
-        "cargo:rustc-env=WASMPLANE_ENGINE_BUILD={:x}",
+        "cargo:rustc-env=ODEN_ENGINE_BUILD={:x}",
         hash.finalize()
     );
-    println!("cargo:rustc-env=WASMPLANE_ENGINE_TARGET={target}");
+    println!("cargo:rustc-env=ODEN_ENGINE_TARGET={target}");
 }

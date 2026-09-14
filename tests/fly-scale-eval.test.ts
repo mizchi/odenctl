@@ -9,8 +9,8 @@ import {
 
 test("fly scale evaluation args default to N+1 runtime and production checks", () => {
   const parsed = parseFlyScaleEvaluationArgs(["--"], {
-    WASMPLANE_CONTROL_PLANE_TOKEN: "control-token",
-    WASMPLANE_RUNTIME_TOKEN: "runtime-token",
+    ODENCTL_CONTROL_PLANE_TOKEN: "control-token",
+    ODEN_RUNTIME_TOKEN: "runtime-token",
   });
 
   assert.equal(parsed.controlApp, "mz-wasmplane-control");
@@ -49,7 +49,7 @@ test("fly scale evaluation args parse production SLO thresholds", () => {
 
 test("fly scale evaluation args enable failure drills explicitly", () => {
   const fromFlag = parseFlyScaleEvaluationArgs(["--failure-drill"], {});
-  const fromEnv = parseFlyScaleEvaluationArgs([], { WASMPLANE_FLY_EVAL_FAILURE_DRILL: "true" });
+  const fromEnv = parseFlyScaleEvaluationArgs([], { ODENCTL_FLY_EVAL_FAILURE_DRILL: "true" });
   const skipped = parseFlyScaleEvaluationArgs(["--failure-drill", "--skip-failure-drill"], {});
 
   assert.equal(fromFlag.failureDrill, true);
@@ -69,8 +69,8 @@ test("fly scale evaluation plan covers scale, smoke, throughput, and explicit fa
     "--volume-sqlite-drill-id",
     "do_alarm_demo",
   ], {
-    WASMPLANE_CONTROL_PLANE_TOKEN: "control-token",
-    WASMPLANE_RUNTIME_TOKEN: "runtime-token",
+    ODENCTL_CONTROL_PLANE_TOKEN: "control-token",
+    ODEN_RUNTIME_TOKEN: "runtime-token",
   }));
 
   assert.deepEqual(plan.map((step) => step.name), [
@@ -93,8 +93,8 @@ test("fly scale evaluation plan covers scale, smoke, throughput, and explicit fa
 
 test("fly scale evaluation plan does not include failure drills by default", () => {
   const plan = buildFlyScaleEvaluationPlan(parseFlyScaleEvaluationArgs([], {
-    WASMPLANE_CONTROL_PLANE_TOKEN: "control-token",
-    WASMPLANE_RUNTIME_TOKEN: "runtime-token",
+    ODENCTL_CONTROL_PLANE_TOKEN: "control-token",
+    ODEN_RUNTIME_TOKEN: "runtime-token",
   }));
 
   assert.deepEqual(plan.map((step) => step.name), [
@@ -109,8 +109,8 @@ test("fly scale evaluation dry-run returns the plan without executing commands",
   let commands = 0;
   const result = await runFlyScaleEvaluation({
     ...parseFlyScaleEvaluationArgs([], {
-      WASMPLANE_CONTROL_PLANE_TOKEN: "control-token",
-      WASMPLANE_RUNTIME_TOKEN: "runtime-token",
+      ODENCTL_CONTROL_PLANE_TOKEN: "control-token",
+      ODEN_RUNTIME_TOKEN: "runtime-token",
     }),
     commandRunner: async () => {
       commands += 1;
@@ -203,8 +203,8 @@ test("fly scale evaluation enforces SLO checks after execution", async () => {
       "--max-publish-ms",
       "5000",
     ], {
-      WASMPLANE_CONTROL_PLANE_TOKEN: "control-token",
-      WASMPLANE_RUNTIME_TOKEN: "runtime-token",
+      ODENCTL_CONTROL_PLANE_TOKEN: "control-token",
+      ODEN_RUNTIME_TOKEN: "runtime-token",
     }),
     fetch: fetchImpl as typeof fetch,
     sleep: async () => {},

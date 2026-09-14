@@ -1,0 +1,13 @@
+[package]
+name = "binary-http"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wasip3 = { version = "=0.9.0", features = ["async-spawn"] }
+
+[workspace]

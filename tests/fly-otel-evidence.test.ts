@@ -36,7 +36,7 @@ test("fly otel evidence passes when collector logs include runtime spans", async
       assert.equal(command, "fly");
       assert.deepEqual(args, ["logs", "-a", "collector-test", "--no-tail"]);
       return {
-        stdout: "ResourceSpans service.name=wasmplane-runtime trace_id=abc wasmplane.project_id=prj",
+        stdout: "ResourceSpans service.name=oden-runtime trace_id=abc oden.project_id=prj",
         stderr: "",
       };
     },
