@@ -51,7 +51,7 @@ compatibility with existing Workers applications would be separate projects.
 | Foundation | Current implementation | Extension needed |
 | --- | --- | --- |
 | Deployments and routing | Immutable artifacts, weighted route snapshots, placement; gateway cache clears on accepted snapshot updates | Publish cache policy through the control plane |
-| Component loading | Artifact materialization and compilation in `crates/odenctl/src/runtime/supervisor.ts`; prepared cache in `crates/runtime-core/src/node.rs` | Guest-accessible loader with delegated grants |
+| Component loading | Artifact materialization and compilation in `crates/odenctl/src/runtime/supervisor.ts`; prepared cache in `crates/oden-core/src/node.rs` | Guest-accessible loader with delegated grants |
 | Execution | Wasmtime, fresh Store per node request, deadlines, memory and I/O limits | Child execution accounting, depth limits, compilation budgets |
 | Persistence | Standalone celld WIT adapter | Deployment binding provisioning and recovery integration |
 | Observability | Host/guest telemetry, context propagation; gateway cache statistics and per-request cache status | Image transform work, child calls and compilation accounting |

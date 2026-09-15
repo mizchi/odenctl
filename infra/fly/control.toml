@@ -2,7 +2,7 @@ app = "mz-wasmplane-control"
 primary_region = "nrt"
 
 [build]
-  dockerfile = "Dockerfile"
+  dockerfile = "infra/docker/odenctl.Dockerfile"
 
 [processes]
   app = "node --experimental-strip-types src/main.ts"

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { classifyKumoDrift } from '../scripts/kumo-drift.mjs';
+import { classifyKumoDrift } from '../tools/scripts/kumo-drift.mjs';
 const change = (type, before, after, name = 'app') => ({
   mode: 'managed', type, address: `module.runtime.${type}.${name}`,
   change: { actions: ['update'], before, after },

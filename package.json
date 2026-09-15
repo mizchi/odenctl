@@ -7,6 +7,7 @@
   },
   "packageManager": "pnpm@10.33.0",
   "scripts": {
+    "test:e2e": "playwright test --config tests/e2e/playwright.config.ts",
     "test": "node --experimental-strip-types --test tests/*.test.ts",
     "coverage": "node --experimental-strip-types --test --experimental-test-coverage tests/*.test.ts",
     "start": "node --experimental-strip-types crates/odenctl/src/main.ts",
@@ -29,8 +30,8 @@
     "actions-pin-check": "node --experimental-strip-types crates/odenctl/src/workflow-action-pins.ts check",
     "actions-pin-verify": "node --experimental-strip-types crates/odenctl/src/workflow-action-pins.ts check --verify-remote",
     "actions-pin-update": "node --experimental-strip-types crates/odenctl/src/workflow-action-pins.ts update --write",
-    "formal:route-placement": "node --experimental-strip-types formal/route-snapshot-placement.model.ts",
-    "formal:capability-isolation": "node --experimental-strip-types formal/capability-isolation.model.ts",
+    "formal:route-placement": "node --experimental-strip-types tools/formal/route-snapshot-placement.model.ts",
+    "formal:capability-isolation": "node --experimental-strip-types tools/formal/capability-isolation.model.ts",
     "service-bench": "node --experimental-strip-types crates/odenctl/src/service-bench.ts",
     "build": "just rust-build"
   },

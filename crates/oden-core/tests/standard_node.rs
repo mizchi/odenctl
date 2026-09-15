@@ -1,5 +1,5 @@
 use std::path::Path;
-use oden_runtime_core::node::{HostPolicy, HttpRequestInput, InvocationLimits, Wasip3Runtime};
+use oden_core::node::{HostPolicy, HttpRequestInput, InvocationLimits, Wasip3Runtime};
 
 fn request() -> HttpRequestInput {
     HttpRequestInput {
@@ -55,7 +55,7 @@ async fn node_deadline_includes_stream_production() {
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires real WASIp3 component; just worker-async-test"]
 async fn node_precompiled_cache_and_body_limits() {
-    use oden_runtime_core::node::precompile_component_with_pooling;
+    use oden_core::node::precompile_component_with_pooling;
     let component = std::env::var("ODEN_WORKER_COMPONENT").unwrap();
     let dir = tempfile::tempdir().unwrap();
     let artifact = dir.path().join("worker.cwasm");
@@ -152,7 +152,7 @@ async fn node_caller_cancels_cpu_guest_and_next_store_is_healthy() {
 
 #[test]
 fn node_compiler_rejects_a_component_without_standard_http_exports() {
-    use oden_runtime_core::node::precompile_component_with_pooling;
+    use oden_core::node::precompile_component_with_pooling;
     let dir = tempfile::tempdir().unwrap();
     let component = dir.path().join("empty.wat");
     let output = dir.path().join("empty.cwasm");

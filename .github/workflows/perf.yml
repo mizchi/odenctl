@@ -51,7 +51,7 @@ jobs:
       - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
 
       - name: Install Wasm CI tools
-        run: bash scripts/install-wasm-ci-tools.sh
+        run: bash tools/scripts/install-wasm-ci-tools.sh
 
       - name: Run weekly perf regression
         run: just perf-regression

@@ -21,7 +21,7 @@ Run from the repository root with Node.js 24+, pnpm, Rust/Cargo 1.95+, and just.
 
 ```sh
 pnpm install --frozen-lockfile
-bash scripts/install-wasm-ci-tools.sh
+bash tools/scripts/install-wasm-ci-tools.sh
 export PATH="$HOME/.local/bin:$PATH"
 just rust-build guest-build
 ```

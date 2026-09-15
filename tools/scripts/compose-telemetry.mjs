@@ -15,7 +15,7 @@ import {
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const snake = (name) => name.replaceAll("-", "_");
 const ident = (name) => `r#${snake(name)}`;
 const camel = (name) =>

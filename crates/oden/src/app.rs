@@ -10,7 +10,7 @@ use std::{
 };
 use tokio::{net::TcpListener, process::Command, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
-use oden_runtime_core::{
+use oden_core::{
     component::{CheckedComponent, ComponentReport, Mode},
     config::RuntimeConfig,
     runtime::Runtime,

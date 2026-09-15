@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   runRouteSnapshotPlacementModel,
-} from "../formal/route-snapshot-placement.model.ts";
+} from "../tools/formal/route-snapshot-placement.model.ts";
 
 test("route snapshot placement formal model reports no current spec-level counterexamples", () => {
   const report = runRouteSnapshotPlacementModel();

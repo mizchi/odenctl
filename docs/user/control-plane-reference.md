@@ -301,7 +301,7 @@ The Fly setup uses one shared Docker image and two Fly apps:
 
 - control app: `node --experimental-strip-types src/main.ts`
 - runtime app: `node --experimental-strip-types src/runtime/main.ts`
-- collector app: `otel/opentelemetry-collector-contrib` with `otelcol/config.yaml`
+- collector app: `otel/opentelemetry-collector-contrib` with `infra/otelcol/config.yaml`
 
 Pick globally unique app names before running the commands:
 
@@ -482,8 +482,8 @@ The control plane ignores active runtime nodes whose heartbeat is older than
 The collector receives OTLP/gRPC on `4317` and OTLP/HTTP on `4318` over Fly private networking,
 then exports traces to the `debug` exporter and derives Prometheus RED metrics through the
 `spanmetrics` connector on `:9464/metrics`. Use `just fly-logs-collector` to inspect collected
-spans. `otelcol/alerts.yaml` contains starter Prometheus alert rules for runtime error rate and
-p95 latency. The debug exporter is for verification; replace or extend `otelcol/config.yaml` with a
+spans. `infra/otelcol/alerts.yaml` contains starter Prometheus alert rules for runtime error rate and
+p95 latency. The debug exporter is for verification; replace or extend `infra/otelcol/config.yaml` with a
 real trace backend exporter for production retention.
 
 Short scale test:
@@ -524,7 +524,7 @@ posture. Configure the GitHub Environment `production` with
 `just actions-pin-check`, `just fly-smoke-production`, `just fly-alarm-demo`, a Fly scale
 evaluation plan, and optionally executes the scale evaluation and Rust + MoonBit release smoke. It
 uploads `reports/production-readiness/` as `odenctl-production-readiness`.
-`scripts/install-flyctl.sh` installs a pinned `flyctl` release with SHA-256 verification whenever the
+`tools/scripts/install-flyctl.sh` installs a pinned `flyctl` release with SHA-256 verification whenever the
 gate needs Fly API access for OTEL evidence or execute-mode drills. SLO thresholds are workflow
 inputs: p95 latency, error-rate, minimum throughput, and route publish latency are passed to
 `fly-scale-eval`, which fails the gate when an executed run regresses. The default p95 gate is

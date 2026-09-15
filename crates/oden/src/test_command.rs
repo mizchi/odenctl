@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, bail};
 use std::path::PathBuf;
-use oden_runtime_core::{
+use oden_core::{
     config::RuntimeConfig,
     runtime::Runtime,
     test_runner::{TestOptions, TestStatus},

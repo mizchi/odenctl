@@ -21,15 +21,19 @@ test("pnpm exposes two product workspaces with deployment dependencies isolated"
   assert.ok(manifest("crates/odenctl/package.json").dependencies.pg);
 });
 
-test("standalone and deployment host are independent Cargo packages sharing runtime-core", () => {
+test("standalone and deployment host are independent Cargo packages sharing oden-core", () => {
   const metadata = JSON.parse(run("cargo", ["metadata", "--no-deps", "--format-version", "1"]));
+  const core = metadata.packages.find((pkg: { name: string }) => pkg.name === "oden-core");
+  assert.ok(core, "missing Cargo package oden-core");
+  assert.equal(core.manifest_path, resolve("crates/oden-core/Cargo.toml"));
+  assert.deepEqual(core.targets.filter((target: { kind: string[] }) => target.kind.includes("lib")).map((target: { name: string }) => target.name), ["oden_core"]);
   for (const [name, directory] of [["oden", "crates/oden"], ["oden-host", "crates/odenctl"]]) {
     const pkg = metadata.packages.find((pkg: { name: string }) => pkg.name === name);
     assert.ok(pkg, `missing Cargo package ${name}`);
     assert.equal(pkg.manifest_path, resolve(directory, "Cargo.toml"));
     assert.deepEqual(pkg.targets.filter((target: { kind: string[] }) => target.kind.includes("bin")).map((target: { name: string }) => target.name), [name]);
     const dependencies = pkg.dependencies.map((dependency: { name: string }) => dependency.name);
-    assert.ok(dependencies.includes("oden-runtime-core"));
+    assert.ok(dependencies.includes("oden-core"));
     assert.ok(!dependencies.includes(name === "oden" ? "oden-host" : "oden"));
   }
 });

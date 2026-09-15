@@ -99,7 +99,7 @@ test("perf regression CLI args parse budget, inputs, and output", () => {
   assert.deepEqual(
     parsePerfRegressionArgs([
       "--budget",
-      "perf/budgets.json",
+      "tools/perf/budgets.json",
       "--input",
       "perf-results/bench.json",
       "--input",
@@ -110,7 +110,7 @@ test("perf regression CLI args parse budget, inputs, and output", () => {
       "perf-results/report.md",
     ]),
     {
-      budgetPath: "perf/budgets.json",
+      budgetPath: "tools/perf/budgets.json",
       inputPaths: ["perf-results/bench.json", "perf-results/cluster.json"],
       historyPaths: ["perf-history/bench-previous.json"],
       outputPath: "perf-results/report.md",

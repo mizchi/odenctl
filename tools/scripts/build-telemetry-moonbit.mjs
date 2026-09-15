@@ -9,9 +9,9 @@ import {
 } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { build as buildService } from "../sdk/moonbit/build.mjs";
+import { build as buildService } from "../../sdk/moonbit/build.mjs";
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const example = resolve(root, "examples/telemetry-composition");
 const moonbit = resolve(example, "moonbit");
 const wit = resolve(moonbit, "target/wit");

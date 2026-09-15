@@ -29,7 +29,7 @@ just minimal-smoke
 ```
 
 Requires Rust, Node.js 24+, just, MoonBit, wasm-tools, and wit-bindgen.
-Add the pinned wasm-tools / wit-bindgen versions from `scripts/install-wasm-ci-tools.sh` to PATH.
+Add the pinned wasm-tools / wit-bindgen versions from `tools/scripts/install-wasm-ci-tools.sh` to PATH.
 Verified with `moon 0.1.20260904` and wit-bindgen `0.62.0`.
 
 ## WAT → Wasm (to save a binary)

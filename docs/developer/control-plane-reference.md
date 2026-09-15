@@ -19,7 +19,7 @@ different scopes:
 - AWS standalone runtime + kumo validation: [ECS/Fargate guide](../../infra/terraform/aws-standalone/README.md)
 - AWS control-plane scaffold: `infra/terraform/aws`
 - GCP Cloud Run: `infra/terraform/gcp`
-- Cloudflare Containers control-plane POC: `cloudflare/containers-control`
+- Cloudflare Containers control-plane POC: `infra/cloudflare/containers-control`
 
 The Terraform scaffolds expect externally managed secrets for `DATABASE_URL`, API tokens, runtime
 tokens, and artifact-store credentials. They are intended as planable starting points, not hardened
@@ -32,7 +32,7 @@ just tofu-validate
 just aws-terraform-plan
 just gcp-terraform-plan
 
-cd cloudflare/containers-control
+cd infra/cloudflare/containers-control
 pnpm install
 pnpm wrangler login
 pnpm dev
@@ -229,7 +229,7 @@ needed, `wasm-tools 1.259.0`, and `wit-bindgen-cli 0.62.0`. Build recipes add
 Weekly performance regression runs are configured in `.github/workflows/perf.yml` and can be
 reproduced locally with `just perf-regression`. The job writes `perf-results/bench.json`,
 `perf-results/cluster-bench.json`, and `perf-results/perf-regression.md`, then checks them against
-`perf/budgets.json`. The budget file supports fixed ceilings/floors and optional historical median
+`tools/perf/budgets.json`. The budget file supports fixed ceilings/floors and optional historical median
 trend thresholds. Set `ODENCTL_PERF_HISTORY` to a previous benchmark or cluster benchmark JSON
 file to compare the current run against historical p95/avg latency, throughput, and rollout timing.
 Tune `ODENCTL_PERF_ITERATIONS`, `ODENCTL_PERF_WARMUP`, `ODENCTL_PERF_CONCURRENCY`, and

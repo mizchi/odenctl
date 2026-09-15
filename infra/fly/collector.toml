@@ -2,7 +2,7 @@ app = "mz-wasmplane-otel-collector"
 primary_region = "nrt"
 
 [build]
-  dockerfile = "Dockerfile.otelcol"
+  dockerfile = "infra/docker/otelcol.Dockerfile"
 
 [http_service]
   internal_port = 13133

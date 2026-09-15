@@ -39,7 +39,7 @@ directory after the source checkout is removed.
 
 The installer packages the `crates/odenctl` workspace in a temporary directory;
 it preserves the source checkout's development dependencies. The default runtime
-build selects only `crates/oden`, with shared Wasmtime code in `crates/runtime-core`.
+build selects only `crates/oden`, with shared Wasmtime code in `crates/oden-core`.
 
 The installed CLI can use the same arguments as `pnpm odenctl` in the
 [deployment guide](control-plane.md). Its wrapper sets `ODEN_WASIP3_HOST_BIN` to

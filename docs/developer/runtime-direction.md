@@ -48,7 +48,7 @@ and guest-accessible dynamic component loading remain future work.
 
 | Existing implementation | Reuse or change |
 | --- | --- |
-| `Wasip3Runtime` in `crates/runtime-core/src/node.rs` | Node adapter for standard WASI HTTP; reuse the prepared cache, pooling, and execution limits |
+| `Wasip3Runtime` in `crates/oden-core/src/node.rs` | Node adapter for standard WASI HTTP; reuse the prepared cache, pooling, and execution limits |
 | `compile` / `invoke` / `serve` in `crates/odenctl/src/main.rs` | Separate standalone CLI and node invocation boundaries |
 | `crates/oden/src/standalone.rs` | `oden` application commands; the deployment host lives in `crates/odenctl` |
 | `wit/standard-http` | Validation contracts for standard WASI 0.3 HTTP and Rust std's WASI 0.2 imports |

@@ -9,13 +9,13 @@ Build around a standalone Wasm application runtime, with the control plane using
 Use the latest upstream stable Wasmtime or `mizchi/wasmtime-threads`.
 Wasmtime 48.0.2 is adopted, and a gateway adapter connects to `denoland/celld` Durable Objects.
 
-[Standalone Wasm runtime direction](docs/developer/runtime-direction.md) covers responsibility boundaries,
+[Standalone Wasm runtime direction](runtime-direction.md) covers responsibility boundaries,
 engine selection, celld contracts, and the validation sequence.
-See the [runtime guide](docs/developer/standalone-runtime.md) for the standalone CLI, permissions, and local celld validation.
+See the [runtime guide](standalone-runtime.md) for the standalone CLI, permissions, and local celld validation.
 The old custom worker WIT was removed; the node adapter also calls standard WASI HTTP.
 The following sections describe the control plane. For current runnable workflows,
-start with the [runtime quickstart](docs/user/getting-started.md) or
-[deployment walkthrough](docs/user/control-plane.md). Historical measurements below
+start with the [runtime quickstart](../user/getting-started.md) or
+[deployment walkthrough](../user/control-plane.md). Historical measurements below
 are retained for design context, not as current performance guarantees.
 
 ## Current Implementation Goals
@@ -261,7 +261,7 @@ and the Node-side storage facade remain independent APIs.
 
 Standalone execution can explicitly configure environment variables and preopened directories.
 celld actor calls use `oden:durable/objects@0.1.0`.
-See the [runtime guide](docs/developer/standalone-runtime.md).
+See the [runtime guide](standalone-runtime.md).
 
 ## Limits
 
@@ -404,8 +404,8 @@ resident mode keeps one Store per service generation and is a separate execution
 ## Historical Local Performance
 
 These measurements predate the current standard-WASI/rebranding work and do not
-establish current throughput. Rerun the [benchmark commands](docs/developer/control-plane-reference.md#benchmarks)
-for deployment nodes or the [service benchmark](docs/developer/service-benchmark.md) for
+establish current throughput. Rerun the [benchmark commands](control-plane-reference.md#benchmarks)
+for deployment nodes or the [service benchmark](service-benchmark.md) for
 standalone fresh/resident execution, recording the source revision and conditions.
 
 Local measurement conditions:

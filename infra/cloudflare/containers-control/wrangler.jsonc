@@ -10,7 +10,8 @@
   "containers": [
     {
       "class_name": "WasmplaneControlContainer",
-      "image": "../../Dockerfile",
+      "image": "../../docker/odenctl.Dockerfile",
+      "image_build_context": "../../..",
       "max_instances": 1
     }
   ],

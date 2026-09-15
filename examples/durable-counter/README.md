@@ -2,7 +2,7 @@
 
 Import [`oden:durable/objects@0.1.0`](../../sdk/rust/wit/durable.wit), then call celld's Counter with
 `open("counter", name)` → `object.fetch(request)`.
-WIT defines the guest–host contract. The [Rust host implementation](../../crates/runtime-core/src/durable.rs)
+WIT defines the guest–host contract. The [Rust host implementation](../../crates/oden-core/src/durable.rs)
 converts calls to authenticated HTTP, and the [celld gateway](../celld-gateway/index.js) forwards them to the target actor.
 The actor runs as JavaScript in celld; Wasm runs in the standalone runtime.
 

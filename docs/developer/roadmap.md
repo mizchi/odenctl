@@ -1,6 +1,6 @@
 # TODO
 
-The current priority is the [standalone Wasm runtime direction](docs/developer/runtime-direction.md).
+The current priority is the [standalone Wasm runtime direction](runtime-direction.md).
 The numbered production-readiness sections below retain the existing implementation backlog.
 
 ## Standalone runtime priorities (2026-09-11)
@@ -197,7 +197,7 @@ The numbered production-readiness sections below retain the existing implementat
 
 - [x] Add optional historical benchmark inputs to `perf-check`.
 - [x] Compare current rows against historical medians by name and dimensions.
-- [x] Add trend thresholds to `perf/budgets.json`.
+- [x] Add trend thresholds to `tools/perf/budgets.json`.
 - [x] Wire `ODENCTL_PERF_HISTORY` into `just perf-regression`.
 - [x] Document remaining GitHub Actions artifact-download work.
 
@@ -302,7 +302,7 @@ The numbered production-readiness sections below retain the existing implementat
 - [x] Add optional AWS RDS/Aurora Postgres module or documented external Postgres hookup.
 - [x] Add GCP Cloud Run Terraform for control-plane and runtime services, Cloud Storage artifact bucket, Secret Manager references, and single-runtime snapshot target wiring.
 - [x] Add GKE/EKS notes for high-fidelity runtime-node discovery, warmup, drain, and per-node snapshot publish.
-- [x] Build a Cloudflare Containers control-plane POC with a Worker front door, Durable Object-backed container class, and the existing Dockerfile.
+- [x] Build a Cloudflare Containers control-plane POC with a Worker front door, Durable Object-backed container class, and the existing infra/docker/odenctl.Dockerfile.
 - [x] Add a control-plane edge worker release API with a mock Cloudflare Workers deployer.
 - [x] Add an opt-in Cloudflare Workers script API deployer for generated control-plane release stubs.
 - [x] Persist edge worker releases in SQLite/Postgres instead of in-memory POC state.

@@ -115,7 +115,7 @@ observability and recovery steps.
 
 ## Build and test the application image
 
-The [standalone Dockerfile](../../../Dockerfile.standalone) builds the Rust host and
+The [standalone Dockerfile](../../docker/oden.Dockerfile) builds the Rust host and
 bundled [deployment sample](../../aws-image/service/src/lib.rs) in release mode,
 then packages them in a Debian image without Node.js.
 

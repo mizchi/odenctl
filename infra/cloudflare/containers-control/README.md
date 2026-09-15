@@ -10,7 +10,7 @@ pushes a local Dockerfile during `wrangler deploy`.
 ## Run
 
 ```sh
-cd cloudflare/containers-control
+cd infra/cloudflare/containers-control
 pnpm install
 pnpm wrangler login
 pnpm dev
@@ -114,5 +114,5 @@ WASIp3 execution remains on Wasmtime runtime nodes. Live `mode: "api"` release c
 - Live Cloudflare Workers uploads still need a production token-rotation process and provider-side
   rollback policy before they are suitable for production.
 - Runtime-node direct snapshot publishing is not solved here; this is control-plane-only.
-- The existing Dockerfile is `linux/amd64` compatible but should be measured for cold-start time and
+- The control-plane Dockerfile is `linux/amd64` compatible but should be measured for cold-start time and
   image size before using this as a production target.

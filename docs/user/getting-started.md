@@ -140,7 +140,7 @@ Put Node.js 24 or later and MoonBit on PATH, then install the Wasm tools:
 ```sh
 node --version
 moon version
-bash scripts/install-wasm-ci-tools.sh
+bash tools/scripts/install-wasm-ci-tools.sh
 export PATH="$HOME/.local/bin:$PATH"
 oden dev examples/service-moonbit/app.json
 ```

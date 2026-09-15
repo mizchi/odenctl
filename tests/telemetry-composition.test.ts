@@ -7,7 +7,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
-import { compose, generateWrapper } from "../scripts/compose-telemetry.mjs";
+import { compose, generateWrapper } from "../tools/scripts/compose-telemetry.mjs";
 
 test("boundary generation rejects resource and streaming lifetimes before compilation", () => {
   for (

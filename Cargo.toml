@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/runtime-core", "crates/oden", "crates/odenctl"]
+members = ["crates/oden-core", "crates/oden", "crates/odenctl"]
 exclude = [
   "infra/aws-image/service",
   "sdk/rust",

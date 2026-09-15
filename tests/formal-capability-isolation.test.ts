@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   runCapabilityIsolationModel,
-} from "../formal/capability-isolation.model.ts";
+} from "../tools/formal/capability-isolation.model.ts";
 
 test("capability isolation formal model reports no current spec-level counterexamples", () => {
   const report = runCapabilityIsolationModel();

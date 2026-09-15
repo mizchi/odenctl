@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 
 test("OTel collector derives span metrics and exposes Prometheus metrics", async () => {
-  const config = await readFile("otelcol/config.yaml", "utf8");
+  const config = await readFile("infra/otelcol/config.yaml", "utf8");
 
   assert.match(config, /connectors:\n\s+spanmetrics:/);
   assert.match(config, /namespace: oden/);
@@ -14,7 +14,7 @@ test("OTel collector derives span metrics and exposes Prometheus metrics", async
 });
 
 test("OTel alert rules cover runtime error rate and p95 latency", async () => {
-  const alerts = await readFile("otelcol/alerts.yaml", "utf8");
+  const alerts = await readFile("infra/otelcol/alerts.yaml", "utf8");
 
   assert.match(alerts, /OdenRuntimeHighErrorRate/);
   assert.match(alerts, /OdenRuntimeHighP95Latency/);

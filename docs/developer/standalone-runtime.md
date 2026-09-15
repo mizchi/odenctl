@@ -3,7 +3,7 @@
 Start with the [User guide](../user/README.md) and [Quickstart](../user/getting-started.md).
 This page covers the execution engine, control-plane adapter, and verification details.
 
-The Rust `oden-runtime-core` crate embeds Wasmtime 48.0.2 to run Wasm components
+The Rust `oden-core` crate embeds Wasmtime 48.0.2 to run Wasm components
 without a control plane or database. Runtime nodes call standard WASI HTTP through
 the same crate's `node` adapter. See the [service runtime](service-runtime.md) for
 resident services, application manifests, and watch/rebuild support.
@@ -16,7 +16,7 @@ Use the following pinned tools to build guests and test components:
 
 ```sh
 pnpm install --frozen-lockfile
-bash scripts/install-wasm-ci-tools.sh
+bash tools/scripts/install-wasm-ci-tools.sh
 export PATH="$HOME/.local/bin:$PATH"
 just rust-build
 target/debug/oden --version

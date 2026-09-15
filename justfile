@@ -79,7 +79,7 @@ e2e: rust-build guest-build
     ODENCTL_E2E_COMPONENT="{{ guest_component }}" ODENCTL_E2E_HOST_BIN="target/debug/oden-host" node --experimental-strip-types --test tests/full-flow.test.ts
 
 worker-async-test: rust-build guest-build standalone-http-p3-build
-    ODEN_STANDARD_COMPONENT="{{justfile_directory()}}/examples/standard-http-p3/target/wasm32-wasip2/debug/standalone_http_p3_example.wasm" ODEN_WORKER_COMPONENT="{{justfile_directory()}}/{{ guest_component }}" cargo test -p oden-runtime-core --test standard_node -- --ignored
+    ODEN_STANDARD_COMPONENT="{{justfile_directory()}}/examples/standard-http-p3/target/wasm32-wasip2/debug/standalone_http_p3_example.wasm" ODEN_WORKER_COMPONENT="{{justfile_directory()}}/{{ guest_component }}" cargo test -p oden-core --test standard_node -- --ignored
     ODENCTL_WORKER_HOST_BIN=target/debug/oden-host ODEN_WORKER_COMPONENT="{{ guest_component }}" node --experimental-strip-types --test tests/worker-daemon-async.test.ts
 
 deps:
@@ -96,7 +96,7 @@ oden-build:
     cargo build -p oden
 
 oden-test:
-    cargo test -p oden -p oden-runtime-core
+    cargo test -p oden -p oden-core
 
 odenctl-build:
     cargo build -p oden-host
@@ -151,7 +151,7 @@ static-site-build:
 static-site-test: rust-build static-site-build
     cargo test --locked --manifest-path examples/static-site/Cargo.toml
     cargo test --locked --manifest-path examples/static-site/Cargo.toml --features release-v2
-    pnpm exec playwright test
+    pnpm test:e2e
 
 standalone-test: rust-build standalone-http-build standalone-http-p3-build
     ODEN_STANDALONE_BIN=target/debug/oden ODEN_STANDALONE_HTTP_COMPONENT=examples/standard-http/target/wasm32-wasip2/debug/standalone_http_example.wasm ODEN_STANDALONE_HTTP_P3_COMPONENT=examples/standard-http-p3/target/wasm32-wasip2/debug/standalone_http_p3_example.wasm node --experimental-strip-types --test tests/standalone-runtime.test.ts
@@ -162,7 +162,7 @@ service-rust-build:
     cargo build --locked --manifest-path examples/service-rust/Cargo.toml --target wasm32-wasip2
 
 service-moonbit-build: telemetry-bindgen-install
-    node scripts/build-service-moonbit.mjs
+    node tools/scripts/build-service-moonbit.mjs
 
 # Pin generators locally; leave the user's global tools untouched.
 telemetry-bindgen-install:
@@ -172,17 +172,17 @@ telemetry-tools: telemetry-bindgen-install
     if ! target/telemetry-tools/bin/wac --version >/dev/null 2>&1; then cargo install --root target/telemetry-tools --git "{{ wac_git_url }}" {{ wac_git_ref_arg }} --locked wac-cli; fi
 
 telemetry-moonbit-build: telemetry-bindgen-install
-    node scripts/build-telemetry-moonbit.mjs
+    node tools/scripts/build-telemetry-moonbit.mjs
 
 telemetry-compose-build: telemetry-tools telemetry-moonbit-build
     cargo build --locked --manifest-path examples/telemetry-composition/provider/Cargo.toml --target wasm32-wasip2 --target-dir target/telemetry-example
     cargo build --locked --manifest-path examples/telemetry-composition/app/Cargo.toml --target wasm32-wasip2 --target-dir target/telemetry-example
 
 telemetry-compose provider interface output *args: telemetry-tools
-    WAC="{{justfile_directory()}}/target/telemetry-tools/bin/wac" node scripts/compose-telemetry.mjs --provider {{quote(provider)}} --interface {{quote(interface)}} --output {{quote(output)}} {{args}}
+    WAC="{{justfile_directory()}}/target/telemetry-tools/bin/wac" node tools/scripts/compose-telemetry.mjs --provider {{quote(provider)}} --interface {{quote(interface)}} --output {{quote(output)}} {{args}}
 
 telemetry-test: rust-build service-rust-build service-moonbit-build telemetry-compose-build
-    cargo test -p oden-runtime-core --test telemetry
+    cargo test -p oden-core --test telemetry
     WAC="{{justfile_directory()}}/target/telemetry-tools/bin/wac" ODEN_SERVICE_BIN=target/debug/oden ODEN_SERVICE_RUST=examples/service-rust/target/wasm32-wasip2/debug/service_rust.wasm ODEN_SERVICE_MOONBIT=examples/service-moonbit/target/service.wasm ODEN_TELEMETRY_PROVIDER=target/telemetry-example/wasm32-wasip2/debug/telemetry_provider.wasm ODEN_TELEMETRY_APP=target/telemetry-example/wasm32-wasip2/debug/telemetry_composed_app.wasm ODEN_TELEMETRY_MOONBIT_PROVIDER=examples/telemetry-composition/moonbit/provider/target/provider.wasm ODEN_TELEMETRY_MOONBIT_APP=examples/telemetry-composition/moonbit/app/target/service.wasm node --experimental-strip-types --test tests/telemetry-runtime.test.ts tests/telemetry-composition.test.ts
 
 service-test: rust-build service-rust-build service-moonbit-build
@@ -207,7 +207,7 @@ test-runner-test: rust-build test-examples-build
 
 # Standalone tooling, packaged SDKs and common I/O conformance.
 sdk-pack:
-    node scripts/package-sdks.mjs
+    node tools/scripts/package-sdks.mjs
 
 sdk-test: rust-build service-rust-build service-moonbit-build sdk-pack
     ODEN_SDK_BIN=target/debug/oden ODEN_SDK_PACKAGES=target/sdk-packages node --experimental-strip-types --test tests/sdk-project.test.ts tests/component-check.test.ts
@@ -404,13 +404,13 @@ volume-sqlite-bench:
     pnpm volume-sqlite-bench --root .odenctl/volume-sqlite-bench --databases 1000 --max-open 64 --max-pending-writes 64 --schema-version 1 --write-iterations 1000 --write-concurrency 1,4,16
 
 fly-volume-sqlite-bench:
-    fly ssh console -a "{{ fly_control_app }}" -C "sh -lc 'cd /app && pnpm volume-sqlite-bench --root /data/sqlite-bench --databases 1000 --max-open 64 --max-pending-writes 64 --schema-version 1 --write-iterations 1000 --write-concurrency 1,4,16 --format json --output /data/sqlite-bench/report.json'"
+    fly ssh console -a "{{ fly_control_app }}" -C "sh -lc 'cd /app && node src/volume-sqlite-bench.ts --root /data/sqlite-bench --databases 1000 --max-open 64 --max-pending-writes 64 --schema-version 1 --write-iterations 1000 --write-concurrency 1,4,16 --format json --output /data/sqlite-bench/report.json'"
 
 perf-regression: rust-build guest-build
     mkdir -p perf-results
     pnpm bench all --component "{{ guest_component }}" --host-bin target/debug/oden-host --iterations "{{ perf_iterations }}" --warmup "{{ perf_warmup }}" --concurrency "{{ perf_concurrency }}" --format json --output perf-results/bench.json
     pnpm cluster-bench --component "{{ guest_component }}" --host-bin target/debug/oden-host --nodes "{{ perf_nodes }}" --iterations "{{ perf_iterations }}" --warmup "{{ perf_warmup }}" --concurrency "{{ perf_concurrency }}" --placement --autoscaling --format json --output perf-results/cluster-bench.json
-    pnpm perf-check --budget perf/budgets.json --input perf-results/bench.json --input perf-results/cluster-bench.json {{ perf_history_arg }} --output perf-results/perf-regression.md
+    pnpm perf-check --budget tools/perf/budgets.json --input perf-results/bench.json --input perf-results/cluster-bench.json {{ perf_history_arg }} --output perf-results/perf-regression.md
 
 db-migrate-check:
     pnpm odenctl migrate check
@@ -434,13 +434,13 @@ fly-create-volumes:
     fly volumes create wasmplane_runtime_data -a "{{ fly_runtime_app }}" -r "{{ fly_region }}" -s 1 --yes
 
 fly-deploy-control:
-    fly deploy -c fly.control.toml -a "{{ fly_control_app }}"
+    fly deploy . -c infra/fly/control.toml -a "{{ fly_control_app }}"
 
 fly-deploy-runtime:
-    fly deploy -c fly.runtime.toml -a "{{ fly_runtime_app }}"
+    fly deploy . -c infra/fly/runtime.toml -a "{{ fly_runtime_app }}"
 
 fly-deploy-collector:
-    fly deploy -c fly.collector.toml -a "{{ fly_collector_app }}"
+    fly deploy . -c infra/fly/collector.toml -a "{{ fly_collector_app }}"
 
 fly-logs-collector:
     fly logs -a "{{ fly_collector_app }}"
@@ -482,11 +482,11 @@ tofu-validate: aws-standalone-validate
 
 # Standalone runtime on AWS; kumo checks never use real AWS credentials.
 kumo-install:
-    node scripts/install-kumo.mjs
+    node tools/scripts/install-kumo.mjs
 
 aws-kumo-test: kumo-install
     node --experimental-strip-types --test tests/kumo-drift.test.ts
-    node scripts/aws-kumo-smoke.mjs
+    node tools/scripts/aws-kumo-smoke.mjs
 
 aws-standalone-validate:
     tofu -chdir=infra/terraform/aws-standalone init -backend=false -input=false
@@ -506,7 +506,7 @@ aws-image-test: rust-build aws-sample-build
     ODENCTL_AWS_IMAGE_HOST=target/debug/oden ODENCTL_AWS_IMAGE_COMPONENT=infra/aws-image/service/target/wasm32-wasip2/release/oden_deployment_sample.wasm node --experimental-strip-types --test tests/aws-image.test.ts
 
 aws-image-build image="oden-service:local" platform="linux/arm64":
-    docker buildx build --platform {{quote(platform)}} --load -f Dockerfile.standalone -t {{quote(image)}} .
+    docker buildx build --platform {{quote(platform)}} --load -f infra/docker/oden.Dockerfile -t {{quote(image)}} .
 
 aws-container-test image="oden-service:local":
     ODENCTL_AWS_IMAGE={{quote(image)}} node --experimental-strip-types --test tests/aws-image.test.ts
@@ -520,10 +520,10 @@ gcp-terraform-plan:
     terraform -chdir=infra/terraform/gcp plan
 
 cloudflare-control-dev:
-    cd cloudflare/containers-control && pnpm dev
+    cd infra/cloudflare/containers-control && pnpm dev
 
 cloudflare-control-deploy:
-    cd cloudflare/containers-control && pnpm deploy
+    cd infra/cloudflare/containers-control && pnpm deploy
 
 cloudflare-control-smoke:
     pnpm cloudflare-control-smoke

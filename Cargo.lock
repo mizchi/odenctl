@@ -1140,7 +1140,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "libc",
- "oden-runtime-core",
+ "oden-core",
  "serde",
  "serde_json",
  "tempfile",
@@ -1149,22 +1149,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "oden-host"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "base64",
- "bytes",
- "http-body-util",
- "hyper",
- "hyper-util",
- "oden-runtime-core",
- "serde_json",
- "tokio",
-]
-
-[[package]]
-name = "oden-runtime-core"
+name = "oden-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -1186,6 +1171,21 @@ dependencies = [
  "wasmtime",
  "wasmtime-wasi",
  "wasmtime-wasi-http",
+]
+
+[[package]]
+name = "oden-host"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64",
+ "bytes",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "oden-core",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

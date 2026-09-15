@@ -1,9 +1,9 @@
 use anyhow::{Context, Result, bail};
 use std::path::PathBuf;
 use tokio_util::sync::CancellationToken;
-use oden_runtime_core::server::HttpServer;
-use oden_runtime_core::service::{ResidentService, ServiceOptions};
-use oden_runtime_core::{config::RuntimeConfig, engine, runtime::Runtime};
+use oden_core::server::HttpServer;
+use oden_core::service::{ResidentService, ServiceOptions};
+use oden_core::{config::RuntimeConfig, engine, runtime::Runtime};
 
 fn main() {
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -91,7 +91,7 @@ async fn run() -> Result<i32> {
             }
             return Ok(if report.valid { 0 } else { 1 });
         }
-        let component = oden_runtime_core::component::CheckedComponent::load(
+        let component = oden_core::component::CheckedComponent::load(
             Runtime::new(RuntimeConfig::default())?,
             &path,
         )?;
@@ -212,7 +212,7 @@ async fn run() -> Result<i32> {
     result
 }
 
-fn print_component(report: &oden_runtime_core::component::ComponentReport) {
+fn print_component(report: &oden_core::component::ComponentReport) {
     println!("sha256: {}", report.sha256);
     println!(
         "compatible modes: {}",

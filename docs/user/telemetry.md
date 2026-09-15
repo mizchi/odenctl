@@ -41,7 +41,7 @@ present. Header values are literal, not URL-decoded. These credentials are not
 automatically exposed to guest environments. Signal-specific OTEL endpoint
 and sampler variables are not currently interpreted; use the configuration above.
 
-The repository's [Collector configuration](../../otelcol/config.yaml) accepts all
+The repository's [Collector configuration](../../infra/otelcol/config.yaml) accepts all
 three signals. It exposes runtime metrics through Prometheus and logs/traces via
 the debug exporter. Configure a storage exporter for retention. The existing
 spanmetrics connector remains for the TypeScript runtime; use the direct Rust

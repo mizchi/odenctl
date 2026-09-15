@@ -83,7 +83,7 @@ jobs:
         uses: hustcer/setup-moonbit@9199da0ab63ea0c0bab1dc15f03d76e17ed4f75f # v1
 
       - name: Install Wasm CI tools
-        run: bash scripts/install-wasm-ci-tools.sh
+        run: bash tools/scripts/install-wasm-ci-tools.sh
 
       - name: Install WAC
         run: just wac-install

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, resolve, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
-const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const output = resolve(process.argv[2] ?? join(root, "target/sdk-packages"));
 mkdirSync(output, { recursive: true });
 const version = /^version = "([^"]+)"/m.exec(readFileSync(join(root, "sdk/rust/Cargo.toml"), "utf8"))?.[1];

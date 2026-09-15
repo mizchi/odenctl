@@ -37,7 +37,7 @@ For guest builds and Component Model tooling:
 
 ```sh
 rustup target add wasm32-wasip2
-bash scripts/install-wasm-ci-tools.sh
+bash tools/scripts/install-wasm-ci-tools.sh
 export PATH="$HOME/.local/bin:$PATH"
 just guest-build
 ```
@@ -73,7 +73,7 @@ pnpm filters, working directories, and packaging.
 
 | Location | Responsibility |
 | --- | --- |
-| [crates/runtime-core](crates/runtime-core) | Wasmtime Engine, component linking, Store lifetime, WASI permissions, service execution, telemetry, celld adapter |
+| [crates/oden-core](crates/oden-core) | Wasmtime Engine, component linking, Store lifetime, WASI permissions, service execution, telemetry, celld adapter |
 | [crates/oden/src/standalone.rs](crates/oden/src/standalone.rs) | Public `oden` commands; adjacent modules implement manifests, scaffolding, and tests |
 | [crates/odenctl/src/main.rs](crates/odenctl/src/main.rs) | Internal `oden-host` compile/invoke/daemon protocol |
 | [wit](wit) | Versioned application contracts and vendored standard WASI definitions |
@@ -82,8 +82,9 @@ pnpm filters, working directories, and packaging.
 | [crates/odenctl/src/control-plane](crates/odenctl/src/control-plane) and [crates/odenctl/src/http](crates/odenctl/src/http) | Deployment types, resource policies, repositories, and management HTTP API |
 | [crates/odenctl/src/runtime](crates/odenctl/src/runtime) | Node gateway, snapshots, artifact preparation, routing, response cache, and host transport |
 | [examples](examples) | Guest applications and conformance fixtures |
-| [tests](tests) and [crates/runtime-core/tests](crates/runtime-core/tests) | Node and Rust regression/integration tests; browser tests are in `tests/e2e` |
+| [tests](tests) and [crates/oden-core/tests](crates/oden-core/tests) | Node and Rust regression/integration tests; browser tests are in `tests/e2e` |
 | [infra](infra) and [.github/workflows](.github/workflows) | Deployment prototypes, image checks, and CI |
+| [tools](tools/README.md) | Build/CI scripts, formal models, and performance budgets |
 
 Keep runtime execution independent of control-plane databases and project IDs.
 Separate state storage from policy and business logic. Define changes at the

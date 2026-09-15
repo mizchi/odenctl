@@ -6,7 +6,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-oden-runtime-core = { path = "../runtime-core" }
+oden-core = { path = "../oden-core" }
 anyhow = "1.0.100"
 base64 = "0.22"
 bytes = "1"

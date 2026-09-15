@@ -12,11 +12,11 @@ test("project tooling keeps Wasm E2E portable", async () => {
   const rustMoonbitReleaseWorkflow = await readFile(".github/workflows/rust-moonbit-release.yml", "utf8");
   const productionReadinessWorkflow = await readFile(".github/workflows/production-readiness.yml", "utf8");
   const perfWorkflow = await readFile(".github/workflows/perf.yml", "utf8");
-  const flyControl = await readFile("fly.control.toml", "utf8");
-  const flyRuntime = await readFile("fly.runtime.toml", "utf8");
-  const flyCollector = await readFile("fly.collector.toml", "utf8");
-  const ciToolInstaller = await readFile("scripts/install-wasm-ci-tools.sh", "utf8");
-  const flyctlInstaller = await readFile("scripts/install-flyctl.sh", "utf8");
+  const flyControl = await readFile("infra/fly/control.toml", "utf8");
+  const flyRuntime = await readFile("infra/fly/runtime.toml", "utf8");
+  const flyCollector = await readFile("infra/fly/collector.toml", "utf8");
+  const ciToolInstaller = await readFile("tools/scripts/install-wasm-ci-tools.sh", "utf8");
+  const flyctlInstaller = await readFile("tools/scripts/install-flyctl.sh", "utf8");
   const readme = (await Promise.all([
     readFile("docs/user/control-plane-reference.md", "utf8"),
     readFile("docs/developer/control-plane-reference.md", "utf8"),
@@ -98,7 +98,7 @@ test("project tooling keeps Wasm E2E portable", async () => {
   }
   for (const githubWorkflow of commonWorkflows) {
     assert.match(githubWorkflow, /Install Wasm CI tools/);
-    assert.match(githubWorkflow, /bash scripts\/install-wasm-ci-tools\.sh/);
+    assert.match(githubWorkflow, /bash tools\/scripts\/install-wasm-ci-tools\.sh/);
     assert.doesNotMatch(githubWorkflow, /bytecodealliance\/actions\/.+\/setup@v1/);
     assert.doesNotMatch(githubWorkflow, /cargo install wasm-tools/);
     assert.doesNotMatch(githubWorkflow, /cargo install wit-bindgen-cli/);
@@ -178,7 +178,7 @@ test("project tooling keeps Wasm E2E portable", async () => {
   assert.match(productionReadinessWorkflow, /--min-throughput-rps "\$\{\{ inputs\.min_throughput_rps \}\}"/);
   assert.match(productionReadinessWorkflow, /--max-publish-ms "\$\{\{ inputs\.max_publish_ms \}\}"/);
   assert.match(productionReadinessWorkflow, /--failure-drill/);
-  assert.match(productionReadinessWorkflow, /bash scripts\/install-flyctl\.sh/);
+  assert.match(productionReadinessWorkflow, /bash tools\/scripts\/install-flyctl\.sh/);
   assert.doesNotMatch(productionReadinessWorkflow, /curl -L https:\/\/fly\.io\/install\.sh \| sh/);
   assert.match(productionReadinessWorkflow, /pnpm fly-otel-evidence/);
   assert.match(productionReadinessWorkflow, /fly-otel-evidence\.md/);
@@ -207,7 +207,7 @@ test("project tooling keeps Wasm E2E portable", async () => {
   assert.match(readme, /ODEN_RUNTIME_TOKEN/);
   assert.match(readme, /SLO thresholds/);
   assert.match(readme, /fly-otel-evidence/);
-  assert.match(readme, /scripts\/install-flyctl\.sh/);
+  assert.match(readme, /tools\/scripts\/install-flyctl\.sh/);
   assert.match(readme, /pnpm cloudflare-control-smoke/);
   assert.match(readme, /just rust-daemon-bench/);
   assert.match(readme, /just fly-smoke/);
@@ -306,7 +306,7 @@ test("Rust and MoonBit release sample composes a runtime worker", async () => {
 
 test("project docs track Cloudflare smoke results and composition CI policy", async () => {
   const readme = await readFile("docs/developer/control-plane-reference.md", "utf8");
-  const todo = await readFile("TODO.md", "utf8");
+  const todo = await readFile("docs/developer/roadmap.md", "utf8");
   const gitignore = await readFile(".gitignore", "utf8");
 
   assert.match(gitignore, /^reports\/$/m);

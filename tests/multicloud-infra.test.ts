@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
 import { test } from "node:test";
 
 test("multi-cloud infra roadmap covers AWS, GCP, and Cloudflare Containers", async () => {
-  const todo = await readFile("TODO.md", "utf8");
+  const todo = await readFile("docs/developer/roadmap.md", "utf8");
   const readme = await readFile("docs/developer/control-plane-reference.md", "utf8");
   const justfile = await readFile("justfile", "utf8");
   const workflow = await readFile(".github/workflows/ci.yml", "utf8");
@@ -52,13 +53,17 @@ test("GCP Terraform scaffold defines Cloud Run control and runtime services", as
 });
 
 test("Cloudflare Containers control-plane POC routes Worker requests to the container", async () => {
-  const config = await readFile("cloudflare/containers-control/wrangler.jsonc", "utf8");
-  const worker = await readFile("cloudflare/containers-control/src/index.ts", "utf8");
-  const readme = await readFile("cloudflare/containers-control/README.md", "utf8");
+  const configPath = "infra/cloudflare/containers-control/wrangler.jsonc";
+  const config = await readFile(configPath, "utf8");
+  const worker = await readFile("infra/cloudflare/containers-control/src/index.ts", "utf8");
+  const readme = await readFile("infra/cloudflare/containers-control/README.md", "utf8");
 
   assert.match(config, /"containers"/);
   assert.match(config, /"class_name": "WasmplaneControlContainer"/);
-  assert.match(config, /"image": "..\/..\/Dockerfile"/);
+  const container = JSON.parse(config).containers[0];
+  assert.equal(resolve(dirname(configPath), container.image_build_context), process.cwd());
+  const dockerfile = await readFile(resolve(dirname(configPath), container.image), "utf8");
+  assert.match(dockerfile, /COPY crates \.\/crates/);
   assert.match(config, /"new_sqlite_classes": \["WasmplaneControlContainer"\]/);
   assert.match(worker, /extends Container/);
   assert.match(worker, /getContainer\(env\.CONTROL_CONTAINER/);
@@ -67,7 +72,7 @@ test("Cloudflare Containers control-plane POC routes Worker requests to the cont
 });
 
 test("Cloudflare backend decision is recorded as an ADR", async () => {
-  const design = await readFile("DESIGN.md", "utf8");
+  const design = await readFile("docs/developer/architecture.md", "utf8");
 
   assert.match(design, /## ADR: Cloudflare Backend Strategy/);
   assert.match(design, /control plane POC uses Cloudflare Containers/);

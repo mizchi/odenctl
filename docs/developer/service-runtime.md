@@ -26,7 +26,7 @@ while idle. Ctrl-C stops admission, sends responses for accepted requests, print
 
 Building both examples requires Rust's `wasm32-wasip2` target, wit-bindgen 0.62.0,
 wasm-tools 1.259.0, and an async-capable MoonBit compiler. MoonBit was tested with
-`moon 0.1.20260904`. Install the Wasm tools with the [installer](../../scripts/install-wasm-ci-tools.sh).
+`moon 0.1.20260904`. Install the Wasm tools with the [installer](../../tools/scripts/install-wasm-ci-tools.sh).
 
 ## Lifecycle
 
@@ -122,7 +122,7 @@ The [Rust SDK](../../sdk/rust/src/lib.rs) provides `Lifecycle`, `HttpHandler`, `
 Its standard HTTP and custom lifecycle exports together satisfy the shared world.
 
 The [MoonBit SDK](../../sdk/moonbit/service.mbt) provides helpers for JSON responses,
-sleep, and stdout. The [build script](../../scripts/build-service-moonbit.mjs) generates
+sleep, and stdout. The [build script](../../tools/scripts/build-service-moonbit.mjs) generates
 async bindings from the shared WIT into `target/generated` and connects the SDK to
 [app.mbt](../../examples/service-moonbit/app.mbt). Do not edit generated ABI code.
 Apps implement start, stop, and handle, using the TaskGroup passed to exports for

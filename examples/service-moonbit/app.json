@@ -3,8 +3,8 @@
   "mode": "service",
   "component": "target/service.wasm",
   "listen": "127.0.0.1:8080",
-  "build": [["node", "../../scripts/build-service-moonbit.mjs", "."]],
-  "watch": ["app.mbt", "moon.pkg.json", "../../sdk/moonbit", "../../scripts/build-service-moonbit.mjs", "../../wit/app", "../../wit/standard-http/deps"],
+  "build": [["node", "../../tools/scripts/build-service-moonbit.mjs", "."]],
+  "watch": ["app.mbt", "moon.pkg.json", "../../sdk/moonbit", "../../tools/scripts/build-service-moonbit.mjs", "../../wit/app", "../../wit/standard-http/deps"],
   "runtime": { "timeout_ms": 2000, "max_concurrent_requests": 64 },
   "service": { "startup_timeout_ms": 10000, "shutdown_timeout_ms": 10000 }
 }

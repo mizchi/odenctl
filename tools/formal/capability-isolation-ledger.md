@@ -10,7 +10,7 @@ source:
   - `crates/odenctl/src/control-plane/contracts.ts`: `CapabilityPolicy` and capability normalization.
   - `crates/odenctl/src/control-plane/service.ts`, `crates/odenctl/src/control-plane/async-service.ts`: deployment-time target validation.
   - `crates/odenctl/src/control-plane/admission.ts`: production admission guardrails.
-  - `crates/runtime-core/src/node.rs`: Wasmtime host policy enforcement.
+  - `crates/oden-core/src/node.rs`: Wasmtime host policy enforcement.
 
 tool:
   bounded TypeScript capability relation model

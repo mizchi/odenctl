@@ -1,5 +1,5 @@
 use std::time::{Duration, Instant};
-use oden_runtime_core::{config::RuntimeConfig, runtime::Runtime};
+use oden_core::{config::RuntimeConfig, runtime::Runtime};
 
 #[tokio::test(flavor = "current_thread")]
 async fn cpu_bound_guest_yields_so_its_owner_can_cancel_it() {

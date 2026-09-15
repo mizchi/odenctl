@@ -2,7 +2,7 @@ import { pathToFileURL } from "node:url";
 import {
   normalizeCapabilities,
   type CapabilityPolicy,
-} from "../crates/odenctl/src/control-plane/contracts.ts";
+} from "../../crates/odenctl/src/control-plane/contracts.ts";
 
 export interface FormalCapabilityIsolationReport {
   source: string[];
