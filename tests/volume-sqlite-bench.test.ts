@@ -7,7 +7,7 @@ import {
   formatVolumeSqliteBenchmarkMarkdown,
   parseVolumeSqliteBenchArgs,
   runVolumeSqliteBenchmarkSuite,
-} from "../src/volume-sqlite-bench.ts";
+} from "../crates/odenctl/src/volume-sqlite-bench.ts";
 
 test("volume sqlite benchmark CLI args parse density settings", () => {
   const options = parseVolumeSqliteBenchArgs([

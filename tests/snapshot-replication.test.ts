@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { RouteSnapshot } from "../src/control-plane/contracts.ts";
+import type { RouteSnapshot } from "../crates/odenctl/src/control-plane/contracts.ts";
 import {
   createInMemoryRouteSnapshotReplicaStore,
   replicateRouteSnapshot,
   routeSnapshotReplicaTargetsFromEnv,
-} from "../src/control-plane/snapshot-replication.ts";
+} from "../crates/odenctl/src/control-plane/snapshot-replication.ts";
 
 test("snapshot replication reports inconsistent replica acknowledgements", async () => {
   const calls: Array<{ url: string; authorization?: string; body: any }> = [];

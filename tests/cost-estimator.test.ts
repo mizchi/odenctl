@@ -6,7 +6,7 @@ import {
   estimateCloudflareContainersMonthlyCost,
   estimateOdenctlMonthlyCost,
   formatCostEstimateMarkdown,
-} from "../src/cost-estimator.ts";
+} from "../crates/odenctl/src/cost-estimator.ts";
 
 test("cost estimator prices the default single-region production shape", () => {
   const estimate = estimateOdenctlMonthlyCost(defaultProductionCostInput());

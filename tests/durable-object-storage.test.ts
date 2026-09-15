@@ -5,8 +5,8 @@ import { join } from "node:path";
 import { test } from "node:test";
 import {
   createDurableObjectStorageNamespace,
-} from "../src/control-plane/durable-object-storage.ts";
-import { createVolumeSqliteRegistry } from "../src/control-plane/volume-sqlite.ts";
+} from "../crates/odenctl/src/control-plane/durable-object-storage.ts";
+import { createVolumeSqliteRegistry } from "../crates/odenctl/src/control-plane/volume-sqlite.ts";
 
 test("durable object storage stores private KV data per namespace object", async () => {
   const dir = await mkdtemp(join(tmpdir(), "odenctl-do-storage-kv-"));

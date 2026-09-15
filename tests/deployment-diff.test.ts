@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createDeploymentDiff } from "../src/deployment-diff.ts";
+import { createDeploymentDiff } from "../crates/odenctl/src/deployment-diff.ts";
 import {
   MVP_RUNTIME_BACKEND,
   MVP_WASI_PROFILE,
   MVP_WORKER_WORLD,
   MVP_WORKER_WORLD_VERSION,
   type RouteSnapshotEntry,
-} from "../src/control-plane/contracts.ts";
+} from "../crates/odenctl/src/control-plane/contracts.ts";
 
 test("deployment diff reports route, runtime limit, and capability changes", () => {
   const before = routeEntry({

@@ -3,19 +3,19 @@ import { mkdtemp } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { test } from "node:test";
-import { createMemoryRepository } from "../src/control-plane/repository.ts";
-import { createControlPlane } from "../src/control-plane/service.ts";
+import { createMemoryRepository } from "../crates/odenctl/src/control-plane/repository.ts";
+import { createControlPlane } from "../crates/odenctl/src/control-plane/service.ts";
 import {
   decideRuntimeAutoscaling,
   runtimeSaturationSignals,
   warmAndActivateRuntimeNode,
-} from "../src/control-plane/autoscaling.ts";
+} from "../crates/odenctl/src/control-plane/autoscaling.ts";
 import {
   createInMemoryFlyAutoscalerCoordinationStore,
   createPostgresFlyAutoscalerCoordinationStore,
   createSqliteFlyAutoscalerCoordinationStore,
   reconcileFlyMachinesAutoscaling,
-} from "../src/control-plane/fly-autoscaler.ts";
+} from "../crates/odenctl/src/control-plane/fly-autoscaler.ts";
 
 test("runtime autoscaling exports saturation signals and scales up above threshold", () => {
   const nodes = [

@@ -629,7 +629,7 @@ The default estimate assumes:
 
 With those assumptions the estimator reports about `$95.27/month`. Scaling the runtime to 4 Machines
 and using 100GB R2 storage, 5M Class A ops, 20M Class B ops, and 100GB Fly public egress reports
-about `$241.84/month`. Prices are data constants in `src/cost-estimator.ts`, not live
+about `$241.84/month`. Prices are data constants in `crates/odenctl/src/cost-estimator.ts`, not live
 provider quotes. Check and update those constants before using the output for a
 deployment budget.
 

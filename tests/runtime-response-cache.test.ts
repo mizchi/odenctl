@@ -4,16 +4,16 @@ import { test, type TestContext } from "node:test";
 import {
   createRuntimeNodeApp,
   type RuntimeNodeAppOptions,
-} from "../src/runtime/node-app.ts";
-import { signRuntimeIdentityHeaders } from "../src/runtime/identity.ts";
-import type { CompiledComponent } from "../src/runtime/types.ts";
-import { createRuntimeSupervisor } from "../src/runtime/supervisor.ts";
+} from "../crates/odenctl/src/runtime/node-app.ts";
+import { signRuntimeIdentityHeaders } from "../crates/odenctl/src/runtime/identity.ts";
+import type { CompiledComponent } from "../crates/odenctl/src/runtime/types.ts";
+import { createRuntimeSupervisor } from "../crates/odenctl/src/runtime/supervisor.ts";
 import {
   MVP_WASI_PROFILE,
   MVP_WORKER_WORLD,
   MVP_WORKER_WORLD_VERSION,
   type RouteSnapshot,
-} from "../src/control-plane/contracts.ts";
+} from "../crates/odenctl/src/control-plane/contracts.ts";
 
 const policy = {
   maxBytes: 16384,

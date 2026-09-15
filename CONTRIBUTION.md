@@ -65,16 +65,22 @@ keep the locally installed tools ahead of it when testing composition.
 
 ## Find the right layer
 
+The product workspaces are `crates/oden` and `crates/odenctl`. Use
+`just oden-build` / `just oden-test` for the standalone runtime, or
+`just odenctl-build` / `just odenctl-test` for the deployment platform. See
+[product workspaces](docs/developer/workspaces.md) for dependency boundaries,
+pnpm filters, working directories, and packaging.
+
 | Location | Responsibility |
 | --- | --- |
 | [crates/runtime-core](crates/runtime-core) | Wasmtime Engine, component linking, Store lifetime, WASI permissions, service execution, telemetry, celld adapter |
 | [crates/oden/src/standalone.rs](crates/oden/src/standalone.rs) | Public `oden` commands; adjacent modules implement manifests, scaffolding, and tests |
-| [crates/oden/src/main.rs](crates/oden/src/main.rs) | Internal `oden-host` compile/invoke/daemon protocol |
+| [crates/odenctl/src/main.rs](crates/odenctl/src/main.rs) | Internal `oden-host` compile/invoke/daemon protocol |
 | [wit](wit) | Versioned application contracts and vendored standard WASI definitions |
 | [sdk](sdk) | Rust and MoonBit service APIs and their build support |
-| [src/cli.ts](src/cli.ts) | `odenctl` management CLI |
-| [src/control-plane](src/control-plane) and [src/http](src/http) | Deployment types, resource policies, repositories, and management HTTP API |
-| [src/runtime](src/runtime) | Node gateway, snapshots, artifact preparation, routing, response cache, and host transport |
+| [crates/odenctl/src/cli.ts](crates/odenctl/src/cli.ts) | `odenctl` management CLI |
+| [crates/odenctl/src/control-plane](crates/odenctl/src/control-plane) and [crates/odenctl/src/http](crates/odenctl/src/http) | Deployment types, resource policies, repositories, and management HTTP API |
+| [crates/odenctl/src/runtime](crates/odenctl/src/runtime) | Node gateway, snapshots, artifact preparation, routing, response cache, and host transport |
 | [examples](examples) | Guest applications and conformance fixtures |
 | [tests](tests) and [crates/runtime-core/tests](crates/runtime-core/tests) | Node and Rust regression/integration tests; browser tests are in `tests/e2e` |
 | [infra](infra) and [.github/workflows](.github/workflows) | Deployment prototypes, image checks, and CI |

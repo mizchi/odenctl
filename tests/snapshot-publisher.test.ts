@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { publishRouteSnapshot } from "../src/control-plane/snapshot-publisher.ts";
-import type { RouteSnapshot } from "../src/control-plane/contracts.ts";
+import { publishRouteSnapshot } from "../crates/odenctl/src/control-plane/snapshot-publisher.ts";
+import type { RouteSnapshot } from "../crates/odenctl/src/control-plane/contracts.ts";
 
 test("snapshot publisher retries retryable runtime failures per target", async () => {
   const calls: Array<{ url: string; body: string }> = [];

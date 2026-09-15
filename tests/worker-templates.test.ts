@@ -7,7 +7,7 @@ import {
   listWorkerTemplates,
   materializeWorkerTemplate,
   workerTemplateFiles,
-} from "../src/worker-templates.ts";
+} from "../crates/odenctl/src/worker-templates.ts";
 
 test("worker templates use standard WASIp3 HTTP", async () => {
   assert.deepEqual(listWorkerTemplates().map((entry) => entry.language), ["rust"]);

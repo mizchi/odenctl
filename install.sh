@@ -52,7 +52,7 @@ if [[ "$with_odenctl" == 1 ]]; then
   node -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 24 ? 0 : 1)' || fail '--with-odenctl requires Node.js 24+'
   command -v pnpm >/dev/null 2>&1 || fail '--with-odenctl requires pnpm'
   commands+=(oden-host odenctl)
-  build_args+=(--bin oden-host)
+  build_args+=(-p oden-host --bin oden-host)
 fi
 for name in "${commands[@]}"; do
   destination="$prefix/bin/$name"
@@ -87,10 +87,16 @@ install -m 0755 "$build_dir/release/oden" "$stage/bin/oden"
 "$stage/bin/oden" --version
 if [[ "$with_odenctl" == 1 ]]; then
   install -m 0755 "$build_dir/release/oden-host" "$stage/bin/oden-host"
-  mkdir -p "$stage/odenctl"
-  cp "$source_dir/package.json" "$source_dir/pnpm-lock.yaml" "$stage/odenctl/"
-  cp -R "$source_dir/src" "$source_dir/db" "$stage/odenctl/"
-  pnpm --dir "$stage/odenctl" install --prod --frozen-lockfile --ignore-scripts
+  # Stage an isolated workspace so installing production dependencies does not
+  # prune the checkout's development tools.
+  workspace_dir="$stage/workspace"
+  mkdir -p "$workspace_dir/crates/oden" "$workspace_dir/crates/odenctl"
+  cp "$source_dir/package.json" "$source_dir/pnpm-lock.yaml" "$source_dir/pnpm-workspace.yaml" "$workspace_dir/"
+  cp "$source_dir/crates/oden/package.json" "$workspace_dir/crates/oden/"
+  cp "$source_dir/crates/odenctl/package.json" "$workspace_dir/crates/odenctl/"
+  cp -R "$source_dir/crates/odenctl/src" "$source_dir/crates/odenctl/db" "$workspace_dir/crates/odenctl/"
+  pnpm --dir "$workspace_dir" --filter @mizchi/odenctl install --prod --frozen-lockfile --ignore-scripts
+  pnpm --dir "$workspace_dir" --filter @mizchi/odenctl deploy --prod --legacy "$stage/odenctl"
   node "$stage/odenctl/src/cli.ts" --help
 fi
 

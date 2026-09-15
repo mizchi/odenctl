@@ -5,12 +5,12 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
 import { promisify } from "node:util";
-import { startServiceProcess } from "../src/service-process.ts";
+import { startServiceProcess } from "../crates/odenctl/src/service-process.ts";
 import {
   createWasip3HostDaemonInvoker,
   createWasip3HostInvoker,
-} from "../src/runtime/wasip3-host.ts";
-import type { InvokeComponentRequest } from "../src/runtime/types.ts";
+} from "../crates/odenctl/src/runtime/wasip3-host.ts";
+import type { InvokeComponentRequest } from "../crates/odenctl/src/runtime/types.ts";
 
 const exec = promisify(execFile);
 const bytes = Buffer.from(Array.from({ length: 256 }, (_, value) => value));

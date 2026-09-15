@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { analyzeCanaryEvents, summarizeCanaryMetrics } from "../src/control-plane/canary-analysis.ts";
+import { analyzeCanaryEvents, summarizeCanaryMetrics } from "../crates/odenctl/src/control-plane/canary-analysis.ts";
 
 test("canary analysis summarizes candidate metrics by deployment id", () => {
   assert.deepEqual(

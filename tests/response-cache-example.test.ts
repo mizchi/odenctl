@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { resolve } from "node:path";
-import { startServiceProcess } from "../src/service-process.ts";
+import { startServiceProcess } from "../crates/odenctl/src/service-process.ts";
 
 test("real WASI P3 guest runs behind the response cache gateway", {
   skip: process.env.ODEN_RESPONSE_CACHE_E2E !== "1",

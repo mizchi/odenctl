@@ -9,7 +9,7 @@ import {
   createConfiguredVolumeSqliteBackupCipher,
   createVolumeSqliteRegistry,
   SqliteDatabasePool,
-} from "../src/control-plane/volume-sqlite.ts";
+} from "../crates/odenctl/src/control-plane/volume-sqlite.ts";
 
 test("volume sqlite registry creates a cataloged database file with WAL settings", async () => {
   const dir = await mkdtemp(join(tmpdir(), "odenctl-volume-sqlite-"));

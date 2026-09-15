@@ -3,7 +3,7 @@ import { test } from "node:test";
 import {
   createProjectBillingBudgetReport,
   projectBillingBudgetsFromEnv,
-} from "../src/control-plane/billing-budget.ts";
+} from "../crates/odenctl/src/control-plane/billing-budget.ts";
 
 test("project billing budgets parse monthly USD limits from environment", () => {
   assert.deepEqual(projectBillingBudgetsFromEnv({

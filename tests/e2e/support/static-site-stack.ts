@@ -9,18 +9,18 @@ import {
   type APIRequestContext,
   request as playwrightRequest,
 } from "@playwright/test";
-import { createMemoryRepository } from "../../../src/control-plane/repository.ts";
-import { createControlPlane } from "../../../src/control-plane/service.ts";
-import { createWasip3HostArtifactValidator } from "../../../src/control-plane/artifact-validation.ts";
-import { createHttpApp } from "../../../src/http/app.ts";
-import { createRuntimeNodeApp } from "../../../src/runtime/node-app.ts";
-import { createRuntimeArtifactStore } from "../../../src/runtime/artifacts.ts";
-import { createRuntimeSupervisor } from "../../../src/runtime/supervisor.ts";
+import { createMemoryRepository } from "../../../crates/odenctl/src/control-plane/repository.ts";
+import { createControlPlane } from "../../../crates/odenctl/src/control-plane/service.ts";
+import { createWasip3HostArtifactValidator } from "../../../crates/odenctl/src/control-plane/artifact-validation.ts";
+import { createHttpApp } from "../../../crates/odenctl/src/http/app.ts";
+import { createRuntimeNodeApp } from "../../../crates/odenctl/src/runtime/node-app.ts";
+import { createRuntimeArtifactStore } from "../../../crates/odenctl/src/runtime/artifacts.ts";
+import { createRuntimeSupervisor } from "../../../crates/odenctl/src/runtime/supervisor.ts";
 import {
   createWasip3HostBackend,
   createWasip3HostDaemonInvoker,
-} from "../../../src/runtime/wasip3-host.ts";
-import { startServiceProcess } from "../../../src/service-process.ts";
+} from "../../../crates/odenctl/src/runtime/wasip3-host.ts";
+import { startServiceProcess } from "../../../crates/odenctl/src/service-process.ts";
 
 const exec = promisify(execFile);
 type RequestOptions = Parameters<APIRequestContext["fetch"]>[1];
@@ -175,7 +175,7 @@ export async function startStaticSiteStack() {
         // route update and authenticated publication. No service methods are mocked.
         const result = await exec(process.execPath, [
           "--experimental-strip-types",
-          resolve("src/cli.ts"),
+          resolve("crates/odenctl/src/cli.ts"),
           "deploy",
           "--project-id",
           project.id,

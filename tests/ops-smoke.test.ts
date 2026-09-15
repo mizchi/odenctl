@@ -3,7 +3,7 @@ import { test } from "node:test";
 import {
   parseOpsSmokeArgs,
   runOpsSmoke,
-} from "../src/ops-smoke.ts";
+} from "../crates/odenctl/src/ops-smoke.ts";
 
 test("ops smoke args default to the deployed Fly app names and env tokens", () => {
   const parsed = parseOpsSmokeArgs([], {

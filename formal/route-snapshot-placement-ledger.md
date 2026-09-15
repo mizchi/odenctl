@@ -4,9 +4,9 @@ source:
   docs / code / tests:
   - `README.md`: runtime placement, Fly production posture, snapshot publication
   - `TODO.md`: runtime node placement, drain, cross-region snapshot consistency
-  - `src/http/app.ts`: `publishTargets`
-  - `src/control-plane/placement.ts`: placement and tenant isolation filtering
-  - `src/control-plane/service.ts`: runtime-node active predicate
+  - `crates/odenctl/src/http/app.ts`: `publishTargets`
+  - `crates/odenctl/src/control-plane/placement.ts`: placement and tenant isolation filtering
+  - `crates/odenctl/src/control-plane/service.ts`: runtime-node active predicate
   - `tests/placement.test.ts`, `tests/http-api.test.ts`: behavioral locks
 
 tool:

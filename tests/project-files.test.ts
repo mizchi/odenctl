@@ -279,7 +279,7 @@ test("Rust and MoonBit release sample composes a runtime worker", async () => {
   assert.match(justfile, /^sample-rust-moonbit-wac-probe:/m);
   assert.match(justfile, /wac plug .* --plug/);
   assert.match(justfile, /sample-rust-moonbit-compose-build:[\s\S]*wasm-tools compose/);
-  assert.match(packageJson, /"wac-migration-report": "node --experimental-strip-types src\/wac-migration-report\.ts"/);
+  assert.match(packageJson, /"wac-migration-report": "node --experimental-strip-types crates\/odenctl\/src\/wac-migration-report\.ts"/);
   assert.match(justfile, /runtime smoke failed after/);
   assert.match(cargoToml, /examples\/rust-moonbit-release\/rust-worker/);
   assert.match(cargoToml, /examples\/rust-moonbit-release\/rust-wac-caller/);

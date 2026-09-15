@@ -16,7 +16,7 @@ import {
   resolveRuntimeNodeId,
   resolveRuntimePublicUrl,
   resolveRuntimeRegion,
-} from "../src/runtime/config.ts";
+} from "../crates/odenctl/src/runtime/config.ts";
 
 test("runtime config uses Fly machine identity for scaled runtime nodes", () => {
   const env = {

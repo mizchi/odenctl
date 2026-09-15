@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { admissionPolicyFromEnv } from "../src/control-plane/admission.ts";
+import { admissionPolicyFromEnv } from "../crates/odenctl/src/control-plane/admission.ts";
 
 test("admission policy parses production guardrails from environment", () => {
   assert.deepEqual(admissionPolicyFromEnv({

@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createResponseCache } from "../src/runtime/response-cache.ts";
-import { parseResponseCacheConfig } from "../src/runtime/response-cache-policy.ts";
-import type { ResponseCacheRequest } from "../src/runtime/response-cache-policy.ts";
+import { createResponseCache } from "../crates/odenctl/src/runtime/response-cache.ts";
+import { parseResponseCacheConfig } from "../crates/odenctl/src/runtime/response-cache-policy.ts";
+import type { ResponseCacheRequest } from "../crates/odenctl/src/runtime/response-cache-policy.ts";
 import type {
   InvokeComponentResponse,
   RuntimeHeader,
-} from "../src/runtime/types.ts";
+} from "../crates/odenctl/src/runtime/types.ts";
 
 const config = {
   maxBytes: 8192,

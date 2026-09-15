@@ -3,7 +3,7 @@ import { test } from "node:test";
 import {
   parseAlarmDemoSmokeArgs,
   runAlarmDemoSmoke,
-} from "../src/alarm-demo-smoke.ts";
+} from "../crates/odenctl/src/alarm-demo-smoke.ts";
 
 test("alarm demo smoke args default to Fly control app and env token", () => {
   const parsed = parseAlarmDemoSmokeArgs([], {

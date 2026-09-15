@@ -2,7 +2,7 @@ import { pathToFileURL } from "node:url";
 import {
   normalizeCapabilities,
   type CapabilityPolicy,
-} from "../src/control-plane/contracts.ts";
+} from "../crates/odenctl/src/control-plane/contracts.ts";
 
 export interface FormalCapabilityIsolationReport {
   source: string[];
@@ -44,10 +44,10 @@ export function runCapabilityIsolationModel(): FormalCapabilityIsolationReport {
     source: [
       "Cloudflare Workers isolate/security model: same-process workers rely on isolate memory boundaries plus API-level capability design",
       "control-plane policy model only; custom guest service/state bindings were removed",
-      "src/control-plane/contracts.ts: CapabilityPolicy and normalizeCapabilities",
-      "src/control-plane/service.ts and async-service.ts: deployment capability target validation",
-      "src/control-plane/admission.ts: service allowlist admission policy",
-      "crates/oden/src/main.rs: node rejects removed service/state bindings",
+      "crates/odenctl/src/control-plane/contracts.ts: CapabilityPolicy and normalizeCapabilities",
+      "crates/odenctl/src/control-plane/service.ts and async-service.ts: deployment capability target validation",
+      "crates/odenctl/src/control-plane/admission.ts: service allowlist admission policy",
+      "crates/odenctl/src/main.rs: node rejects removed service/state bindings",
     ],
     tool: "bounded TypeScript capability relation model",
     scope: "control-plane policy only (not WASI network reachability): worker-to-worker access, project-scoped state resources, privileged host capabilities, and ambient outbound separation",

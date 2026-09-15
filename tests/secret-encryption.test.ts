@@ -10,7 +10,7 @@ import {
   createGcpKmsSecretKeyProvider,
   createSecretCipherFromKeyProvider,
   isEncryptedSecretValue,
-} from "../src/control-plane/secret-encryption.ts";
+} from "../crates/odenctl/src/control-plane/secret-encryption.ts";
 
 test("AES-GCM secret cipher encrypts and decrypts envelope values", () => {
   const cipher = createAesGcmSecretCipher({

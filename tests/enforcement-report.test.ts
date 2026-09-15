@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { projectEnforcementPoliciesFromEnv } from "../src/control-plane/enforcement-report.ts";
+import { projectEnforcementPoliciesFromEnv } from "../crates/odenctl/src/control-plane/enforcement-report.ts";
 
 test("project enforcement policies parse control-plane environment limits", () => {
   assert.deepEqual(projectEnforcementPoliciesFromEnv({

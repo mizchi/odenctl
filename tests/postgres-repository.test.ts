@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { test } from "node:test";
-import { createAsyncControlPlane } from "../src/control-plane/async-service.ts";
+import { createAsyncControlPlane } from "../crates/odenctl/src/control-plane/async-service.ts";
 import {
   createPostgresPoolConfig,
   createPostgresRepository,
-} from "../src/control-plane/postgres-repository.ts";
+} from "../crates/odenctl/src/control-plane/postgres-repository.ts";
 
 test("Postgres repository module loads with the pg runtime dependency", async () => {
   assert.equal(typeof createPostgresRepository, "function");

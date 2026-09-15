@@ -89,7 +89,21 @@ rust-test:
     cargo test --workspace
 
 rust-build:
+    cargo build -p oden -p oden-host
+
+# Build and test either product without building the other CLI.
+oden-build:
     cargo build -p oden
+
+oden-test:
+    cargo test -p oden -p oden-runtime-core
+
+odenctl-build:
+    cargo build -p oden-host
+
+odenctl-test:
+    pnpm test
+    cargo test -p oden-host
 
 # Install from this checkout; pass --prefix, --with-odenctl, or --force as needed.
 [positional-arguments]
@@ -208,14 +222,14 @@ service-bench-build:
     cargo build --locked --release --manifest-path examples/service-rust/Cargo.toml --target wasm32-wasip2
 
 service-bench *args: service-bench-build
-    node --experimental-strip-types src/service-bench.ts {{args}}
+    node --experimental-strip-types crates/odenctl/src/service-bench.ts {{args}}
 
 service-bench-test: rust-build service-rust-build
     ODEN_SERVICE_BIN=target/debug/oden ODEN_SERVICE_RUST=examples/service-rust/target/wasm32-wasip2/debug/service_rust.wasm node --experimental-strip-types --test tests/service-bench.test.ts
 
 # Ten minutes per mode and concurrency, with three complete process lifecycles.
 service-soak duration_ms="600000" cycles="3": service-bench-build
-    node --experimental-strip-types src/service-bench.ts --duration-ms {{quote(duration_ms)}} --cycles {{quote(cycles)}} --output perf-results/service-soak.json
+    node --experimental-strip-types crates/odenctl/src/service-bench.ts --duration-ms {{quote(duration_ms)}} --cycles {{quote(cycles)}} --output perf-results/service-soak.json
 
 app-build manifest: rust-build
     target/debug/oden build {{quote(manifest)}}
@@ -246,7 +260,7 @@ celld-bench-build:
 
 # Run against disposable local celld; pass --output to save a JSON report.
 celld-bench *args: celld-bench-build
-    node --experimental-strip-types src/celld-bench.ts {{args}}
+    node --experimental-strip-types crates/odenctl/src/celld-bench.ts {{args}}
 
 celld-bench-test: celld-bench-build
     ODEN_CELLD_BIN="${ODEN_CELLD_BIN:-celld}" ODEN_BENCH_HOST_BIN=target/release/oden node --experimental-strip-types --test tests/celld-bench.test.ts

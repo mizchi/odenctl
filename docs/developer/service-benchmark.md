@@ -18,7 +18,7 @@ This builds the runtime and Rust service example in release mode before measurin
 To measure an existing component or configuration, invoke the harness directly:
 
 ```sh
-node --experimental-strip-types src/service-bench.ts \
+node --experimental-strip-types crates/odenctl/src/service-bench.ts \
   --host-bin target/release/oden --component path/to/app.wasm \
   --mode resident --config path/to/runtime.json --path / \
   --iterations 1000 --output perf-results/my-app.json

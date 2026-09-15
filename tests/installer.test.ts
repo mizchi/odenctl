@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile, access } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile, access } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
@@ -98,6 +98,13 @@ test("installed runtime and management CLI run from outside the source checkout"
     t.after(() => { child.kill(); });
   });
   assert.equal(result.status, 0, result.output);
+  const host = await realpath(join(prefix, "bin/oden-host"));
+  const cliDirectory = resolve(host, "../../odenctl");
+  const manifest = JSON.parse(await readFile(join(cliDirectory, "package.json"), "utf8"));
+  assert.equal(manifest.name, "@mizchi/odenctl");
+  await access(join(cliDirectory, "db/postgres/001_init.sql"));
+  await access(join(cliDirectory, "node_modules/pg/package.json"));
+  await assert.rejects(access(join(cliDirectory, "node_modules/@playwright/test")));
   function run(name: string, args: string[]) {
     const command = spawnSync(join(prefix, "bin", name), args, {
       cwd: directory, encoding: "utf8", timeout: 30_000,

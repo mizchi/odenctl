@@ -7,6 +7,7 @@ the [user documentation](../user/README.md).
 
 | Task | Guide |
 | --- | --- |
+| Build or change either product independently | [Product workspaces](workspaces.md) |
 | Understand runtime and control-plane architecture | [Architecture and decisions](../../DESIGN.md) |
 | Change Wasmtime integration, Store lifetime, or the node protocol | [Standalone runtime internals](standalone-runtime.md) |
 | Change resident lifecycle, manifests, or SDK generation | [Service runtime contract](service-runtime.md) |

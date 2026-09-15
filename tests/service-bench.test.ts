@@ -3,7 +3,7 @@ import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
-import { parseServiceBenchOptions, runServiceBenchmark } from "../src/service-bench.ts";
+import { parseServiceBenchOptions, runServiceBenchmark } from "../crates/odenctl/src/service-bench.ts";
 
 const host = process.env.ODEN_SERVICE_BIN;
 const component = process.env.ODEN_SERVICE_RUST;
@@ -44,7 +44,7 @@ test("service benchmark reports queue admission failures as errors and still rea
 });
 
 test("benchmark cancellation cleans up an owned resident runtime", { skip: !(host && component), timeout: 30_000 }, async () => {
-  const { startServiceProcess } = await import("../src/service-process.ts");
+  const { startServiceProcess } = await import("../crates/odenctl/src/service-process.ts");
   const abort = new AbortController();
   const server = await startServiceProcess(resolve(host!), ["serve", resolve(component!), "--resident", "--addr", "127.0.0.1:0"], process.env, abort.signal);
   abort.abort();

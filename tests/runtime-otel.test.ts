@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createOtlpHttpTraceExporter, parseOtlpHeaders } from "../src/runtime/otel.ts";
+import { createOtlpHttpTraceExporter, parseOtlpHeaders } from "../crates/odenctl/src/runtime/otel.ts";
 
 test("OTLP HTTP trace exporter sends worker request spans as OTLP JSON", async () => {
   const calls: Array<{ url: string; init: any; body: any }> = [];

@@ -5,6 +5,11 @@
 The runtime embeds Wasmtime **48.0.2** and runs components built from Rust, MoonBit,
 or another language with compatible Component Model bindings.
 
+The product workspaces are [crates/oden](crates/oden) and
+[crates/odenctl](crates/odenctl). Build either independently with
+`just oden-build` or `just odenctl-build`; see the
+[workspace guide](docs/developer/workspaces.md) for shared code and development tasks.
+
 [Documentation](docs/user/README.md) · [Runtime quickstart](docs/user/getting-started.md) ·
 [Deploy with odenctl](docs/user/control-plane.md) · [Rename guide](docs/user/rebranding.md)
 

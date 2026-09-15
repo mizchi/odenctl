@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { installRuntimeShutdownHandlers } from "../src/runtime/shutdown.ts";
+import { installRuntimeShutdownHandlers } from "../crates/odenctl/src/runtime/shutdown.ts";
 
 test("runtime shutdown handler drains once and exits after close resolves", async () => {
   const listeners: Record<string, () => void> = {};

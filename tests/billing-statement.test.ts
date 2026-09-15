@@ -4,7 +4,7 @@ import {
   createOrganizationBillingStatement,
   createProjectBillingStatement,
   projectBillingRatesFromEnv,
-} from "../src/control-plane/billing-statement.ts";
+} from "../crates/odenctl/src/control-plane/billing-statement.ts";
 
 test("project billing rates parse invoice price card from environment", () => {
   assert.deepEqual(projectBillingRatesFromEnv({

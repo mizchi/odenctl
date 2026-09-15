@@ -3,8 +3,8 @@ import { mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import type { RouteSnapshot } from "../src/control-plane/contracts.ts";
-import { createFileRouteSnapshotStore, loadRouteSnapshotFile } from "../src/runtime/snapshot-store.ts";
+import type { RouteSnapshot } from "../crates/odenctl/src/control-plane/contracts.ts";
+import { createFileRouteSnapshotStore, loadRouteSnapshotFile } from "../crates/odenctl/src/runtime/snapshot-store.ts";
 
 test("file route snapshot store saves and loads latest snapshot", async () => {
   const dir = await mkdtemp(join(tmpdir(), "oden-runtime-snapshot-"));

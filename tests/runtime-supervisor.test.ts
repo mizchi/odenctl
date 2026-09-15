@@ -12,23 +12,23 @@ import {
   MVP_WORKER_WORLD,
   MVP_WORKER_WORLD_VERSION,
   type RouteSnapshot,
-} from "../src/control-plane/contracts.ts";
+} from "../crates/odenctl/src/control-plane/contracts.ts";
 import {
   createFileArtifactStore,
   createRuntimeArtifactStore,
   runtimeOciArtifactOptionsFromEnv,
   runtimeS3ArtifactOptionsFromEnv,
-} from "../src/runtime/artifacts.ts";
-import { invalidatePrecompiledCacheVariants, pruneRuntimeCaches } from "../src/runtime/cache-retention.ts";
-import { createRouteCache, createRuntimeSupervisor } from "../src/runtime/supervisor.ts";
+} from "../crates/odenctl/src/runtime/artifacts.ts";
+import { invalidatePrecompiledCacheVariants, pruneRuntimeCaches } from "../crates/odenctl/src/runtime/cache-retention.ts";
+import { createRouteCache, createRuntimeSupervisor } from "../crates/odenctl/src/runtime/supervisor.ts";
 import {
   buildWasip3HostDaemonRouteTable,
   createWasip3HostBackend,
   createWasip3HostDaemonInvoker,
   createWasip3HostInvoker,
   wasip3HostDaemonRuntimeArgsFromEnv,
-} from "../src/runtime/wasip3-host.ts";
-import { createWasmtimeCliBackend } from "../src/runtime/wasmtime.ts";
+} from "../crates/odenctl/src/runtime/wasip3-host.ts";
+import { createWasmtimeCliBackend } from "../crates/odenctl/src/runtime/wasmtime.ts";
 
 const execFileAsync = promisify(execFile);
 

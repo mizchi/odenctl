@@ -49,11 +49,11 @@ and guest-accessible dynamic component loading remain future work.
 | Existing implementation | Reuse or change |
 | --- | --- |
 | `Wasip3Runtime` in `crates/runtime-core/src/node.rs` | Node adapter for standard WASI HTTP; reuse the prepared cache, pooling, and execution limits |
-| `compile` / `invoke` / `serve` in `crates/oden/src/main.rs` | Separate standalone CLI and node invocation boundaries |
-| `crates/oden/src/standalone.rs` | `oden` application commands; `main.rs` builds the internal `oden-host` protocol adapter |
+| `compile` / `invoke` / `serve` in `crates/odenctl/src/main.rs` | Separate standalone CLI and node invocation boundaries |
+| `crates/oden/src/standalone.rs` | `oden` application commands; the deployment host lives in `crates/odenctl` |
 | `wit/standard-http` | Validation contracts for standard WASI 0.3 HTTP and Rust std's WASI 0.2 imports |
 | `examples/rust-moonbit-release` | Verify compatibility of Rust and MoonBit component composition |
-| `src/runtime/wasip3-host.ts` | Runtime integration on the control plane side |
+| `crates/odenctl/src/runtime/wasip3-host.ts` | Runtime integration on the control plane side |
 
 Standalone and node execution share standard WASI HTTP with asynchronous I/O, bounded streams,
 cancellation, and deadlines that extend through body completion. The node JSON protocol buffers bodies within a size limit.

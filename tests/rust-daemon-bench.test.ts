@@ -5,7 +5,7 @@ import {
   buildWorkerFetchHeaders,
   formatRustDaemonBenchmarkMarkdown,
   parseRustDaemonBenchArgs,
-} from "../src/rust-daemon-bench.ts";
+} from "../crates/odenctl/src/rust-daemon-bench.ts";
 
 test("rust daemon benchmark args parse route and pooling settings", () => {
   const options = parseRustDaemonBenchArgs([

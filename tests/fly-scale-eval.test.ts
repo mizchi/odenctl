@@ -5,7 +5,7 @@ import {
   formatFlyScaleEvaluationMarkdown,
   parseFlyScaleEvaluationArgs,
   runFlyScaleEvaluation,
-} from "../src/fly-scale-eval.ts";
+} from "../crates/odenctl/src/fly-scale-eval.ts";
 
 test("fly scale evaluation args default to N+1 runtime and production checks", () => {
   const parsed = parseFlyScaleEvaluationArgs(["--"], {

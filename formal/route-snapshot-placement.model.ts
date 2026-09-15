@@ -1,10 +1,10 @@
 import { pathToFileURL } from "node:url";
-import type { RouteSnapshot, RuntimeNode } from "../src/control-plane/contracts.ts";
+import type { RouteSnapshot, RuntimeNode } from "../crates/odenctl/src/control-plane/contracts.ts";
 import {
   planRuntimeSnapshotPlacements,
   staticRouteSnapshotForPlacement,
   type RuntimePlacementPolicy,
-} from "../src/control-plane/placement.ts";
+} from "../crates/odenctl/src/control-plane/placement.ts";
 
 export interface FormalRoutePlacementReport {
   source: string[];
@@ -51,9 +51,9 @@ export function runRouteSnapshotPlacementModel(): FormalRoutePlacementReport {
     source: [
       "README.md: runtime node placement and production posture",
       "TODO.md: runtime node placement, drain, and cross-region snapshot tasks",
-      "src/http/app.ts: publishTargets",
-      "src/control-plane/placement.ts: planRuntimeSnapshotPlacements and staticRouteSnapshotForPlacement",
-      "src/control-plane/service.ts: isActiveRuntimeNode",
+      "crates/odenctl/src/http/app.ts: publishTargets",
+      "crates/odenctl/src/control-plane/placement.ts: planRuntimeSnapshotPlacements and staticRouteSnapshotForPlacement",
+      "crates/odenctl/src/control-plane/service.ts: isActiveRuntimeNode",
       "tests/placement.test.ts and tests/http-api.test.ts: behavioral regression locks",
     ],
     tool: "bounded TypeScript relation/state model",

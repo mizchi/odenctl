@@ -1,5 +1,5 @@
 {
-  "name": "@mizchi/odenctl",
+  "name": "@mizchi/oden-workspace",
   "private": true,
   "type": "module",
   "engines": {
@@ -9,36 +9,34 @@
   "scripts": {
     "test": "node --experimental-strip-types --test tests/*.test.ts",
     "coverage": "node --experimental-strip-types --test --experimental-test-coverage tests/*.test.ts",
-    "start": "node --experimental-strip-types src/main.ts",
-    "runtime": "node --experimental-strip-types src/runtime/main.ts",
-    "odenctl": "node --experimental-strip-types src/cli.ts",
+    "start": "node --experimental-strip-types crates/odenctl/src/main.ts",
+    "runtime": "node --experimental-strip-types crates/odenctl/src/runtime/main.ts",
+    "odenctl": "node --experimental-strip-types crates/odenctl/src/cli.ts",
     "oden": "cargo run --quiet -p oden --bin oden --",
-    "cost": "node --experimental-strip-types src/cost-estimator.ts",
-    "bench": "node --experimental-strip-types src/bench.ts",
-    "volume-sqlite-bench": "node --experimental-strip-types src/volume-sqlite-bench.ts",
-    "cluster-bench": "node --experimental-strip-types src/cluster-bench.ts",
-    "rust-daemon-bench": "node --experimental-strip-types src/rust-daemon-bench.ts",
-    "celld-bench": "node --experimental-strip-types src/celld-bench.ts",
-    "ops-smoke": "node --experimental-strip-types src/ops-smoke.ts",
-    "alarm-demo-smoke": "node --experimental-strip-types src/alarm-demo-smoke.ts",
-    "cloudflare-control-smoke": "node --experimental-strip-types src/cloudflare-control-smoke.ts",
-    "fly-scale-eval": "node --experimental-strip-types src/fly-scale-eval.ts",
-    "fly-otel-evidence": "node --experimental-strip-types src/fly-otel-evidence.ts",
-    "perf-check": "node --experimental-strip-types src/perf-regression.ts",
-    "wac-migration-report": "node --experimental-strip-types src/wac-migration-report.ts",
-    "actions-pin-check": "node --experimental-strip-types src/workflow-action-pins.ts check",
-    "actions-pin-verify": "node --experimental-strip-types src/workflow-action-pins.ts check --verify-remote",
-    "actions-pin-update": "node --experimental-strip-types src/workflow-action-pins.ts update --write",
+    "cost": "node --experimental-strip-types crates/odenctl/src/cost-estimator.ts",
+    "bench": "node --experimental-strip-types crates/odenctl/src/bench.ts",
+    "volume-sqlite-bench": "node --experimental-strip-types crates/odenctl/src/volume-sqlite-bench.ts",
+    "cluster-bench": "node --experimental-strip-types crates/odenctl/src/cluster-bench.ts",
+    "rust-daemon-bench": "node --experimental-strip-types crates/odenctl/src/rust-daemon-bench.ts",
+    "celld-bench": "node --experimental-strip-types crates/odenctl/src/celld-bench.ts",
+    "ops-smoke": "node --experimental-strip-types crates/odenctl/src/ops-smoke.ts",
+    "alarm-demo-smoke": "node --experimental-strip-types crates/odenctl/src/alarm-demo-smoke.ts",
+    "cloudflare-control-smoke": "node --experimental-strip-types crates/odenctl/src/cloudflare-control-smoke.ts",
+    "fly-scale-eval": "node --experimental-strip-types crates/odenctl/src/fly-scale-eval.ts",
+    "fly-otel-evidence": "node --experimental-strip-types crates/odenctl/src/fly-otel-evidence.ts",
+    "perf-check": "node --experimental-strip-types crates/odenctl/src/perf-regression.ts",
+    "wac-migration-report": "node --experimental-strip-types crates/odenctl/src/wac-migration-report.ts",
+    "actions-pin-check": "node --experimental-strip-types crates/odenctl/src/workflow-action-pins.ts check",
+    "actions-pin-verify": "node --experimental-strip-types crates/odenctl/src/workflow-action-pins.ts check --verify-remote",
+    "actions-pin-update": "node --experimental-strip-types crates/odenctl/src/workflow-action-pins.ts update --write",
     "formal:route-placement": "node --experimental-strip-types formal/route-snapshot-placement.model.ts",
     "formal:capability-isolation": "node --experimental-strip-types formal/capability-isolation.model.ts",
-    "service-bench": "node --experimental-strip-types src/service-bench.ts"
+    "service-bench": "node --experimental-strip-types crates/odenctl/src/service-bench.ts",
+    "build": "just rust-build"
   },
   "devDependencies": {
     "@bytecodealliance/jco": "1.15.4",
     "@playwright/test": "1.63.0",
     "esbuild": "^0.28.2"
-  },
-  "dependencies": {
-    "pg": "^8.22.0"
   }
 }

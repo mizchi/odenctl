@@ -4,7 +4,7 @@ import { once } from "node:events";
 import test from "node:test";
 import {
   parseCelldBenchArgs, runGatewayCase, summarizeGuestCase, formatCelldBenchmark, runCelldBenchmark,
-} from "../src/celld-bench.ts";
+} from "../crates/odenctl/src/celld-bench.ts";
 
 test("celld benchmark validates sample counts and concurrency", () => {
   const options = parseCelldBenchArgs(["--iterations", "12", "--warmup", "0", "--concurrency", "1,4", "--objects", "3"]);

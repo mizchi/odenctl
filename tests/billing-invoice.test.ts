@@ -3,7 +3,7 @@ import { test } from "node:test";
 import {
   createOrganizationBillingInvoice,
   invoiceContentDigest,
-} from "../src/control-plane/billing-invoice.ts";
+} from "../crates/odenctl/src/control-plane/billing-invoice.ts";
 
 test("organization billing invoice snapshots statement and rate card", () => {
   const invoice = createOrganizationBillingInvoice({

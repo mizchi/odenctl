@@ -17,14 +17,14 @@ import {
   runMigrateCommand,
   runNewWorkerCommand,
   runVolumeSqliteCommand,
-} from "../src/cli.ts";
+} from "../crates/odenctl/src/cli.ts";
 import {
   MVP_RUNTIME_BACKEND,
   MVP_WASI_PROFILE,
   MVP_WORKER_WORLD,
   MVP_WORKER_WORLD_VERSION,
-} from "../src/control-plane/contracts.ts";
-import { createVolumeSqliteRegistry } from "../src/control-plane/volume-sqlite.ts";
+} from "../crates/odenctl/src/control-plane/contracts.ts";
+import { createVolumeSqliteRegistry } from "../crates/odenctl/src/control-plane/volume-sqlite.ts";
 
 test("CLI deploy flow uploads component, creates deployment, points route, and publishes snapshot", async () => {
   const dir = await mkdtemp(join(tmpdir(), "odenctl-cli-"));

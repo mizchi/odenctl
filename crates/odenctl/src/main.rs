@@ -14,7 +14,7 @@ use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use serde_json::Value;
 use tokio::net::TcpListener;
-use oden::{
+use oden_runtime_core::node::{
     HostPolicy, HttpRequestInput, InvocationLimits, Wasip3PoolingConfig, Wasip3Runtime,
     Wasip3RuntimeOptions, invoke_component_handle_with_limits_and_policy,
     invoke_precompiled_component_handle_with_limits_and_policy, precompile_component_with_pooling,
@@ -630,7 +630,7 @@ impl DaemonHttpResponse {
         }
     }
 
-    fn worker(response: oden::HttpResponseOutput) -> Self {
+    fn worker(response: oden_runtime_core::node::HttpResponseOutput) -> Self {
         let headers = response
             .headers
             .into_iter()
@@ -863,7 +863,7 @@ async fn handle_daemon_worker_request(
 }
 
 fn append_worker_route_headers(
-    response: &mut oden::HttpResponseOutput,
+    response: &mut oden_runtime_core::node::HttpResponseOutput,
     target: &PreparedRouteTarget,
 ) {
     response.headers.push((
@@ -882,7 +882,7 @@ fn append_worker_route_headers(
 async fn handle_daemon_invoke(
     runtime: Arc<Wasip3Runtime>,
     body: &[u8],
-) -> Result<oden::HttpResponseOutput> {
+) -> Result<oden_runtime_core::node::HttpResponseOutput> {
     let json: Value = serde_json::from_slice(body).context("invoke body must be JSON")?;
     let invoke_args = parse_daemon_invoke(&json)?;
     let request = HttpRequestInput {
@@ -1328,7 +1328,7 @@ fn json_escape(value: &str) -> String {
     encoded[1..encoded.len() - 1].to_string()
 }
 
-fn invocation_json(response: &oden::HttpResponseOutput) -> String {
+fn invocation_json(response: &oden_runtime_core::node::HttpResponseOutput) -> String {
     let headers: Vec<_> = response.headers.iter()
         .map(|(name, value)| serde_json::json!({ "name": name, "value": value }))
         .collect();
@@ -1832,7 +1832,7 @@ mod tests {
 
     #[test]
     fn invoke_output_json_escapes_response_body_control_chars() {
-        let output = invocation_json(&oden::HttpResponseOutput {
+        let output = invocation_json(&oden_runtime_core::node::HttpResponseOutput {
             status: 200,
             headers: vec![("x-message".to_string(), "quote: \"".to_string())],
             body: b"line 1\nline 2\r\nquote: \"".to_vec(),
@@ -1986,7 +1986,7 @@ mod tests {
             policy: HostPolicy::deny_all(),
             weight: 20,
         };
-        let mut response = oden::HttpResponseOutput {
+        let mut response = oden_runtime_core::node::HttpResponseOutput {
             status: 200,
             headers: Vec::new(),
             body: Vec::new(),

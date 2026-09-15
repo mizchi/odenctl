@@ -10,7 +10,7 @@ import {
   createFileControlPlaneArtifactStore,
   createS3ControlPlaneArtifactStore,
   decodeLocalArtifactBytes,
-} from "../src/control-plane/artifact-store.ts";
+} from "../crates/odenctl/src/control-plane/artifact-store.ts";
 
 test("file artifact store writes digest-addressed Wasm bytes", async () => {
   const dir = await mkdtemp(join(tmpdir(), "odenctl-file-artifact-store-"));

@@ -5,7 +5,7 @@ import {
   parseWorkflowActionPinArgs,
   updateWorkflowActionPins,
   type WorkflowActionPinResolver,
-} from "../src/workflow-action-pins.ts";
+} from "../crates/odenctl/src/workflow-action-pins.ts";
 
 test("workflow action pin audit rejects tag refs and missing version comments", () => {
   const audit = auditWorkflowActionPins({

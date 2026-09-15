@@ -4,7 +4,7 @@ import {
   formatFlyOtelEvidenceMarkdown,
   parseFlyOtelEvidenceArgs,
   runFlyOtelEvidence,
-} from "../src/fly-otel-evidence.ts";
+} from "../crates/odenctl/src/fly-otel-evidence.ts";
 
 test("fly otel evidence args default to the Fly collector app", () => {
   const parsed = parseFlyOtelEvidenceArgs([], {});

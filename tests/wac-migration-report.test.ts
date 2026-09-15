@@ -8,7 +8,7 @@ import {
   resolveWacSource,
   runWacMigrationProbe,
   type CommandRunner,
-} from "../src/wac-migration-report.ts";
+} from "../crates/odenctl/src/wac-migration-report.ts";
 
 test("WAC migration report analyzes the runtime worker WIT blocker shape", () => {
   const analysis = analyzeWacRuntimeWorkerWit("worker.wit", `

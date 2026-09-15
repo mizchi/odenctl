@@ -1,0 +1,22 @@
+{
+  "name": "@mizchi/odenctl",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "files": [
+    "src/**/*.ts",
+    "db"
+  ],
+  "scripts": {
+    "build": "cargo build -p oden-host",
+    "test": "cd ../.. && node --test tests/*.test.ts && cargo test -p oden-host",
+    "cli": "node src/cli.ts",
+    "start": "node src/main.ts",
+    "runtime": "node src/runtime/main.ts"
+  },
+  "dependencies": {
+    "pg": "^8.22.0"
+  }
+}

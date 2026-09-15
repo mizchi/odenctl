@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createSnapshotPublishJob } from "../src/control-plane/snapshot-publish-job.ts";
+import { createSnapshotPublishJob } from "../crates/odenctl/src/control-plane/snapshot-publish-job.ts";
 
 test("snapshot publish job skips overlapping ticks", async () => {
   let publishes = 0;

@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { RouteSnapshot, RuntimeNode } from "../src/control-plane/contracts.ts";
+import type { RouteSnapshot, RuntimeNode } from "../crates/odenctl/src/control-plane/contracts.ts";
 import {
   planRuntimeSnapshotPlacements,
   runtimePlacementPolicyFromEnv,
   selectRuntimeNodesForSnapshot,
-} from "../src/control-plane/placement.ts";
+} from "../crates/odenctl/src/control-plane/placement.ts";
 
 test("placement policy selects project nodes by region and labels with load preference", () => {
   const nodes = [

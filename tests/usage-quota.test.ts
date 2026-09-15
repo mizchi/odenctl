@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { projectUsageQuotasFromEnv } from "../src/control-plane/usage-quota.ts";
+import { projectUsageQuotasFromEnv } from "../crates/odenctl/src/control-plane/usage-quota.ts";
 
 test("project usage quotas parse billing ledger limits from environment", () => {
   assert.deepEqual(projectUsageQuotasFromEnv({

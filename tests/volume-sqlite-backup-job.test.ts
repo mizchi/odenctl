@@ -6,11 +6,11 @@ import { test } from "node:test";
 import {
   createAesGcmVolumeSqliteBackupCipher,
   createVolumeSqliteRegistry,
-} from "../src/control-plane/volume-sqlite.ts";
+} from "../crates/odenctl/src/control-plane/volume-sqlite.ts";
 import {
   createVolumeSqliteBackupJob,
   runVolumeSqliteScheduledBackupCycle,
-} from "../src/control-plane/volume-sqlite-backup-job.ts";
+} from "../crates/odenctl/src/control-plane/volume-sqlite-backup-job.ts";
 
 test("scheduled volume sqlite backup cycle encrypts backups, prunes retention, and verifies restore drills", async () => {
   const dir = await mkdtemp(join(tmpdir(), "odenctl-volume-sqlite-scheduled-backup-"));

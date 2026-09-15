@@ -3,7 +3,7 @@ import { test } from "node:test";
 import {
   billingInvoiceRetentionOrganizationsFromEnv,
   pruneBillingInvoicesForOrganizations,
-} from "../src/control-plane/billing-retention-job.ts";
+} from "../crates/odenctl/src/control-plane/billing-retention-job.ts";
 
 test("billing invoice retention job parses organization ids from environment", () => {
   assert.deepEqual(

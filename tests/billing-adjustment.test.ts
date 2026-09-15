@@ -3,7 +3,7 @@ import { test } from "node:test";
 import {
   createBillingInvoiceAdjustmentRecord,
   normalizeBillingInvoiceAdjustmentInput,
-} from "../src/control-plane/billing-adjustment.ts";
+} from "../crates/odenctl/src/control-plane/billing-adjustment.ts";
 
 test("billing invoice adjustment records are normalized separately from invoices", () => {
   const adjustment = createBillingInvoiceAdjustmentRecord({

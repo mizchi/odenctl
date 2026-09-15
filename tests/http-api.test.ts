@@ -6,15 +6,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import type { RouteSnapshot } from "../src/control-plane/contracts.ts";
-import { createJsonlAuditSink } from "../src/control-plane/audit.ts";
-import { createInMemoryRouteSnapshotReplicaStore } from "../src/control-plane/snapshot-replication.ts";
-import { createMemoryRepository } from "../src/control-plane/repository.ts";
-import { createControlPlane } from "../src/control-plane/service.ts";
-import { createConfiguredDurableObjectAlarmDispatcherJobs } from "../src/control-plane/durable-object-alarm-runtime.ts";
-import { createVolumeSqliteRegistry } from "../src/control-plane/volume-sqlite.ts";
-import { createHttpApp, publishCurrentRouteSnapshot } from "../src/http/app.ts";
-import { verifyRuntimeIdentityHeaders } from "../src/runtime/identity.ts";
+import type { RouteSnapshot } from "../crates/odenctl/src/control-plane/contracts.ts";
+import { createJsonlAuditSink } from "../crates/odenctl/src/control-plane/audit.ts";
+import { createInMemoryRouteSnapshotReplicaStore } from "../crates/odenctl/src/control-plane/snapshot-replication.ts";
+import { createMemoryRepository } from "../crates/odenctl/src/control-plane/repository.ts";
+import { createControlPlane } from "../crates/odenctl/src/control-plane/service.ts";
+import { createConfiguredDurableObjectAlarmDispatcherJobs } from "../crates/odenctl/src/control-plane/durable-object-alarm-runtime.ts";
+import { createVolumeSqliteRegistry } from "../crates/odenctl/src/control-plane/volume-sqlite.ts";
+import { createHttpApp, publishCurrentRouteSnapshot } from "../crates/odenctl/src/http/app.ts";
+import { verifyRuntimeIdentityHeaders } from "../crates/odenctl/src/runtime/identity.ts";
 
 test("HTTP API updates organization billing profile", async () => {
   const control = createControlPlane({

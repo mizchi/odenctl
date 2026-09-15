@@ -5,12 +5,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
-import { MVP_WASI_PROFILE, MVP_WORKER_WORLD_VERSION } from "../src/control-plane/contracts.ts";
-import { createAsyncControlPlane } from "../src/control-plane/async-service.ts";
-import { createHmacArtifactSignatureVerifier, signArtifactDigest } from "../src/control-plane/artifact-signing.ts";
-import { createAesGcmSecretCipher, isEncryptedSecretValue } from "../src/control-plane/secret-encryption.ts";
-import { createControlPlane } from "../src/control-plane/service.ts";
-import { createMemoryRepository, createSqliteRepository } from "../src/control-plane/repository.ts";
+import { MVP_WASI_PROFILE, MVP_WORKER_WORLD_VERSION } from "../crates/odenctl/src/control-plane/contracts.ts";
+import { createAsyncControlPlane } from "../crates/odenctl/src/control-plane/async-service.ts";
+import { createHmacArtifactSignatureVerifier, signArtifactDigest } from "../crates/odenctl/src/control-plane/artifact-signing.ts";
+import { createAesGcmSecretCipher, isEncryptedSecretValue } from "../crates/odenctl/src/control-plane/secret-encryption.ts";
+import { createControlPlane } from "../crates/odenctl/src/control-plane/service.ts";
+import { createMemoryRepository, createSqliteRepository } from "../crates/odenctl/src/control-plane/repository.ts";
 
 test("creates immutable wasmtime deployments with denied-by-default host capabilities", () => {
   const control = createControlPlane({

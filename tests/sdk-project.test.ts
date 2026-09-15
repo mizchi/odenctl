@@ -4,7 +4,7 @@ import { mkdtemp, readFile, writeFile, rm, cp, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
-import { startServiceProcess } from "../src/service-process.ts";
+import { startServiceProcess } from "../crates/odenctl/src/service-process.ts";
 
 const binary = process.env.ODEN_SDK_BIN && resolve(process.env.ODEN_SDK_BIN);
 for (const language of ["rust", "moonbit"]) {

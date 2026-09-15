@@ -4,8 +4,8 @@ import {
   billingInvoiceExportSignerFromEnv,
   createBillingInvoiceExportBundle,
   verifyBillingInvoiceExportBundle,
-} from "../src/control-plane/billing-export.ts";
-import { createOrganizationBillingInvoice } from "../src/control-plane/billing-invoice.ts";
+} from "../crates/odenctl/src/control-plane/billing-export.ts";
+import { createOrganizationBillingInvoice } from "../crates/odenctl/src/control-plane/billing-invoice.ts";
 
 test("billing invoice export bundle signs invoice payload digests", () => {
   const invoice = createOrganizationBillingInvoice({

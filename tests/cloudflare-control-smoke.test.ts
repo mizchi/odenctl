@@ -8,7 +8,7 @@ import {
   parseCloudflareControlSmokeArgs,
   runCloudflareControlSmoke,
   writeCloudflareControlSmokeReports,
-} from "../src/cloudflare-control-smoke.ts";
+} from "../crates/odenctl/src/cloudflare-control-smoke.ts";
 
 test("Cloudflare control smoke args default to the container POC URL and local SQLite check", () => {
   const parsed = parseCloudflareControlSmokeArgs([

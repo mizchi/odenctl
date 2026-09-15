@@ -10,15 +10,15 @@ import {
   MVP_WORKER_WORLD,
   MVP_WORKER_WORLD_VERSION,
   type RouteSnapshot,
-} from "../src/control-plane/contracts.ts";
-import { createAesGcmSecretCipher } from "../src/control-plane/secret-encryption.ts";
-import { createRuntimeNodeApp, runtimeNodeHttpListenOptions } from "../src/runtime/node-app.ts";
-import { RuntimeError } from "../src/runtime/errors.ts";
-import { registerRuntimeNode, sendRuntimeHeartbeat } from "../src/runtime/heartbeat.ts";
-import { signRuntimeIdentityHeaders } from "../src/runtime/identity.ts";
-import { createEnvSecretStore, createRepositorySecretStore } from "../src/runtime/secrets.ts";
-import { createRuntimeSupervisor } from "../src/runtime/supervisor.ts";
-import { proxyWasip3HostDaemonWorkerRequest } from "../src/runtime/wasip3-host.ts";
+} from "../crates/odenctl/src/control-plane/contracts.ts";
+import { createAesGcmSecretCipher } from "../crates/odenctl/src/control-plane/secret-encryption.ts";
+import { createRuntimeNodeApp, runtimeNodeHttpListenOptions } from "../crates/odenctl/src/runtime/node-app.ts";
+import { RuntimeError } from "../crates/odenctl/src/runtime/errors.ts";
+import { registerRuntimeNode, sendRuntimeHeartbeat } from "../crates/odenctl/src/runtime/heartbeat.ts";
+import { signRuntimeIdentityHeaders } from "../crates/odenctl/src/runtime/identity.ts";
+import { createEnvSecretStore, createRepositorySecretStore } from "../crates/odenctl/src/runtime/secrets.ts";
+import { createRuntimeSupervisor } from "../crates/odenctl/src/runtime/supervisor.ts";
+import { proxyWasip3HostDaemonWorkerRequest } from "../crates/odenctl/src/runtime/wasip3-host.ts";
 
 test("runtime node binds IPv6 wildcard as dual-stack for Fly private networking", () => {
   assert.deepEqual(runtimeNodeHttpListenOptions({ port: 8080, host: "::" }), {

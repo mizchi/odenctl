@@ -5,7 +5,7 @@ import {
   formatPerfRegressionMarkdown,
   parsePerfRegressionArgs,
   type PerfBudgetConfig,
-} from "../src/perf-regression.ts";
+} from "../crates/odenctl/src/perf-regression.ts";
 
 test("perf budget evaluator passes reports within budgets", () => {
   const report = evaluatePerfBudgets([sampleBenchReport(), sampleClusterReport()], {

@@ -58,7 +58,7 @@ Failures return exit code `1` with error details and no success report. Requests
 Each WIT case starts Wasm once and runs multiple async `fetch` calls within that process.
 It does not start the CLI or recompile the component for each call.
 The guest measurement loop is in [benchmark.rs](../../examples/durable-counter/src/benchmark.rs);
-aggregation and orchestration are in [celld-bench.ts](../../src/celld-bench.ts).
+aggregation and orchestration are in [celld-bench.ts](../../crates/odenctl/src/celld-bench.ts).
 
 Direct HTTP uses Node.js fetch, while the WIT host uses reqwest. Differences therefore include HTTP client
 behavior, guest JSON processing, and clock calls. **These measurements do not isolate WIT overhead.**

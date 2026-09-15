@@ -3,7 +3,7 @@ import { test } from "node:test";
 import {
   assertOperationalRequirements,
   operationalConfigFromEnv,
-} from "../src/ops-config.ts";
+} from "../crates/odenctl/src/ops-config.ts";
 
 test("operational config exposes non-secret production posture from environment", () => {
   const config = operationalConfigFromEnv({

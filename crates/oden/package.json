@@ -1,0 +1,9 @@
+{
+  "name": "@mizchi/oden",
+  "private": true,
+  "scripts": {
+    "build": "cargo build -p oden",
+    "test": "cargo test -p oden -p oden-runtime-core",
+    "cli": "cargo run --quiet -p oden --bin oden --"
+  }
+}

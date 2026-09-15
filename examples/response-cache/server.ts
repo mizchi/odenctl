@@ -8,15 +8,15 @@ import {
   MVP_WORKER_WORLD,
   MVP_WORKER_WORLD_VERSION,
   type RouteSnapshot,
-} from "../../src/control-plane/contracts.ts";
-import { createRuntimeArtifactStore } from "../../src/runtime/artifacts.ts";
-import { createRuntimeNodeApp } from "../../src/runtime/node-app.ts";
-import { parseResponseCacheConfig } from "../../src/runtime/response-cache-policy.ts";
-import { createRuntimeSupervisor } from "../../src/runtime/supervisor.ts";
+} from "../../crates/odenctl/src/control-plane/contracts.ts";
+import { createRuntimeArtifactStore } from "../../crates/odenctl/src/runtime/artifacts.ts";
+import { createRuntimeNodeApp } from "../../crates/odenctl/src/runtime/node-app.ts";
+import { parseResponseCacheConfig } from "../../crates/odenctl/src/runtime/response-cache-policy.ts";
+import { createRuntimeSupervisor } from "../../crates/odenctl/src/runtime/supervisor.ts";
 import {
   createWasip3HostBackend,
   createWasip3HostInvoker,
-} from "../../src/runtime/wasip3-host.ts";
+} from "../../crates/odenctl/src/runtime/wasip3-host.ts";
 
 const componentPath = fileURLToPath(
   new URL(

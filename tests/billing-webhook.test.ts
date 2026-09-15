@@ -3,8 +3,8 @@ import { test } from "node:test";
 import {
   attemptBillingWebhookDelivery,
   createBillingInvoiceIssuedWebhookDelivery,
-} from "../src/control-plane/billing-webhook.ts";
-import { createOrganizationBillingInvoice } from "../src/control-plane/billing-invoice.ts";
+} from "../crates/odenctl/src/control-plane/billing-webhook.ts";
+import { createOrganizationBillingInvoice } from "../crates/odenctl/src/control-plane/billing-invoice.ts";
 
 test("billing webhook delivery attempts include idempotency headers and schedule retry", async () => {
   const invoice = createOrganizationBillingInvoice({

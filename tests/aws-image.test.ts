@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import test from "node:test";
-import { startServiceProcess } from "../src/service-process.ts";
+import { startServiceProcess } from "../crates/odenctl/src/service-process.ts";
 
 const host = process.env.ODENCTL_AWS_IMAGE_HOST;
 const component = process.env.ODENCTL_AWS_IMAGE_COMPONENT;

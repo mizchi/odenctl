@@ -3,8 +3,8 @@ import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { parseApiTokens } from "../src/control-plane/authz.ts";
-import { createJsonlAuditSink } from "../src/control-plane/audit.ts";
+import { parseApiTokens } from "../crates/odenctl/src/control-plane/authz.ts";
+import { createJsonlAuditSink } from "../crates/odenctl/src/control-plane/audit.ts";
 
 test("API token parser supports legacy admin token and scoped token entries", () => {
   assert.deepEqual(

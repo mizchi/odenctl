@@ -7,11 +7,11 @@ import { test } from "node:test";
 import {
   createCloudflareWorkersApiDeployer,
   renderCloudflareWasmWorkerModule,
-} from "../src/control-plane/edge-worker-deployer.ts";
-import { edgeWorkerDeployerFromEnv } from "../src/control-plane/database.ts";
-import { createMemoryRepository, createSqliteRepository } from "../src/control-plane/repository.ts";
-import { createControlPlane } from "../src/control-plane/service.ts";
-import { createHttpApp } from "../src/http/app.ts";
+} from "../crates/odenctl/src/control-plane/edge-worker-deployer.ts";
+import { edgeWorkerDeployerFromEnv } from "../crates/odenctl/src/control-plane/database.ts";
+import { createMemoryRepository, createSqliteRepository } from "../crates/odenctl/src/control-plane/repository.ts";
+import { createControlPlane } from "../crates/odenctl/src/control-plane/service.ts";
+import { createHttpApp } from "../crates/odenctl/src/http/app.ts";
 
 test("control plane records a mock Cloudflare Workers release for a wasm deployment", async () => {
   const control = createControlPlane({

@@ -6,7 +6,7 @@ import {
   parseBenchArgs,
   runLoadBenchmark,
   summarizeLatencies,
-} from "../src/bench.ts";
+} from "../crates/odenctl/src/bench.ts";
 
 test("benchmark latency summary reports common percentiles and throughput", () => {
   const summary = summarizeLatencies([4, 1, 3, 2], 1000, 0);

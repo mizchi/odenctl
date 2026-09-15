@@ -6,9 +6,9 @@ import { test } from "node:test";
 import {
   createConfiguredDurableObjectAlarmDispatcherJobs,
   createDurableObjectAlarmWebhookHandler,
-} from "../src/control-plane/durable-object-alarm-runtime.ts";
-import { createDurableObjectStorageNamespace } from "../src/control-plane/durable-object-storage.ts";
-import { createVolumeSqliteRegistry } from "../src/control-plane/volume-sqlite.ts";
+} from "../crates/odenctl/src/control-plane/durable-object-alarm-runtime.ts";
+import { createDurableObjectStorageNamespace } from "../crates/odenctl/src/control-plane/durable-object-storage.ts";
+import { createVolumeSqliteRegistry } from "../crates/odenctl/src/control-plane/volume-sqlite.ts";
 
 test("configured durable object alarm dispatcher posts due alarms to webhook", async () => {
   const dir = await mkdtemp(join(tmpdir(), "odenctl-do-alarm-runtime-"));

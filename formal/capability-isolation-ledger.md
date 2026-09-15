@@ -7,10 +7,10 @@ source:
   docs / code / tests:
   - Cloudflare Workers isolate/security model: isolates share a runtime process but rely on memory isolation and API-level capability design.
   - Control-plane policy only; the custom guest service/state imports were removed.
-  - `src/control-plane/contracts.ts`: `CapabilityPolicy` and capability normalization.
-  - `src/control-plane/service.ts`, `src/control-plane/async-service.ts`: deployment-time target validation.
-  - `src/control-plane/admission.ts`: production admission guardrails.
-  - `crates/oden/src/lib.rs`: Wasmtime host policy enforcement.
+  - `crates/odenctl/src/control-plane/contracts.ts`: `CapabilityPolicy` and capability normalization.
+  - `crates/odenctl/src/control-plane/service.ts`, `crates/odenctl/src/control-plane/async-service.ts`: deployment-time target validation.
+  - `crates/odenctl/src/control-plane/admission.ts`: production admission guardrails.
+  - `crates/runtime-core/src/node.rs`: Wasmtime host policy enforcement.
 
 tool:
   bounded TypeScript capability relation model

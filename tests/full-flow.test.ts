@@ -6,14 +6,14 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
-import { createMemoryRepository } from "../src/control-plane/repository.ts";
-import { createControlPlane } from "../src/control-plane/service.ts";
-import { createHttpApp } from "../src/http/app.ts";
-import { createFileArtifactStore } from "../src/runtime/artifacts.ts";
-import { createRuntimeNodeApp } from "../src/runtime/node-app.ts";
-import { createMemorySecretStore } from "../src/runtime/secrets.ts";
-import { createRuntimeSupervisor } from "../src/runtime/supervisor.ts";
-import { createWasip3HostBackend, createWasip3HostInvoker } from "../src/runtime/wasip3-host.ts";
+import { createMemoryRepository } from "../crates/odenctl/src/control-plane/repository.ts";
+import { createControlPlane } from "../crates/odenctl/src/control-plane/service.ts";
+import { createHttpApp } from "../crates/odenctl/src/http/app.ts";
+import { createFileArtifactStore } from "../crates/odenctl/src/runtime/artifacts.ts";
+import { createRuntimeNodeApp } from "../crates/odenctl/src/runtime/node-app.ts";
+import { createMemorySecretStore } from "../crates/odenctl/src/runtime/secrets.ts";
+import { createRuntimeSupervisor } from "../crates/odenctl/src/runtime/supervisor.ts";
+import { createWasip3HostBackend, createWasip3HostInvoker } from "../crates/odenctl/src/runtime/wasip3-host.ts";
 
 const componentPath = process.env.ODENCTL_E2E_COMPONENT;
 

@@ -6,7 +6,7 @@ import { mkdtemp, writeFile, readFile, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
-import { startCelldDev } from "../src/celld-dev.ts";
+import { startCelldDev } from "../crates/odenctl/src/celld-dev.ts";
 
 const binary = process.env.ODEN_SERVICE_BIN;
 for (const [language, component] of [["rust", process.env.ODEN_SERVICE_RUST], ["moonbit", process.env.ODEN_SERVICE_MOONBIT]] as const) {

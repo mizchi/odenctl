@@ -26,8 +26,8 @@ export async function startCelldDev(binary: string, signal?: AbortSignal) {
   };
   try {
     signal?.throwIfAborted();
-    await copyFile(new URL("../examples/celld-gateway/index.js", import.meta.url), join(directory, "index.js"));
-    const config = JSON.parse(await readFile(new URL("../examples/celld-gateway/wrangler.jsonc", import.meta.url), "utf8"));
+    await copyFile(new URL("../../../examples/celld-gateway/index.js", import.meta.url), join(directory, "index.js"));
+    const config = JSON.parse(await readFile(new URL("../../../examples/celld-gateway/wrangler.jsonc", import.meta.url), "utf8"));
     config.vars.ODEN_GATEWAY_TOKEN = token;
     await writeFile(join(directory, "wrangler.jsonc"), JSON.stringify(config), { mode: 0o600 });
     const probe = createServer();
@@ -39,7 +39,7 @@ export async function startCelldDev(binary: string, signal?: AbortSignal) {
     let logs = "";
     let startupError: Error | undefined;
     child = spawn(binary, ["dev", directory, "--port", String(port), "--no-watch", "--logs"], {
-      env: { ...process.env, PATH: `${fileURLToPath(new URL("../node_modules/.bin", import.meta.url))}${delimiter}${process.env.PATH ?? ""}` },
+      env: { ...process.env, PATH: `${fileURLToPath(new URL("../../../node_modules/.bin", import.meta.url))}${delimiter}${process.env.PATH ?? ""}` },
       stdio: ["ignore", "pipe", "pipe"],
     });
     child.on("error", (error) => { startupError = error; });

@@ -7,10 +7,6 @@ settings:
 importers:
 
   .:
-    dependencies:
-      pg:
-        specifier: ^8.22.0
-        version: 8.22.0
     devDependencies:
       '@bytecodealliance/jco':
         specifier: 1.15.4
@@ -21,6 +17,14 @@ importers:
       esbuild:
         specifier: ^0.28.2
         version: 0.28.2
+
+  crates/oden: {}
+
+  crates/odenctl:
+    dependencies:
+      pg:
+        specifier: ^8.22.0
+        version: 8.22.0
 
 packages:
 

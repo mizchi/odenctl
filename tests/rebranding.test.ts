@@ -4,8 +4,8 @@ import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
-import { parseDeployArgs, parseDevArgs } from "../src/cli.ts";
-import { resolveControlPlaneDatabaseConfig } from "../src/control-plane/database.ts";
+import { parseDeployArgs, parseDevArgs } from "../crates/odenctl/src/cli.ts";
+import { resolveControlPlaneDatabaseConfig } from "../crates/odenctl/src/control-plane/database.ts";
 
 test("odenctl is the management CLI and exposes its own help", () => {
   const result = spawnSync("pnpm", ["--silent", "odenctl", "--help"], {
@@ -37,7 +37,7 @@ test("management and runtime settings use their respective product prefixes", ()
   });
 });
 
-for (const entry of ["src/main.ts", "src/runtime/main.ts"]) {
+for (const entry of ["crates/odenctl/src/main.ts", "crates/odenctl/src/runtime/main.ts"]) {
   test(`${entry} rejects old environment settings before startup`, async (t) => {
     const directory = await mkdtemp(join(tmpdir(), "oden-rename-"));
     t.after(() => rm(directory, { recursive: true, force: true }));

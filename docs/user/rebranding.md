@@ -20,7 +20,7 @@ use Node.js 24 or later.
 | Standalone `wasmplane run`, `serve`, `test`, `init`, `inspect`, `check`, `build`, `start`, `dev` | `oden` with the same subcommand |
 | `wasmplane-wasip3-host` protocol adapter | `oden-host` |
 | Node package `@mizchi/wasmplane` | `@mizchi/odenctl` |
-| Rust host crate `wasmplane-wasip3-host` | `oden` in `crates/oden` |
+| Rust host crate `wasmplane-wasip3-host` | `oden-host` in `crates/odenctl`; standalone CLI `oden` in `crates/oden` |
 | Rust runtime crate `wasmplane-runtime-core` | `oden-runtime-core` |
 | Rust SDK `wasmplane-service-sdk` | `oden-service-sdk` (`oden_service_sdk` in Rust imports) |
 | MoonBit SDK `@wasmplane/moonbit-service-sdk` | `@oden/moonbit-service-sdk` |

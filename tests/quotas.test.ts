@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { projectQuotasFromEnv } from "../src/control-plane/quotas.ts";
+import { projectQuotasFromEnv } from "../crates/odenctl/src/control-plane/quotas.ts";
 
 test("project quotas parse control-plane environment limits", () => {
   assert.deepEqual(projectQuotasFromEnv({

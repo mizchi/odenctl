@@ -4,7 +4,7 @@ import {
   createBillingInvoiceRetentionPolicyRecord,
   decideBillingInvoiceRetention,
   normalizeBillingInvoiceRetentionPolicyInput,
-} from "../src/control-plane/billing-retention.ts";
+} from "../crates/odenctl/src/control-plane/billing-retention.ts";
 
 test("billing invoice retention policies are normalized separately from invoices", () => {
   const policy = createBillingInvoiceRetentionPolicyRecord({

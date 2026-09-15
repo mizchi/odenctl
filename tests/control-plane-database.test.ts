@@ -7,7 +7,7 @@ import {
   applyConfiguredControlPlaneMigrations,
   checkConfiguredControlPlaneMigrations,
   resolveControlPlaneDatabaseConfig,
-} from "../src/control-plane/database.ts";
+} from "../crates/odenctl/src/control-plane/database.ts";
 
 test("control-plane database config prefers DATABASE_URL Postgres over local SQLite", () => {
   assert.deepEqual(resolveControlPlaneDatabaseConfig({}), {
@@ -43,7 +43,7 @@ test("control-plane database config prefers DATABASE_URL Postgres over local SQL
 });
 
 test("Postgres schema covers control-plane tables without SQLite-only syntax", async () => {
-  const sql = await readFile("db/postgres/001_init.sql", "utf8");
+  const sql = await readFile("crates/odenctl/db/postgres/001_init.sql", "utf8");
   for (const table of [
     "schema_migrations",
     "projects",

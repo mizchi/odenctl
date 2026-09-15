@@ -6,9 +6,9 @@ import { test } from "node:test";
 import {
   createDurableObjectAlarmDispatcherJob,
   dispatchDurableObjectAlarms,
-} from "../src/control-plane/durable-object-alarm-dispatcher.ts";
-import { createDurableObjectStorageNamespace } from "../src/control-plane/durable-object-storage.ts";
-import { createVolumeSqliteRegistry } from "../src/control-plane/volume-sqlite.ts";
+} from "../crates/odenctl/src/control-plane/durable-object-alarm-dispatcher.ts";
+import { createDurableObjectStorageNamespace } from "../crates/odenctl/src/control-plane/durable-object-storage.ts";
+import { createVolumeSqliteRegistry } from "../crates/odenctl/src/control-plane/volume-sqlite.ts";
 
 test("durable object alarm dispatcher invokes due alarms and clears handled alarms", async () => {
   const dir = await mkdtemp(join(tmpdir(), "odenctl-do-alarm-dispatch-"));

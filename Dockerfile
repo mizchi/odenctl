@@ -5,7 +5,18 @@ COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 COPY sdk ./sdk
 COPY wit ./wit
-RUN cargo build --release -p oden
+RUN cargo build --locked --release -p oden -p oden-host
+
+FROM node:24-bookworm-slim AS node-build
+WORKDIR /src
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY crates/oden/package.json ./crates/oden/package.json
+COPY crates/odenctl/package.json ./crates/odenctl/package.json
+RUN corepack enable \
+  && pnpm --filter @mizchi/odenctl install --prod --frozen-lockfile --ignore-scripts
+COPY crates/odenctl/src ./crates/odenctl/src
+COPY crates/odenctl/db ./crates/odenctl/db
+RUN pnpm --filter @mizchi/odenctl deploy --prod --legacy /out
 
 FROM node:24-bookworm-slim AS runtime
 
@@ -14,11 +25,7 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY package.json pnpm-lock.yaml ./
-RUN corepack enable \
-  && pnpm install --prod --frozen-lockfile
-COPY src ./src
-COPY db ./db
+COPY --from=node-build /out ./
 COPY wit ./wit
 COPY --from=rust-build /src/target/release/oden-host /usr/local/bin/oden-host
 COPY --from=rust-build /src/target/release/oden /usr/local/bin/oden

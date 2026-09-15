@@ -6,7 +6,7 @@ import {
   clusterHostPoolingArgs,
   formatClusterBenchmarkMarkdown,
   parseClusterBenchArgs,
-} from "../src/cluster-bench.ts";
+} from "../crates/odenctl/src/cluster-bench.ts";
 
 test("cluster benchmark CLI args parse node counts and concurrency list", () => {
   const options = parseClusterBenchArgs([

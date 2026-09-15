@@ -24,8 +24,6 @@ fn main() {
         "src",
         "build.rs",
         "Cargo.toml",
-        "../oden/Cargo.toml",
-        "../oden/src",
         "../../wit",
         "../../Cargo.lock",
     ] {
